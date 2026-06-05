@@ -259,7 +259,7 @@ ON CONFLICT (name) DO NOTHING;
 
 -- Printers (update IPs to match your actual lab network before running)
 INSERT INTO printers (name, model, ip, port, type, material, build_volume) VALUES
-  ('EvoFab Sovol Zero', 'SOVOL ZERO',   'busy',    'FDM', 'Shore 20A TPE', '152.4×152.4×152.4mm', 50)
+  ('EvoFab Sovol Zero', 'SOVOL ZERO', '10.247.137.89', 80, 'FDM', 'Shore 20A TPE', '152.4×152.4×152.4mm')
 ON CONFLICT (name) DO NOTHING;
 
 -- Initialize printer_status rows for each seeded printer

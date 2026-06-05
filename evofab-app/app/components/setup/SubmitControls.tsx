@@ -27,17 +27,17 @@ export function SubmitControls() {
     if (!canSubmit || !selectedPrinter || !uploadedFile) return
     setLoading(true)
     try {
+      const formData = new FormData()
+      formData.append('file', uploadedFile)
+      formData.append('printer_id', selectedPrinter.id)
+      formData.append('experiment_id', selectedExperiment?.id ?? '')
+      formData.append('material_profile_id', selectedMaterialProfile?.id ?? '')
+      formData.append('settings', JSON.stringify(settings))
+      formData.append('experiment_params', JSON.stringify(experimentParams))
+
       const res = await fetch('/api/jobs', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          printer_id: selectedPrinter.id,
-          experiment_id: selectedExperiment?.id ?? null,
-          material_profile_id: selectedMaterialProfile?.id ?? null,
-          filename: uploadedFile.name,
-          print_settings: settings,
-          experiment_params: experimentParams,
-        }),
+        body: formData,
       })
       const { job } = await res.json()
       dispatch({ type: 'START_JOB', jobId: job.id })
