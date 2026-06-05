@@ -1,0 +1,94 @@
+'use client'
+
+import { useCallback } from 'react'
+import { useDropzone } from 'react-dropzone'
+import { cn } from '@/app/lib/utils'
+import { usePrinter } from '@/app/contexts/PrinterContext'
+
+const ACCEPTED_EXTENSIONS = ['.gcode', '.stl', '.3mf']
+
+function validateFile(file: File, buildVolume: string | null | undefined) {
+  return [
+    {
+      label: 'File format',
+      ok: ACCEPTED_EXTENSIONS.some((ext) => file.name.toLowerCase().endsWith(ext)),
+    },
+    {
+      label: 'Build volume compatible',
+      ok: !!buildVolume,
+    },
+    {
+      label: 'Est. print time available',
+      ok: file.name.toLowerCase().endsWith('.gcode'),
+    },
+  ]
+}
+
+export function FileUploadZone() {
+  const { uploadedFile, setUploadedFile, selectedPrinter } = usePrinter()
+
+  const onDrop = useCallback(
+    (accepted: File[]) => {
+      if (accepted[0]) setUploadedFile(accepted[0])
+    },
+    [setUploadedFile]
+  )
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop,
+    multiple: false,
+    accept: {
+      'application/octet-stream': ACCEPTED_EXTENSIONS,
+      'text/plain': ['.gcode'],
+    },
+  })
+
+  const checks = uploadedFile ? validateFile(uploadedFile, selectedPrinter?.build_volume) : []
+
+  return (
+    <section>
+      <h2 className="text-xs font-semibold uppercase tracking-widest text-muted mb-3">
+        Print File
+      </h2>
+      <div
+        {...getRootProps()}
+        className={cn(
+          'flex flex-col items-center justify-center gap-3 p-8 rounded-xl border-2 border-dashed cursor-pointer transition-all duration-150',
+          isDragActive
+            ? 'border-teal bg-teal-dim'
+            : uploadedFile
+            ? 'border-green bg-green/5'
+            : 'border-border-2 hover:border-border-2 hover:bg-white/2'
+        )}
+      >
+        <input {...getInputProps()} />
+        <span className="text-2xl">{uploadedFile ? '✓' : '⬆'}</span>
+        {uploadedFile ? (
+          <p className="text-sm font-mono text-green">{uploadedFile.name}</p>
+        ) : (
+          <div className="text-center">
+            <p className="text-sm text-text">
+              {isDragActive ? 'Drop file here' : 'Drag & drop or click to upload'}
+            </p>
+            <p className="text-xs text-muted mt-1">.gcode · .stl · .3mf</p>
+          </div>
+        )}
+      </div>
+
+      {checks.length > 0 && (
+        <ul className="mt-3 flex flex-col gap-1.5">
+          {checks.map((c) => (
+            <li key={c.label} className="flex items-center gap-2 text-xs">
+              <span className={c.ok ? 'text-green' : 'text-red'}>
+                {c.ok ? '✓' : '✗'}
+              </span>
+              <span className={c.ok ? 'text-muted' : 'text-red/70'}>
+                {c.label}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
