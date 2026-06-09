@@ -1,5 +1,5 @@
-import { notFound } from 'next/navigation'
 import { createClient } from '@/app/lib/supabase-server'
+import { ResultsEmptyState } from '@/app/components/results/ResultsEmptyState'
 import { JobMetadataHeader } from '@/app/components/results/JobMetadataHeader'
 import { CurvatureAnalysisCard } from '@/app/components/results/CurvatureAnalysisCard'
 import { PhotoComparisonGrid } from '@/app/components/results/PhotoComparisonGrid'
@@ -31,7 +31,7 @@ export default async function ResultsPage({ params }: Props) {
     supabase.from('results').select(RESULT_SELECT).order('created_at'),
   ])
 
-  if (!result) notFound()
+  if (!result) return <ResultsEmptyState jobId={jobId} />
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
 

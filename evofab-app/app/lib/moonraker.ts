@@ -45,6 +45,28 @@ export async function applyPrintSettings(ip: string, port: number, settings: Pri
   }
 }
 
+export function getMoonrakerWsUrl(ip: string, port: number): string {
+  return `ws://${ip}:${port}/websocket`
+}
+
+export async function getWebcamStreamUrl(ip: string, port: number): Promise<string | null> {
+  try {
+    const res = await fetch(`http://${ip}:${port}/server/webcams/list`, {
+      signal: AbortSignal.timeout(3000),
+    })
+    if (!res.ok) return null
+    const json = await res.json()
+    const webcams: { stream_url?: string }[] = json?.result?.webcams ?? []
+    if (webcams.length === 0) return null
+    const streamUrl = webcams[0].stream_url
+    if (!streamUrl) return null
+    // Relative URLs are served from the printer's port-80 nginx proxy
+    return streamUrl.startsWith('/') ? `http://${ip}${streamUrl}` : streamUrl
+  } catch {
+    return null
+  }
+}
+
 export async function startPrint(ip: string, port: number, filename: string): Promise<void> {
   const res = await fetch(`${base(ip, port)}/printer/print/start`, {
     method: 'POST',

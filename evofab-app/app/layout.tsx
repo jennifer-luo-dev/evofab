@@ -1,8 +1,14 @@
+// layout.tsx
+// Root application layout. Wraps every page with the shared navigation shell
+// (Topbar, NavTabs) and global React context providers (job state, printer
+// setup state, robot arm live status).
+
 import type { Metadata } from "next";
 import { Geist_Mono, DM_Sans } from "next/font/google";
 import "./globals.css";
 import { JobProvider } from "@/app/contexts/JobContext";
 import { PrinterProvider } from "@/app/contexts/PrinterContext";
+import { RobotProvider } from "@/app/contexts/RobotContext";
 import { Topbar } from "@/app/components/layout/Topbar";
 import { NavTabs } from "@/app/components/layout/NavTabs";
 
@@ -35,13 +41,15 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col bg-bg text-text antialiased">
         <JobProvider>
           <PrinterProvider>
-            <Topbar />
-            <div className="flex flex-col flex-1 pt-13">
-              <NavTabs />
-              <main className="flex-1 overflow-auto">
-                {children}
-              </main>
-            </div>
+            <RobotProvider>
+              <Topbar />
+              <div className="flex flex-col flex-1 pt-13">
+                <NavTabs />
+                <main className="flex-1 overflow-auto">
+                  {children}
+                </main>
+              </div>
+            </RobotProvider>
           </PrinterProvider>
         </JobProvider>
       </body>

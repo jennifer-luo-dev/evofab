@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useState, ReactNode } from 'react'
+import { createContext, useContext, useState, useCallback, ReactNode } from 'react'
 import type { PrinterWithStatus } from '@/app/types/printer'
 import type { PrintSettings, MaterialProfile, Experiment, ExperimentParams } from '@/app/types/job'
 
@@ -21,6 +21,7 @@ interface PrinterContextValue {
   experimentParams: ExperimentParams
   setSelectedPrinter: (printer: PrinterWithStatus | null) => void
   updateSetting: (key: keyof PrintSettings, value: number) => void
+  applySettings: (overrides: Partial<PrintSettings>) => void
   setSelectedMaterialProfile: (profile: MaterialProfile | null) => void
   setSelectedExperiment: (exp: Experiment | null) => void
   updateExperimentParam: (key: string, value: unknown) => void
@@ -41,6 +42,10 @@ export function PrinterProvider({ children }: { children: ReactNode }) {
   const updateSetting = (key: keyof PrintSettings, value: number) => {
     setSettings((prev) => ({ ...prev, [key]: value }))
   }
+
+  const applySettings = useCallback((overrides: Partial<PrintSettings>) => {
+    setSettings((prev) => ({ ...prev, ...overrides }))
+  }, [])
 
   const setSelectedMaterialProfile = (profile: MaterialProfile | null) => {
     _setSelectedMaterialProfile(profile)
@@ -84,6 +89,7 @@ export function PrinterProvider({ children }: { children: ReactNode }) {
         experimentParams,
         setSelectedPrinter,
         updateSetting,
+        applySettings,
         setSelectedMaterialProfile,
         setSelectedExperiment,
         updateExperimentParam,

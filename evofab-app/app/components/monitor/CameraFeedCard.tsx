@@ -1,13 +1,17 @@
 'use client'
 
+import { useState } from 'react'
 import { cn } from '@/app/lib/utils'
 
 interface CameraFeedCardProps {
   live?: boolean
   showCrosshair?: boolean
+  streamUrl?: string | null
 }
 
-export function CameraFeedCard({ live = false, showCrosshair = false }: CameraFeedCardProps) {
+export function CameraFeedCard({ live = false, showCrosshair = false, streamUrl }: CameraFeedCardProps) {
+  const [streamError, setStreamError] = useState(false)
+  const showStream = !!streamUrl && !streamError
   return (
     <div className="p-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
       <div className="flex items-center justify-between mb-4">
@@ -26,7 +30,17 @@ export function CameraFeedCard({ live = false, showCrosshair = false }: CameraFe
           </div>
         )}
 
-        {!live && (
+        {showStream && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={streamUrl!}
+            alt="Camera feed"
+            className="absolute inset-0 w-full h-full object-cover scale-x-[-1] scale-y-[-1]"
+            onError={() => setStreamError(true)}
+          />
+        )}
+
+        {!showStream && (
           <div className="absolute inset-0 flex items-center justify-center">
             <span className="text-xs font-mono text-[var(--color-muted)] uppercase tracking-widest">
               Standby
