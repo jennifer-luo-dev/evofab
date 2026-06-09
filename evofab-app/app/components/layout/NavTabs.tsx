@@ -1,3 +1,4 @@
+// NavTabs.tsx: React component for tabs associated with site pages
 'use client'
 
 import Link from 'next/link'

@@ -1,29 +1,29 @@
 // Topbar.tsx
-// Fixed top navigation bar that displays the lab identity and live status
-// indicator dots for every hardware device in the SDL pipeline. The robot
-// arm dot is driven by RobotContext; the camera dot is a static placeholder
+// React component that displays the lab identity and live status
+// indicator dots for every hardware device in the SDL pipeline.  the camera dot is a static placeholder
 // until camera status is tracked in the database.
 
 "use client";
 
 import { useRobot } from "@/app/contexts/RobotContext";
 import type { RobotState } from "@/app/contexts/RobotContext";
-import type { PrinterStatusType } from "@/app/types/printer";
+export type StatusType = 'idle' | 'active' | 'paused' | 'error' | 'offline'
 
-const statusColor: Record<PrinterStatusType, string> = {
+
+const statusColor: Record<StatusType, string> = {
   idle: "bg-green",
-  printing: "bg-amber animate-pulse-dot",
+  active: "bg-amber animate-pulse-dot",
   paused: "bg-amber",
   error: "bg-red",
   offline: "bg-muted",
 };
 
-// Map live RTDE state onto the shared PrinterStatusType dot vocabulary so
-// all device indicators use the same color semantics.
-function robotDotStatus(r: RobotState): PrinterStatusType {
+
+// The robot arm dot is driven by RobotContext;
+function robotDotStatus(r: RobotState): StatusType {
   if (!r.connected) return "offline";
   if (r.is_emergency_stopped || r.is_protective_stopped) return "error";
-  if (r.is_moving || r.is_program_running) return "printing"; // active/running
+  if (r.is_moving || r.is_program_running) return "active"; // active/running
   if (r.runtime_state === 4) return "paused"; // program paused on pendant
   if (r.is_powered) return "idle";
   return "offline";

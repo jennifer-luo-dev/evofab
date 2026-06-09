@@ -58,12 +58,16 @@ def _rtde_reader() -> None:
             while rtde.isConnected():
                 robot_mode = rtde.getRobotMode()
                 runtime_state = rtde.getRuntimeState()
+
                 # Bitmask: bit 0 = IS_POWER_ON, bit 1 = IS_PROGRAM_RUNNING
                 robot_bits = rtde.getRobotStatusBits()
+
                 # Bitmask: bit 2 = protective stop, bit 7 = combined e-stop
                 safety_bits = rtde.getSafetyStatusBits()
+
                 # 6-vector [vx, vy, vz, wx, wy, wz] in m/s
                 tcp_speed = rtde.getActualTCPSpeed()
+
                 # Teach-pendant speed slider value, 0.0–1.0
                 speed_fraction = rtde.getTargetSpeedFraction()
 
@@ -140,11 +144,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.get("/api/python-data")
-def read_root():
-    return {"message": "Hello from FastAPI backend!", "status": "success"}
 
 
 @app.websocket("/ws/robot")
