@@ -5,9 +5,10 @@ import { useRobot } from "@/app/contexts/RobotContext";
 
 type MoveStatus = "idle" | "sending" | "success" | "error";
 
+// Default within all safety planes: east y≤0.25, south x≤0.20, table z≥0.025
 const DEFAULT_TARGET = { x: 0.15, y: 0.15, z: 0.30 };
 
-export default function ClassificationTestPage() {
+export default function RobotTestPage() {
   const robot = useRobot();
   const [target, setTarget] = useState(DEFAULT_TARGET);
   const [status, setStatus] = useState<MoveStatus>("idle");
@@ -49,15 +50,15 @@ export default function ClassificationTestPage() {
     <div className="max-w-lg mx-auto mt-12 px-6 space-y-8">
       <div>
         <h1 className="text-xl font-semibold text-text">
-          Classification Test
+          Robot Arm — Move Test
         </h1>
         <p className="text-sm text-muted mt-1">
-          Move the UR7e arm to a Cartesian position for classification. All
-          coordinates in metres, robot base frame.
+          Sends a Cartesian move command to the UR7e via URscript. Robot must
+          be connected, powered, and pendant in Remote Control mode.
         </p>
       </div>
 
-      {/* Robot status */}
+      {/* Robot status summary */}
       <div className="rounded-lg border border-border bg-surface p-4 space-y-1 text-sm font-mono">
         <StatusRow label="Connected" value={robot.connected} />
         <StatusRow label="Powered" value={robot.is_powered} />
@@ -67,21 +68,21 @@ export default function ClassificationTestPage() {
           value={robot.is_protective_stopped}
           danger
         />
-        <StatusRow label="Moving" value={robot.is_moving} />
+        <StatusRow label="Program running" value={robot.is_program_running} />
         <div className="flex justify-between">
           <span className="text-muted">Robot mode</span>
-          <span className="text-muted">{robot.robot_mode}</span>
+          <span className="text-muted">{robot.robot_mode ?? "—"}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-muted">Runtime state</span>
-          <span className="text-muted">{robot.runtime_state}</span>
+          <span className="text-muted">{robot.runtime_state ?? "—"}</span>
         </div>
       </div>
 
       {/* Target coordinate inputs */}
       <div className="space-y-3">
         <p className="text-sm font-medium text-text">
-          Target position (metres)
+          Target position (metres, robot base frame)
         </p>
         <div className="grid grid-cols-3 gap-3">
           {(["x", "y", "z"] as const).map((axis) => (
@@ -112,7 +113,7 @@ export default function ClassificationTestPage() {
         disabled={!canRun}
         className="w-full rounded-lg px-4 py-3 text-sm font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-teal text-white hover:opacity-90 active:opacity-80 hover:cursor-pointer"
       >
-        {status === "sending" ? "Moving…" : "Move to Position"}
+        {status === "sending" ? "Sending…" : "Run"}
       </button>
 
       {/* Feedback */}
@@ -130,10 +131,8 @@ export default function ClassificationTestPage() {
 
       {!robot.connected && (
         <p className="text-xs text-muted">
-          Robot not connected — start the FastAPI server and check that the
-          UR7e is reachable. Run:{" "}
-          <code className="font-mono">uvicorn main:app</code> in{" "}
-          <code className="font-mono">app/api/python/</code>.
+          Robot is not connected — start the FastAPI server and ensure the UR7e
+          is reachable at <code>ROBOT_IP</code>.
         </p>
       )}
     </div>

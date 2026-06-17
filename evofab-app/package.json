@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "concurrently --names \"next,api\" --prefix-colors \"cyan,yellow\" \"next dev\" \"path/to/venv/bin/uvicorn main:app --reload --port 8000 --app-dir app/api/python\"",
+    "dev:web": "next dev",
+    "dev:api": "path/to/venv/bin/uvicorn main:app --reload --port 8000 --app-dir app/api/python",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
@@ -28,6 +30,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/ws": "^8.18.1",
+    "concurrently": "^10.0.3",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
     "tailwindcss": "^4",

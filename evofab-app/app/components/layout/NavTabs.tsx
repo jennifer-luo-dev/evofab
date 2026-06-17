@@ -7,10 +7,13 @@ import { cn } from '@/app/lib/utils'
 import { useJob } from '@/app/contexts/JobContext'
 
 const TABS = [
-  { label: 'Setup',   href: '/setup' },
-  { label: 'Monitor', href: '/monitor' },
-  { label: 'Results', href: '/results' },
-  { label: 'History', href: '/history' },
+  { label: 'Setup',       href: '/setup' },
+  { label: 'Monitor',     href: '/monitor' },
+  { label: 'Results',     href: '/results' },
+  { label: 'History',     href: '/history' },
+  // TODO: remove when robot motion is integrated into the main flow
+  { label: 'Robot Test',        href: '/robot-test' },
+  { label: 'Classification',    href: '/classification-test' },
 ]
 
 export function NavTabs() {

@@ -2,7 +2,7 @@
 // React context that maintains a single WebSocket connection to the FastAPI
 // /ws/robot endpoint and makes live UR7e status available to any component
 // in the tree via useRobot(). Opens on mount, reconnects automatically after
-// 3 s when the server is unreachable, and resets to DISCONNECTED on close.
+// 1 s when the server is unreachable, and resets to DISCONNECTED on close.
 
 "use client";
 
@@ -68,8 +68,11 @@ export function RobotProvider({ children }: { children: ReactNode }) {
 
       ws.onclose = () => {
         setState(DISCONNECTED);
-        // Robot or FastAPI server may be temporarily offline — retry after 3 s
-        reconnectTimer = setTimeout(connect, 3000);
+        reconnectTimer = setTimeout(connect, 1000); //update every 1 second
+      };
+
+      ws.onerror = () => {
+        ws.close();
       };
     }
 
