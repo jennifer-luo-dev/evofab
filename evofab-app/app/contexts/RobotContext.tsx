@@ -28,6 +28,8 @@ export interface RobotState {
   is_moving: boolean;
   // Teach-pendant speed slider value, 0–100 %
   speed_fraction: number;
+  // Actual TCP pose from RTDE: [x, y, z, rx, ry, rz] metres / radians
+  tcp_pose?: [number, number, number, number, number, number];
 }
 
 const DISCONNECTED: RobotState = {
@@ -46,7 +48,7 @@ const RobotContext = createContext<RobotState>(DISCONNECTED);
 
 // Override in .env.local with NEXT_PUBLIC_ROBOT_WS_URL for non-default setups
 const ROBOT_WS_URL =
-  process.env.NEXT_PUBLIC_ROBOT_WS_URL ?? "ws://localhost:8000/ws/robot";
+  process.env.NEXT_PUBLIC_ROBOT_WS_URL ?? "ws://localhost:8001/ws/robot";
 
 export function RobotProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<RobotState>(DISCONNECTED);

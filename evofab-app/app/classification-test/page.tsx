@@ -17,7 +17,7 @@ export default function ClassificationTestPage() {
     setStatus("sending");
     setMessage(null);
     try {
-      const res = await fetch("http://localhost:8000/robot/move", {
+      const res = await fetch("http://localhost:8001/robot/move", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ x: target.x, y: target.y, z: target.z }),

@@ -19,7 +19,6 @@
 
 import asyncio
 import json
-import math
 import os
 import threading
 import time
@@ -62,6 +61,11 @@ def _rtde_reader() -> None:
         _latest_state = {"connected": False, "error": "ur-rtde not installed"}
         return
 
+    # RTDEReceiveInterface() holds the GIL during its C-level connect, which
+    # starves the asyncio event loop and prevents uvicorn from binding its port.
+    # A brief delay here lets uvicorn complete startup before the first connect.
+    time.sleep(2)
+
     while True:
         try:
             rtde = rtde_receive.RTDEReceiveInterface(ROBOT_IP)
@@ -71,6 +75,7 @@ def _rtde_reader() -> None:
                 tcp_speed = rtde.getActualTCPSpeed()
                 vx, vy, vz = tcp_speed[0], tcp_speed[1], tcp_speed[2]
 
+                pose = rtde.getActualTCPPose()
                 _latest_state = {
                     "connected": True,
                     "robot_mode": rtde.getRobotMode(),
@@ -81,6 +86,10 @@ def _rtde_reader() -> None:
                     "is_protective_stopped": rtde.isProtectiveStopped(),
                     "is_moving": sqrt(vx**2 + vy**2 + vz**2) > 0.001,
                     "speed_fraction": round(rtde.getTargetSpeedFraction() * 100),
+                    # Monitored by _execute_gripper to track URScript lifecycle
+                    "reg18": rtde.getOutputIntRegister(18),
+                    # Actual TCP pose [x, y, z, rx, ry, rz] in metres / radians
+                    "tcp_pose": [round(v, 4) for v in pose],
                 }
 
                 time.sleep(1 / POLL_HZ)
@@ -102,7 +111,7 @@ app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://localhost:3001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -162,7 +171,8 @@ class MoveRequest(BaseModel):
 
 
 def _execute_move(x: float, y: float, z: float) -> tuple[bool, str]:
-    """Blocking: validate safety planes, send URscript movel, confirm arrival."""
+    """Blocking: validate safety planes, send URscript movej, confirm arrival.
+    """
     violations = [
         name
         for name, (nx, ny, nz), d in _SAFETY_PLANES
@@ -178,20 +188,22 @@ def _execute_move(x: float, y: float, z: float) -> tuple[bool, str]:
         return False, "ur-rtde not installed"
 
     try:
-        # Snapshot position before the move
+        # Snapshot position and joint angles before the move.
         recv = rtde_receive.RTDEReceiveInterface(ROBOT_IP)
         before = recv.getActualTCPPose()
 
+        # Preserve current TCP orientation so the move only changes position.
+        rx, ry, rz = before[3], before[4], before[5]
+
         # Send URscript via port 30002 (secondary client interface).
         # Requires Remote Control mode on the teach pendant.
-        # Do NOT call set_payload here — the pendant's Installation settings
-        # already have the correct 2 kg payload configured; overriding via
-        # URscript with the wrong CoG triggers a protective stop.
+        #
+        # movej(p[...]) solves IK once then moves in joint space — singularity-safe.
+        # movel requires a linear TCP path at every point, which causes joint
+        # velocity blow-up near singularities (C15A40).
         script = (
-            # Move to a safe home configuration first so the elbow is clear of
-            # all safety planes, then proceed to the Cartesian target.
-            f"movej([0.0,-1.5707,1.5707,-1.5707,-1.5707,0.0], a=0.3, v=0.3)\n"
-            f"movel(p[{x:.4f},{y:.4f},{z:.4f},{math.pi:.8f},0.0,0.0], a=0.2, v=0.04)\n"
+            f"set_payload(1.07, [0.0, 0.0, 0.058])\n"
+            f"movej(p[{x:.4f},{y:.4f},{z:.4f},{rx:.6f},{ry:.6f},{rz:.6f}], a=0.3, v=0.3)\n"
         )
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(5)
@@ -234,6 +246,107 @@ def _execute_move(x: float, y: float, z: float) -> tuple[bool, str]:
 
     except Exception as exc:
         return False, str(exc)
+
+
+class GripperRequest(BaseModel):
+    position: int = 128  # 0 = open, 255 = closed
+    speed: int = 128
+    force: int = 50
+
+
+def _execute_gripper(position: int, speed: int, force: int) -> tuple[bool, str]:
+    """Trigger the gripper URP loop program via RTDE input/output registers.
+
+    The PolyScopeX program must be running on the pendant.  It loops waiting
+    for input_int_register_0 == 1, then runs one open+close cycle using the
+    parameters in registers 1–3, and writes output_int_register_18 = 1 on
+    completion.
+
+    Register map (server → robot via RTDEIOInterface):
+      input_int_register_0  — 1 = trigger cycle, 0 = idle
+      input_int_register_1  — speed  (0–255)
+      input_int_register_2  — force  (0–255)
+      input_int_register_3  — close position (0–255)
+
+    Register map (robot → server via RTDEReceiveInterface):
+      output_int_register_18 — 0 = running / idle, 1 = cycle complete
+    """
+    try:
+        import rtde_receive
+        import rtde_io
+    except ImportError:
+        return False, "ur-rtde not installed"
+
+    if not _latest_state.get("connected"):
+        return False, "Robot not connected."
+
+    if _latest_state.get("runtime_state") != 2:
+        return False, (
+            "Gripper program is not running. "
+            "Start the gripper program on the PolyScopeX pendant first."
+        )
+
+    recv = rtde_receive.RTDEReceiveInterface(
+        ROBOT_IP, variables=["output_int_register_18"]
+    )
+    io = rtde_io.RTDEIOInterface(ROBOT_IP)
+
+    def _reg() -> int:
+        return recv.getOutputIntRegister(18) if recv.isConnected() else -1
+
+    try:
+        before = _reg()
+
+        # Write parameters before asserting the trigger
+        io.setInputIntRegister(1, speed)
+        io.setInputIntRegister(2, force)
+        io.setInputIntRegister(3, position)
+        io.setInputIntRegister(0, 1)  # trigger
+
+        # If the previous cycle left reg18 = 1 (stale), wait for the robot
+        # to write 0 (running) before watching for the new 1 (done).
+        if before == 1:
+            t0 = time.time()
+            while time.time() - t0 < 10.0:
+                time.sleep(0.1)
+                if _reg() != 1:
+                    break
+            else:
+                return False, (
+                    "Gripper program did not acknowledge the trigger within 10 s. "
+                    "Is the loop program still running on the pendant?"
+                )
+
+        # Wait for the robot to write reg18 = 1 (cycle complete)
+        deadline = time.time() + 60.0
+        while time.time() < deadline:
+            time.sleep(0.1)
+            if _reg() == 1:
+                io.setInputIntRegister(0, 0)  # reset trigger so loop waits again
+                return True, "Gripper cycle complete."
+
+        return False, "Gripper cycle timed out (60 s)."
+
+    finally:
+        try:
+            recv.disconnect()
+        except Exception:
+            pass
+        try:
+            io.disconnect()
+        except Exception:
+            pass
+
+
+@app.post("/robot/gripper")
+async def robot_gripper(body: GripperRequest) -> dict:
+    loop = asyncio.get_event_loop()
+    ok, msg = await loop.run_in_executor(
+        None, _execute_gripper, body.position, body.speed, body.force
+    )
+    if ok:
+        return {"ok": True, "message": msg}
+    raise HTTPException(status_code=422, detail=msg)
 
 
 @app.post("/robot/move")
