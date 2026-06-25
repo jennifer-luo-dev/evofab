@@ -2,3 +2,7 @@ fastapi
 uvicorn[standard]
 ur-rtde
 httpx
+opencv-contrib-python-headless
+numpy
+scipy
+pyserial

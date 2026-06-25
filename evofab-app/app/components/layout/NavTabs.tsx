@@ -13,7 +13,9 @@ const TABS = [
   { label: 'History',     href: '/history' },
   // TODO: remove when robot motion is integrated into the main flow
   { label: 'Robot Test',        href: '/robot-test' },
+  { label: 'Actuation Test',    href: '/actuation-test' },
   { label: 'Classification',    href: '/classification-test' },
+  { label: 'Camera Test',       href: '/camera-test' },
 ]
 
 export function NavTabs() {

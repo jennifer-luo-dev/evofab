@@ -5,6 +5,14 @@ import { useRobot } from "@/app/contexts/RobotContext";
 
 type ActionStatus = "idle" | "sending" | "success" | "error";
 
+type Waypoint = {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  z: number;
+};
+
 // Default within all safety planes: east y≤0.25, south x≤0.20, table z≥0.025
 const DEFAULT_TARGET = { x: 0.15, y: 0.15, z: 0.30 };
 
@@ -23,6 +31,10 @@ export default function RobotTestPage() {
   const [jogStep, setJogStep] = useState(0.01);
   const initialized = useRef(false);
 
+  const [queue, setQueue] = useState<Waypoint[]>([]);
+  const [queueIndex, setQueueIndex] = useState<number | null>(null);
+  const [addName, setAddName] = useState("");
+
   // Seed target inputs from actual robot position on first connect.
   useEffect(() => {
     if (robot.tcp_pose && !initialized.current) {
@@ -35,7 +47,7 @@ export default function RobotTestPage() {
     }
   }, [robot.tcp_pose]);
 
-  async function sendMove(coords: typeof target) {
+  async function sendMove(coords: { x: number; y: number; z: number }): Promise<boolean> {
     setStatus("sending");
     setMessage(null);
     try {
@@ -48,25 +60,21 @@ export default function RobotTestPage() {
       if (res.ok) {
         setStatus("success");
         setMessage(data.message ?? "Move command sent.");
+        return true;
       } else {
         setStatus("error");
         setMessage(data.detail ?? "Server returned an error.");
+        return false;
       }
     } catch (err) {
       setStatus("error");
-      setMessage(
-        err instanceof Error ? err.message : "Failed to reach server.",
-      );
+      setMessage(err instanceof Error ? err.message : "Failed to reach server.");
+      return false;
     }
   }
 
-  function handleRun() {
-    sendMove(target);
-  }
-
   function handleJog(axis: "x" | "y" | "z", direction: 1 | -1) {
-    // Always increment from the robot's actual current TCP, not the UI target,
-    // so a 10 mm jog moves exactly 10 mm regardless of where the target inputs say.
+    // Always increment from actual TCP, not the UI target, so the step is exact.
     const base = robot.tcp_pose
       ? { x: robot.tcp_pose[0], y: robot.tcp_pose[1], z: robot.tcp_pose[2] }
       : target;
@@ -75,7 +83,38 @@ export default function RobotTestPage() {
       [axis]: parseFloat((base[axis] + direction * jogStep).toFixed(4)),
     };
     setTarget(newTarget);
-    sendMove(newTarget);
+    void sendMove(newTarget);
+  }
+
+  function addWaypoint(coords: { x: number; y: number; z: number }, name = "") {
+    setQueue((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), name, x: coords.x, y: coords.y, z: coords.z },
+    ]);
+    setAddName("");
+  }
+
+  function updateWaypoint(
+    id: string,
+    field: keyof Omit<Waypoint, "id">,
+    value: string | number,
+  ) {
+    setQueue((prev) =>
+      prev.map((wp) => (wp.id === id ? { ...wp, [field]: value } : wp)),
+    );
+  }
+
+  function removeWaypoint(id: string) {
+    setQueue((prev) => prev.filter((wp) => wp.id !== id));
+  }
+
+  async function handleRunQueue() {
+    for (let i = 0; i < queue.length; i++) {
+      setQueueIndex(i);
+      const ok = await sendMove(queue[i]);
+      if (!ok) break;
+    }
+    setQueueIndex(null);
   }
 
   const canRun =
@@ -85,15 +124,17 @@ export default function RobotTestPage() {
     !robot.is_protective_stopped &&
     status !== "sending";
 
+  const canRunQueue = canRun && queue.length > 0 && queueIndex === null;
+
   return (
-    <div className="max-w-lg mx-auto mt-12 px-6 space-y-8">
+    <div className="max-w-3xl mx-auto mt-12 px-6 space-y-8">
       <div>
         <h1 className="text-xl font-semibold text-text">
           Robot Arm — Move Test
         </h1>
         <p className="text-sm text-muted mt-1">
-          Sends a Cartesian move command to the UR7e via URscript. Robot must
-          be connected, powered, and pendant in Remote Control mode.
+          Sends Cartesian move commands to the UR7e via URscript. Robot must be
+          connected, powered, and pendant in Remote Control mode.
         </p>
       </div>
 
@@ -128,93 +169,59 @@ export default function RobotTestPage() {
         )}
       </div>
 
-      {/* Target coordinate inputs */}
-      <div className="space-y-3">
-        <p className="text-sm font-medium text-text">
-          Target position (metres, robot base frame)
-        </p>
-        <div className="grid grid-cols-3 gap-3">
-          {(["x", "y", "z"] as const).map((axis) => (
-            <label key={axis} className="flex flex-col gap-1">
-              <span className="text-xs text-muted uppercase tracking-wide">
-                {axis}
-              </span>
-              <input
-                type="number"
-                step="0.01"
-                value={target[axis]}
-                onChange={(e) =>
-                  setTarget((prev) => ({
-                    ...prev,
-                    [axis]: parseFloat(e.target.value) || 0,
-                  }))
-                }
-                className="rounded border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-1 focus:ring-teal"
-              />
-            </label>
-          ))}
-        </div>
-      </div>
-
-      {/* Jog controls */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <p className="text-sm font-medium text-text">Jog</p>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted">Step:</span>
-            <select
-              value={jogStep}
-              onChange={(e) => setJogStep(parseFloat(e.target.value))}
-              className="rounded border border-border bg-surface px-2 py-1 text-xs text-text focus:outline-none focus:ring-1 focus:ring-teal"
-            >
-              {JOG_STEPS.map(({ label, value }) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <div className="grid grid-cols-3 gap-3">
-          {(["x", "y", "z"] as const).map((axis) => (
-            <div key={axis} className="flex flex-col items-center gap-1">
-              <span className="text-xs text-muted uppercase tracking-wide">
-                {axis}
-              </span>
-              <div className="flex gap-1 w-full">
-                <button
-                  onClick={() => handleJog(axis, -1)}
-                  disabled={!canRun}
-                  className="flex-1 rounded border border-border bg-surface px-2 py-2 text-sm font-bold text-text hover:bg-teal/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  −
-                </button>
-                <button
-                  onClick={() => handleJog(axis, 1)}
-                  disabled={!canRun}
-                  className="flex-1 rounded border border-border bg-surface px-2 py-2 text-sm font-bold text-text hover:bg-teal/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  +
-                </button>
-              </div>
+      {/* Jog */}
+      <div className="space-y-4">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium text-text">Jog</p>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted">Step:</span>
+              <select
+                value={jogStep}
+                onChange={(e) => setJogStep(parseFloat(e.target.value))}
+                className="rounded border border-border bg-surface px-2 py-1 text-xs text-text focus:outline-none focus:ring-1 focus:ring-teal"
+              >
+                {JOG_STEPS.map(({ label, value }) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
             </div>
-          ))}
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            {(["x", "y", "z"] as const).map((axis) => (
+              <div key={axis} className="flex flex-col items-center gap-1">
+                <span className="text-xs text-muted uppercase tracking-wide">
+                  {axis}
+                </span>
+                <div className="flex gap-1 w-full">
+                  <button
+                    onClick={() => handleJog(axis, -1)}
+                    disabled={!canRun}
+                    className="flex-1 rounded border border-border bg-surface px-2 py-2 text-sm font-bold text-text hover:bg-teal/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    −
+                  </button>
+                  <button
+                    onClick={() => handleJog(axis, 1)}
+                    disabled={!canRun}
+                    className="flex-1 rounded border border-border bg-surface px-2 py-2 text-sm font-bold text-text hover:bg-teal/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-muted">
+            Each press moves the robot by one step from its actual current
+            position.
+          </p>
         </div>
-        <p className="text-xs text-muted">
-          Each press updates the target and immediately sends a move command.
-        </p>
       </div>
 
-      {/* Run button */}
-      <button
-        onClick={handleRun}
-        disabled={!canRun}
-        className="w-full rounded-lg px-4 py-3 text-sm font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-teal text-white hover:opacity-90 active:opacity-80 hover:cursor-pointer"
-      >
-        {status === "sending" ? "Sending…" : "Run"}
-      </button>
-
-      {/* Feedback */}
+      {/* Move feedback */}
       {message && (
         <p
           className={`text-sm rounded-lg px-4 py-3 border ${
@@ -226,6 +233,165 @@ export default function RobotTestPage() {
           {message}
         </p>
       )}
+
+      <hr className="border-border" />
+
+      {/* Waypoint Queue */}
+      <div className="space-y-4">
+        <h2 className="text-base font-semibold text-text">Waypoint Queue</h2>
+
+        {/* Add controls */}
+        <div className="space-y-2">
+          <div className="grid grid-cols-[1fr_5rem_5rem_5rem] gap-2">
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-muted">Name (optional)</span>
+              <input
+                type="text"
+                placeholder="e.g. Home, Pick, Place"
+                value={addName}
+                onChange={(e) => setAddName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") addWaypoint(target, addName);
+                }}
+                className="rounded border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-1 focus:ring-teal"
+              />
+            </label>
+            {(["x", "y", "z"] as const).map((axis) => (
+              <label key={axis} className="flex flex-col gap-1">
+                <span className="text-xs text-muted uppercase tracking-wide">
+                  {axis} (m)
+                </span>
+                <input
+                  type="number"
+                  step="0.001"
+                  value={target[axis]}
+                  onChange={(e) =>
+                    setTarget((prev) => ({
+                      ...prev,
+                      [axis]: parseFloat(e.target.value) || 0,
+                    }))
+                  }
+                  className="rounded border border-border bg-surface px-2 py-2 text-sm text-text tabular-nums focus:outline-none focus:ring-1 focus:ring-teal"
+                />
+              </label>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => addWaypoint(target, addName)}
+              className="flex-1 rounded border border-border bg-surface px-3 py-2 text-sm text-text hover:bg-teal/10 transition-colors"
+            >
+              + Add Typed Coordinates
+            </button>
+            <button
+              onClick={() => {
+                const pos = robot.tcp_pose
+                  ? {
+                      x: robot.tcp_pose[0],
+                      y: robot.tcp_pose[1],
+                      z: robot.tcp_pose[2],
+                    }
+                  : target;
+                addWaypoint(pos, addName);
+              }}
+              disabled={!robot.connected}
+              className="flex-1 rounded border border-border bg-surface px-3 py-2 text-sm text-text hover:bg-teal/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              + Add Current Position
+            </button>
+          </div>
+        </div>
+
+        {/* Queue list */}
+        {queue.length === 0 ? (
+          <p className="text-sm text-muted text-center py-8 border border-dashed border-border rounded-lg">
+            No waypoints — add some above.
+          </p>
+        ) : (
+          <div className="space-y-1">
+            <div className="grid grid-cols-[2rem_1fr_5.5rem_5.5rem_5.5rem_2rem] gap-2 px-2 text-xs text-muted uppercase tracking-wide">
+              <span>#</span>
+              <span>Name</span>
+              <span>X (m)</span>
+              <span>Y (m)</span>
+              <span>Z (m)</span>
+              <span />
+            </div>
+            {queue.map((wp, i) => (
+              <div
+                key={wp.id}
+                className={`grid grid-cols-[2rem_1fr_5.5rem_5.5rem_5.5rem_2rem] gap-2 items-center rounded-lg px-2 py-1.5 transition-colors ${
+                  queueIndex === i
+                    ? "bg-teal/10 border border-teal/30"
+                    : "border border-transparent hover:border-border"
+                }`}
+              >
+                <span className="text-xs text-muted tabular-nums">{i + 1}</span>
+                <input
+                  type="text"
+                  value={wp.name}
+                  placeholder="—"
+                  onChange={(e) => updateWaypoint(wp.id, "name", e.target.value)}
+                  className="rounded border border-border bg-surface px-2 py-1 text-sm text-text focus:outline-none focus:ring-1 focus:ring-teal min-w-0 w-full"
+                />
+                {(["x", "y", "z"] as const).map((axis) => (
+                  <input
+                    key={axis}
+                    type="number"
+                    step="0.001"
+                    value={wp[axis]}
+                    onChange={(e) =>
+                      updateWaypoint(
+                        wp.id,
+                        axis,
+                        parseFloat(e.target.value) || 0,
+                      )
+                    }
+                    className="rounded border border-border bg-surface px-2 py-1 text-sm text-text tabular-nums focus:outline-none focus:ring-1 focus:ring-teal min-w-0 w-full"
+                  />
+                ))}
+                <button
+                  onClick={() => removeWaypoint(wp.id)}
+                  disabled={queueIndex !== null}
+                  className="text-muted hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed text-base leading-none transition-colors text-center"
+                  title="Remove"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <button
+            onClick={handleRunQueue}
+            disabled={!canRunQueue}
+            className="flex-1 rounded-lg px-4 py-3 text-sm font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-teal text-white hover:opacity-90 active:opacity-80"
+          >
+            {queueIndex !== null
+              ? `Moving to waypoint ${queueIndex + 1} / ${queue.length}…`
+              : `Run Queue (${queue.length} waypoint${queue.length !== 1 ? "s" : ""})`}
+          </button>
+          {queue.length > 0 && queueIndex === null && (
+            <button
+              onClick={() => setQueue([])}
+              className="rounded-lg border border-border bg-surface px-4 py-3 text-sm text-muted hover:text-red-400 hover:border-red-400/30 transition-colors"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+
+        {queueIndex !== null && queue[queueIndex] && (
+          <p className="text-xs text-muted text-center">
+            {queue[queueIndex].name ? `"${queue[queueIndex].name}" — ` : ""}(
+            {queue[queueIndex].x.toFixed(3)},{" "}
+            {queue[queueIndex].y.toFixed(3)},{" "}
+            {queue[queueIndex].z.toFixed(3)}) m
+          </p>
+        )}
+      </div>
 
       {!robot.connected && (
         <p className="text-xs text-muted">
