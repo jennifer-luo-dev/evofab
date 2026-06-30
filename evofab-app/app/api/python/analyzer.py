@@ -8,6 +8,7 @@ class ActuatorAnalyzer:
     Supports both real Depth Gating and Brightness Thresholding (MSMF Fallback).
     """
     def __init__(self, z_min=0.40, z_max=0.55, threshold=200):
+        """Configures depth-gating bounds (metres) and the brightness threshold fallback."""
         self.z_min = z_min
         self.z_max = z_max
         self.threshold = threshold
