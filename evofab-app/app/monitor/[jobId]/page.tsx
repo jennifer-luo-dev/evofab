@@ -1,3 +1,7 @@
+// page.tsx (monitor/[jobId])
+// Server-rendered monitor page; loads job, logs, and printer status, then
+// hands off to MonitorClient for live updates.
+
 import { createClient } from '@/app/lib/supabase-server'
 import { getWebcamStreamUrl, getMoonrakerWsUrl } from '@/app/lib/moonraker'
 import { MonitorClient } from './MonitorClient'

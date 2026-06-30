@@ -1,3 +1,6 @@
+// page.tsx (monitor index)
+// Monitor index route with no active job selected; shows the empty state.
+
 import { MonitorEmptyState } from '@/app/components/monitor/MonitorEmptyState'
 
 /** Monitor index route with no active job selected; shows the empty state. */

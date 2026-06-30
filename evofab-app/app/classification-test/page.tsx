@@ -1,3 +1,7 @@
+// page.tsx (classification-test)
+// Manual UR7e diagnostic page for moving to a fixed classification
+// position.
+
 "use client";
 
 import { useState } from "react";

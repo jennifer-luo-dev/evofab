@@ -1,3 +1,7 @@
+// page.tsx (setup)
+// Server-rendered setup flow: fetches printers, material profiles, and
+// experiments, then renders the printer/experiment/file/settings form.
+
 import { createClient } from "@/app/lib/supabase-server";
 import { PrinterGrid } from "@/app/components/setup/PrinterGrid";
 import { PrintSettingsPanel } from "@/app/components/setup/PrintSettingsPanel";

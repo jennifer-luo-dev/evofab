@@ -1,3 +1,7 @@
+// page.tsx (history)
+// Server-rendered history page listing all results with a curvature trend
+// chart.
+
 import { createClient } from '@/app/lib/supabase-server'
 import { ResultsTable } from '@/app/components/history/ResultsTable'
 import { CurvatureTrendChart } from '@/app/components/results/CurvatureTrendChart'

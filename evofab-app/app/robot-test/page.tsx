@@ -1,3 +1,7 @@
+// page.tsx (robot-test)
+// Manual UR7e diagnostic page: jog controls, a waypoint queue, and a
+// Robotiq gripper test panel, all driving the robot via direct FastAPI calls.
+
 "use client";
 
 import { useState, useEffect, useRef } from "react";

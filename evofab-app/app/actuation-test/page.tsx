@@ -1,3 +1,7 @@
+// page.tsx (actuation-test)
+// Manual Arduino solenoid diagnostic page: per-channel pulse firing with
+// duration control and a global abort.
+
 "use client";
 
 import { useState, useEffect, useCallback } from "react";

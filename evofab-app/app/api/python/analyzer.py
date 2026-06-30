@@ -1,3 +1,8 @@
+# analyzer.py
+# Deterministic OpenCV vision pipeline for PneuNet actuator characterization:
+# masks the actuator (depth-gated or brightness-thresholded) and extracts its
+# spine via skeletonization for curvature analysis.
+
 import cv2
 import numpy as np
 

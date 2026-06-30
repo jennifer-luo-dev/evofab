@@ -1,3 +1,7 @@
+// page.tsx (results/[jobId])
+// Server-rendered results page: loads a job's result plus all results (for
+// trend context) and renders the curvature analysis views.
+
 import { createClient } from '@/app/lib/supabase-server'
 import { ResultsEmptyState } from '@/app/components/results/ResultsEmptyState'
 import { JobMetadataHeader } from '@/app/components/results/JobMetadataHeader'
