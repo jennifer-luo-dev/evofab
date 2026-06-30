@@ -8,6 +8,7 @@ interface MetricBoxProps {
   valueClassName?: string
 }
 
+/** Labelled metric tile used across monitor, robot-arm, and result cards. */
 export function MetricBox({ label, value, unit, className, valueClassName }: MetricBoxProps) {
   return (
     <div

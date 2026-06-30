@@ -8,6 +8,7 @@ interface ProgressBarProps {
   height?: 'sm' | 'md'
 }
 
+/** Horizontal progress bar. Value is clamped to the 0–100 range. */
 export function ProgressBar({
   value,
   className,

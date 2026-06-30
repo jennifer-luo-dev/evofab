@@ -20,6 +20,7 @@ const statusColor: Record<StatusType, string> = {
 
 
 // The robot arm dot is driven by RobotContext;
+/** Maps RobotState to a StatusType for the header indicator dot, prioritising safety stops. */
 function robotDotStatus(r: RobotState): StatusType {
   if (!r.connected) return "offline";
   if (r.is_emergency_stopped || r.is_protective_stopped) return "error";
@@ -29,6 +30,7 @@ function robotDotStatus(r: RobotState): StatusType {
   return "offline";
 }
 
+/** Fixed header bar showing lab identity and live hardware status dots. */
 export function Topbar() {
   const robot = useRobot();
 

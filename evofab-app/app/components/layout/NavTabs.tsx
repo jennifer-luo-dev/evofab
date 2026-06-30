@@ -18,6 +18,10 @@ const TABS = [
   { label: 'Camera Test',       href: '/camera-test' },
 ]
 
+/**
+ * App-wide navigation tabs. The Monitor and Results tabs link to the active job's
+ * URL when one exists, otherwise fall back to their index routes.
+ */
 export function NavTabs() {
   const pathname = usePathname()
   const { jobActive, currentJobId, resultCount } = useJob()

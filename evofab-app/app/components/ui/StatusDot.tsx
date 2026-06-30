@@ -16,6 +16,7 @@ const statusConfig: Record<PrinterStatusType, { colorClass: string; pulse: boole
   offline:  { colorClass: 'bg-muted',  pulse: false, label: 'Offline' },
 }
 
+/** Coloured indicator dot for a PrinterStatusType. Pulses while printing or in error. */
 export function StatusDot({ status, className }: StatusDotProps) {
   const cfg = statusConfig[status]
   return (
@@ -36,6 +37,7 @@ interface StatusBadgeProps {
   className?: string
 }
 
+/** Pill badge combining a StatusDot and label text for a PrinterStatusType. */
 export function StatusBadge({ status, className }: StatusBadgeProps) {
   const cfg = statusConfig[status]
   const badgeColor =

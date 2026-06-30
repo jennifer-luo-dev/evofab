@@ -14,6 +14,7 @@ interface ArcGaugeProps {
   animate?: boolean
 }
 
+/** Animated arc gauge displaying a numeric value against a max range. */
 export function ArcGauge({
   value,
   maxValue = 2,
@@ -83,6 +84,10 @@ export function ArcGauge({
   )
 }
 
+/**
+ * Computes an SVG arc path string from a centre point, radius, and start/end angles.
+ * Sets the large-arc-flag whenever the sweep exceeds 180°.
+ */
 function describeArc(cx: number, cy: number, r: number, startDeg: number, endDeg: number): string {
   const toRad = (d: number) => (d * Math.PI) / 180
   const sx = cx + r * Math.cos(toRad(startDeg))
