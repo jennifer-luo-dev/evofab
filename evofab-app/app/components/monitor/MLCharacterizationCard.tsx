@@ -1,3 +1,7 @@
+// MLCharacterizationCard.tsx
+// Monitor card displaying ML curvature-analysis status and run metadata
+// (script, method, input file).
+
 import { MetricBox } from '@/app/components/ui/MetricBox'
 import { cn } from '@/app/lib/utils'
 

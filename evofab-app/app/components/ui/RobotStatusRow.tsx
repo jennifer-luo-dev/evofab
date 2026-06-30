@@ -1,3 +1,7 @@
+// RobotStatusRow.tsx
+// Labelled boolean status row (yes/no) used in the robot-test and
+// classification-test diagnostic pages.
+
 interface RobotStatusRowProps {
   label: string
   value: boolean

@@ -1,3 +1,6 @@
+// ProgressBar.tsx
+// Horizontal progress bar with a clamped 0-100 fill width.
+
 import { cn } from '@/app/lib/utils'
 
 interface ProgressBarProps {

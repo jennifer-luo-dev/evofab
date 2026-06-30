@@ -1,3 +1,7 @@
+// CameraFeedCard.tsx
+// Monitor card displaying the Orbbec 335L MJPEG stream, with optional live
+// badge and alignment crosshair overlay for the photo-booth pipeline step.
+
 'use client'
 
 import { useState } from 'react'

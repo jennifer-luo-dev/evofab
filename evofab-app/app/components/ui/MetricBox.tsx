@@ -1,3 +1,7 @@
+// MetricBox.tsx
+// Labelled metric tile (label + value + optional unit) reused across
+// monitor, robot-arm, and result cards.
+
 import { cn } from '@/app/lib/utils'
 
 interface MetricBoxProps {

@@ -1,3 +1,7 @@
+// PipelineTracker.tsx
+// Step-by-step pipeline progress tracker showing done/running/pending state
+// for each stage of the job pipeline.
+
 'use client'
 
 import { cn } from '@/app/lib/utils'

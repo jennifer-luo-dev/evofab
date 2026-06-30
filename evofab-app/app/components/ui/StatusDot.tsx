@@ -1,3 +1,7 @@
+// StatusDot.tsx
+// Coloured status indicator dot and pill badge for a PrinterStatusType,
+// used across printer cards and the topbar.
+
 'use client'
 
 import { cn } from '@/app/lib/utils'

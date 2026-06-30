@@ -1,3 +1,7 @@
+// ArcGauge.tsx
+// Animated SVG arc gauge for displaying a single numeric value against a
+// max range, used in curvature and robot-arm metric displays.
+
 'use client'
 
 import { useEffect, useRef, useState } from 'react'

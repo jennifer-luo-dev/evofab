@@ -1,3 +1,7 @@
+// SystemLogCard.tsx
+// Scrollable monitor log panel with a live Supabase Realtime subscription
+// for new entries, plus a job-abort control.
+
 'use client'
 
 import { useEffect, useRef, useState } from 'react'

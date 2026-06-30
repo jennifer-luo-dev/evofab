@@ -1,3 +1,7 @@
+// ExperimentCard.tsx
+// Monitor card displaying experiment parameters (pressure, cycles, script)
+// as metric tiles.
+
 import { MetricBox } from '@/app/components/ui/MetricBox'
 
 interface ExperimentCardProps {

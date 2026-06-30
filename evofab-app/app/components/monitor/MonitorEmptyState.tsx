@@ -1,3 +1,7 @@
+// MonitorEmptyState.tsx
+// Fallback UI shown when a monitor page is visited with a missing or
+// invalid job ID.
+
 'use client'
 
 import Link from 'next/link'

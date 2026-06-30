@@ -1,3 +1,7 @@
+// PrinterMetricsCard.tsx
+// Monitor card showing print progress, layer counts, and live hotend/bed
+// temperatures sourced from Moonraker.
+
 import { ProgressBar } from '@/app/components/ui/ProgressBar'
 import { MetricBox } from '@/app/components/ui/MetricBox'
 import type { PrinterStatus } from '@/app/types/printer'

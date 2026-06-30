@@ -1,3 +1,7 @@
+// card.tsx
+// Generic card primitives (Card, CardHeader, CardTitle, CardContent, etc.)
+// used as the base layout building block across feature components.
+
 import * as React from "react";
 
 import { cn } from "../../lib/utils";
