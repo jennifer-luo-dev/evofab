@@ -3,12 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently --names \"next,api\" --prefix-colors \"cyan,yellow\" \"next dev\" \"path/to/venv/bin/uvicorn main:app --reload --port 8001 --app-dir app/api/python\"",
+    "dev": "concurrently --names \"next,api\" --prefix-colors \"cyan,yellow\" \"next dev\" \"OPENCV_AVFOUNDATION_SKIP_AUTH=1 /Library/Frameworks/Python.framework/Versions/3.11/bin/uvicorn main:app --reload --port 8001 --app-dir app/api/python\"",
     "dev:web": "next dev",
-    "dev:api": "path/to/venv/bin/uvicorn main:app --reload --port 8001 --app-dir app/api/python",
+    "dev:api": "OPENCV_AVFOUNDATION_SKIP_AUTH=1 /Library/Frameworks/Python.framework/Versions/3.11/bin/uvicorn main:app --reload --port 8001 --app-dir app/api/python",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "format": "prettier --write ."
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.3",
@@ -26,6 +27,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "prettier": "^3",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

@@ -30,4 +30,9 @@ through a web dashboard.
 
 ## Getting started
 
-Most day-to-day development happens in `evofab-app/` — start there.
+Most day-to-day development happens in `evofab-app/` — start there. Run `npm run dev` to start the development server.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for workflow, coding standards, PR
+requirements, and local setup notes for new contributors.
