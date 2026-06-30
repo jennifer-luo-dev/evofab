@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/app/lib/supabase-server'
 
+/** GET /api/jobs/[id] — Returns a single job by ID. */
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -17,6 +18,7 @@ export async function GET(
   return NextResponse.json({ job: data })
 }
 
+/** PATCH /api/jobs/[id] — Partial-updates a job row (status, pipeline_step, progress, etc). */
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }

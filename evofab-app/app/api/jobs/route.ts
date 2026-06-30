@@ -3,6 +3,7 @@ import { createClient } from '@/app/lib/supabase-server'
 import { uploadGcode, applyPrintSettings, startPrint } from '@/app/lib/moonraker'
 import type { PrintSettings } from '@/app/types/job'
 
+/** GET /api/jobs — Returns all jobs ordered newest-first. */
 export async function GET() {
   const supabase = await createClient()
   const { data, error } = await supabase
@@ -14,6 +15,11 @@ export async function GET() {
   return NextResponse.json({ jobs: data })
 }
 
+/**
+ * POST /api/jobs — Creates a job, uploads its G-code to Moonraker, and starts the print.
+ * Expects multipart form data: file, printer_id, experiment_id, material_profile_id,
+ * settings (JSON-encoded PrintSettings), and experiment_params (JSON-encoded, optional).
+ */
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const form = await req.formData()

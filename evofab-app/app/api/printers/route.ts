@@ -5,6 +5,10 @@ import type { PrinterStatus, PrinterWithStatus } from "@/app/types/printer";
 
 const MOONRAKER_TIMEOUT_MS = 3000;
 
+/**
+ * Polls a single Moonraker instance and maps the response to a PrinterStatus.
+ * Falls back to offlinePrinterStatus if the request times out or the printer is unreachable.
+ */
 async function fetchMoonrakerStatus(
   ip: string,
   port: number,
@@ -24,6 +28,7 @@ async function fetchMoonrakerStatus(
   }
 }
 
+/** GET /api/printers — Returns all active printers enriched with their live Moonraker statuses. */
 export async function GET() {
   const supabase = await createClient();
 

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/app/lib/supabase-server'
 
+/** GET /api/results — Returns all result records ordered newest-first. */
 export async function GET() {
   const supabase = await createClient()
   const { data, error } = await supabase
