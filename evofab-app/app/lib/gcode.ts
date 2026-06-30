@@ -3,12 +3,17 @@ import type { PrintSettings } from '@/app/types/job'
 export type GCodeBounds = { x: number; y: number; z: number }
 export type GCodeInfo = { bounds: GCodeBounds | null; settings: Partial<PrintSettings> }
 
+/**
+ * Parses a "WxDxH" build-volume string (e.g. "220x220x250") into millimetre dimensions.
+ * Returns null if the string cannot be parsed.
+ */
 function parseBuildVolume(str: string): GCodeBounds | null {
   const m = str.match(/([\d.]+)[x×]([\d.]+)[x×]([\d.]+)/i)
   if (!m) return null
   return { x: parseFloat(m[1]), y: parseFloat(m[2]), z: parseFloat(m[3]) }
 }
 
+/** Returns the first numeric capture from `text` matched against the given patterns in order. */
 function firstNum(text: string, ...patterns: RegExp[]): number | undefined {
   for (const p of patterns) {
     const m = text.match(p)
@@ -18,6 +23,11 @@ function firstNum(text: string, ...patterns: RegExp[]): number | undefined {
 
 export { parseBuildVolume }
 
+/**
+ * Parses a G-code file's header (and full body as fallback) to extract print bounds and settings.
+ * Tries Cura, PrusaSlicer, and OrcaSlicer slicer comment formats before scanning all G0/G1 moves.
+ * @returns Bounding box in mm and any PrintSettings extracted from slicer comments or M-code fallbacks.
+ */
 export async function analyzeGCode(file: File): Promise<GCodeInfo> {
   const header = await file.slice(0, 64 * 1024).text()
 

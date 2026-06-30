@@ -31,6 +31,7 @@ interface PrinterContextValue {
 
 const PrinterContext = createContext<PrinterContextValue | null>(null)
 
+/** Provides printer selection, print settings, and experiment configuration to the component tree. */
 export function PrinterProvider({ children }: { children: ReactNode }) {
   const [selectedPrinter, setSelectedPrinter] = useState<PrinterWithStatus | null>(null)
   const [settings, setSettings] = useState<PrintSettings>(DEFAULT_SETTINGS)
@@ -43,10 +44,12 @@ export function PrinterProvider({ children }: { children: ReactNode }) {
     setSettings((prev) => ({ ...prev, [key]: value }))
   }
 
+  /** Merges a partial PrintSettings override into the current settings. */
   const applySettings = useCallback((overrides: Partial<PrintSettings>) => {
     setSettings((prev) => ({ ...prev, ...overrides }))
   }, [])
 
+  /** Selects a material profile and overwrites all PrintSettings with its values. */
   const setSelectedMaterialProfile = (profile: MaterialProfile | null) => {
     _setSelectedMaterialProfile(profile)
     if (profile) {
@@ -60,6 +63,7 @@ export function PrinterProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  /** Selects an experiment and resets experimentParams to that experiment's defaults. */
   const setSelectedExperiment = (exp: Experiment | null) => {
     _setSelectedExperiment(exp)
     setExperimentParams(exp ? { ...exp.default_params } : {})
@@ -69,6 +73,7 @@ export function PrinterProvider({ children }: { children: ReactNode }) {
     setExperimentParams((prev) => ({ ...prev, [key]: value }))
   }
 
+  /** Resets all setup state (printer, settings, file, material, experiment) back to defaults. */
   const resetSetup = () => {
     setSelectedPrinter(null)
     setSettings(DEFAULT_SETTINGS)
@@ -102,6 +107,7 @@ export function PrinterProvider({ children }: { children: ReactNode }) {
   )
 }
 
+/** Returns the printer setup context from the nearest PrinterProvider. Throws outside one. */
 export function usePrinter(): PrinterContextValue {
   const ctx = useContext(PrinterContext)
   if (!ctx) throw new Error('usePrinter must be used inside PrinterProvider')

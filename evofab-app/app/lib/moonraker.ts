@@ -1,6 +1,10 @@
 import type { PrintSettings } from '@/app/types/job'
 import type { PrinterStatus, PrinterStatusType } from '@/app/types/printer'
 
+/**
+ * Maps Moonraker print_stats.state strings to the app's PrinterStatusType.
+ * 'complete' and 'cancelled' both map to 'idle' — the printer is available again.
+ */
 export const MOONRAKER_STATE_MAP: Record<string, PrinterStatusType> = {
   standby: 'idle',
   printing: 'printing',
@@ -10,6 +14,11 @@ export const MOONRAKER_STATE_MAP: Record<string, PrinterStatusType> = {
   cancelled: 'idle',
 }
 
+/**
+ * Converts a Moonraker /printer/objects/query response into a PrinterStatus.
+ * @param printerId - Supabase printer row ID to attach to the returned record.
+ * @param result - The `result.status` object from the Moonraker query JSON.
+ */
 export function parseMoonrakerStatus(
   printerId: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -37,6 +46,10 @@ export function parseMoonrakerStatus(
   }
 }
 
+/**
+ * Returns an all-null PrinterStatus representing an unreachable printer.
+ * @param printerId - Supabase printer row ID to attach to the returned record.
+ */
 export function offlinePrinterStatus(printerId: string): PrinterStatus {
   return {
     printer_id: printerId,
@@ -60,6 +73,10 @@ function base(ip: string, port: number) {
   return `http://${ip}:${port}`
 }
 
+/**
+ * Uploads a G-code file to Moonraker's file manager and returns the server-side path.
+ * @returns The file path as confirmed by Moonraker, used as the argument to startPrint.
+ */
 export async function uploadGcode(ip: string, port: number, file: File): Promise<string> {
   const form = new FormData()
   form.append('file', file, file.name)
@@ -77,6 +94,10 @@ export async function uploadGcode(ip: string, port: number, file: File): Promise
   return json.item?.path ?? file.name
 }
 
+/**
+ * Pushes all PrintSettings to the printer as a single gcode script.
+ * Fan speed is converted from 0–100% to 0–255 PWM; flow rate from ratio to percent.
+ */
 export async function applyPrintSettings(ip: string, port: number, settings: PrintSettings): Promise<void> {
   const fanValue = Math.round((settings.fan_speed / 100) * 255)
   const flowPct = Math.round(settings.flow_rate * 100)
@@ -101,10 +122,16 @@ export async function applyPrintSettings(ip: string, port: number, settings: Pri
   }
 }
 
+/** Returns the Moonraker WebSocket URL for direct sub-second telemetry. */
 export function getMoonrakerWsUrl(ip: string, port: number): string {
   return `ws://${ip}:${port}/websocket`
 }
 
+/**
+ * Queries the Moonraker webcam list and returns the first stream URL, or null if unavailable.
+ * Relative URLs (e.g. "/webcam?action=stream") are prefixed with the printer's IP
+ * because they assume Moonraker's nginx proxy is serving at port 80.
+ */
 export async function getWebcamStreamUrl(ip: string, port: number): Promise<string | null> {
   try {
     const res = await fetch(`http://${ip}:${port}/server/webcams/list`, {
@@ -123,6 +150,10 @@ export async function getWebcamStreamUrl(ip: string, port: number): Promise<stri
   }
 }
 
+/**
+ * Sends the print start command to Moonraker.
+ * @param filename - The server-side path returned by uploadGcode.
+ */
 export async function startPrint(ip: string, port: number, filename: string): Promise<void> {
   const res = await fetch(`${base(ip, port)}/printer/print/start`, {
     method: 'POST',

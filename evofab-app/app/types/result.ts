@@ -1,6 +1,7 @@
 import type { PrintSettings, ExperimentParams } from './job'
 import type { Printer } from './printer'
 
+/** Shared Supabase select string joining a result to its job, printer, material profile, and experiment. */
 export const RESULT_SELECT = `
   *,
   job:jobs(

@@ -93,6 +93,7 @@ export interface Experiment {
   created_at: string
 }
 
+/** Ordered pipeline stages displayed in the monitor UI, from upload through completion. */
 export const PIPE_STEPS: { id: PipelineStepId; label: string; sub: string }[] = [
   { id: 'upload',     label: 'Upload',      sub: 'G-code validated' },
   { id: 'printing',   label: 'Printing',    sub: 'Klipper · FGF' },

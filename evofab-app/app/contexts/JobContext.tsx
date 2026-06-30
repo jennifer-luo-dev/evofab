@@ -25,6 +25,7 @@ const initialState: JobState = {
   resultCount: 0,
 }
 
+/** Handles all job state transitions. Resets pipeline step on abort. */
 function reducer(state: JobState, action: JobAction): JobState {
   switch (action.type) {
     case 'START_JOB':
@@ -50,6 +51,7 @@ interface JobContextValue extends JobState {
 
 const JobContext = createContext<JobContextValue | null>(null)
 
+/** Provides job pipeline state and dispatch to the component tree. */
 export function JobProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState)
   return (
@@ -59,6 +61,7 @@ export function JobProvider({ children }: { children: ReactNode }) {
   )
 }
 
+/** Returns job state and dispatch from the nearest JobProvider. Throws outside one. */
 export function useJob(): JobContextValue {
   const ctx = useContext(JobContext)
   if (!ctx) throw new Error('useJob must be used inside JobProvider')

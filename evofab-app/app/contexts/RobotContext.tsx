@@ -50,6 +50,7 @@ const RobotContext = createContext<RobotState>(DISCONNECTED);
 const ROBOT_WS_URL =
   process.env.NEXT_PUBLIC_ROBOT_WS_URL ?? "ws://localhost:8001/ws/robot";
 
+/** Opens a WebSocket to the RTDE bridge and provides live UR7e state to the component tree. */
 export function RobotProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<RobotState>(DISCONNECTED);
 
@@ -91,6 +92,7 @@ export function RobotProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** Returns the live robot state from the nearest RobotProvider (DISCONNECTED if absent). */
 export function useRobot(): RobotState {
   return useContext(RobotContext);
 }
