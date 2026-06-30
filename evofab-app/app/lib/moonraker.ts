@@ -1,4 +1,60 @@
 import type { PrintSettings } from '@/app/types/job'
+import type { PrinterStatus, PrinterStatusType } from '@/app/types/printer'
+
+export const MOONRAKER_STATE_MAP: Record<string, PrinterStatusType> = {
+  standby: 'idle',
+  printing: 'printing',
+  paused: 'paused',
+  error: 'error',
+  complete: 'idle',
+  cancelled: 'idle',
+}
+
+export function parseMoonrakerStatus(
+  printerId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  result: Record<string, any>,
+): PrinterStatus {
+  const ps = result.print_stats ?? {}
+  const ext = result.extruder ?? {}
+  const bed = result.heater_bed ?? {}
+  const vsd = result.virtual_sdcard ?? {}
+  return {
+    printer_id: printerId,
+    online: true,
+    status: MOONRAKER_STATE_MAP[ps.state] ?? 'idle',
+    print_state: ps.state ?? null,
+    filename: ps.filename || null,
+    progress: typeof vsd.progress === 'number' ? vsd.progress * 100 : 0,
+    layer_current: ps.info?.current_layer ?? null,
+    layer_total: ps.info?.total_layer ?? null,
+    hotend_temp: ext.temperature ?? null,
+    hotend_target: ext.target ?? null,
+    bed_temp: bed.temperature ?? null,
+    bed_target: bed.target ?? null,
+    eta_seconds: null,
+    updated_at: new Date().toISOString(),
+  }
+}
+
+export function offlinePrinterStatus(printerId: string): PrinterStatus {
+  return {
+    printer_id: printerId,
+    online: false,
+    status: 'offline',
+    print_state: null,
+    filename: null,
+    progress: 0,
+    layer_current: null,
+    layer_total: null,
+    hotend_temp: null,
+    hotend_target: null,
+    bed_temp: null,
+    bed_target: null,
+    eta_seconds: null,
+    updated_at: new Date().toISOString(),
+  }
+}
 
 function base(ip: string, port: number) {
   return `http://${ip}:${port}`

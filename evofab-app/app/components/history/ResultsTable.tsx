@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { cn } from '@/app/lib/utils'
+import { cn, downloadBlob } from '@/app/lib/utils'
 import type { ResultWithContext } from '@/app/types/result'
 
 interface ResultsTableProps {
@@ -33,13 +33,7 @@ export function ResultsTable({ results }: ResultsTableProps) {
       r.created_at,
     ])
     const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n')
-    const blob = new Blob([csv], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'evofab-all-results.csv'
-    a.click()
-    URL.revokeObjectURL(url)
+    downloadBlob(csv, 'evofab-all-results.csv', 'text/csv')
   }
 
   return (

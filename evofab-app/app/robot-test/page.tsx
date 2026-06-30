@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRobot } from "@/app/contexts/RobotContext";
+import { RobotStatusRow } from "@/app/components/ui/RobotStatusRow";
 
 type ActionStatus = "idle" | "sending" | "success" | "error";
 
@@ -140,15 +141,15 @@ export default function RobotTestPage() {
 
       {/* Robot status summary */}
       <div className="rounded-lg border border-border bg-surface p-4 space-y-1 text-sm font-mono">
-        <StatusRow label="Connected" value={robot.connected} />
-        <StatusRow label="Powered" value={robot.is_powered} />
-        <StatusRow label="E-stop" value={robot.is_emergency_stopped} danger />
-        <StatusRow
+        <RobotStatusRow label="Connected" value={robot.connected} />
+        <RobotStatusRow label="Powered" value={robot.is_powered} />
+        <RobotStatusRow label="E-stop" value={robot.is_emergency_stopped} danger />
+        <RobotStatusRow
           label="Protective stop"
           value={robot.is_protective_stopped}
           danger
         />
-        <StatusRow label="Program running" value={robot.is_program_running} />
+        <RobotStatusRow label="Program running" value={robot.is_program_running} />
         <div className="flex justify-between">
           <span className="text-muted">Robot mode</span>
           <span className="text-muted">{robot.robot_mode ?? "—"}</span>
@@ -403,25 +404,6 @@ export default function RobotTestPage() {
       <hr className="border-border" />
 
       <GripperControl canRun={canRun} />
-    </div>
-  );
-}
-
-function StatusRow({
-  label,
-  value,
-  danger = false,
-}: {
-  label: string;
-  value: boolean;
-  danger?: boolean;
-}) {
-  const color =
-    danger && value ? "text-red-400" : value ? "text-teal" : "text-muted";
-  return (
-    <div className="flex justify-between">
-      <span className="text-muted">{label}</span>
-      <span className={color}>{value ? "yes" : "no"}</span>
     </div>
   );
 }

@@ -4,19 +4,8 @@ import { JobMetadataHeader } from '@/app/components/results/JobMetadataHeader'
 import { CurvatureAnalysisCard } from '@/app/components/results/CurvatureAnalysisCard'
 import { PhotoComparisonGrid } from '@/app/components/results/PhotoComparisonGrid'
 import { CurvatureTrendChart } from '@/app/components/results/CurvatureTrendChart'
+import { RESULT_SELECT } from '@/app/types/result'
 import type { ResultWithContext } from '@/app/types/result'
-
-const RESULT_SELECT = `
-  *,
-  job:jobs(
-    filename,
-    print_settings,
-    experiment_params,
-    printer:printers(name, model),
-    material_profile:material_profiles(name, nozzle_temp),
-    experiment:experiments(display_name)
-  )
-`
 
 interface Props {
   params: Promise<{ jobId: string }>

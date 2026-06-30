@@ -1,19 +1,8 @@
 import { createClient } from '@/app/lib/supabase-server'
 import { ResultsTable } from '@/app/components/history/ResultsTable'
 import { CurvatureTrendChart } from '@/app/components/results/CurvatureTrendChart'
+import { RESULT_SELECT } from '@/app/types/result'
 import type { ResultWithContext } from '@/app/types/result'
-
-const RESULT_SELECT = `
-  *,
-  job:jobs(
-    filename,
-    print_settings,
-    experiment_params,
-    printer:printers(name, model),
-    material_profile:material_profiles(name, nozzle_temp),
-    experiment:experiments(display_name)
-  )
-`
 
 export default async function HistoryPage() {
   const supabase = await createClient()

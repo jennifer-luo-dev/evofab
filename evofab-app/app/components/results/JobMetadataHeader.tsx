@@ -1,5 +1,6 @@
 'use client'
 
+import { downloadBlob } from '@/app/lib/utils'
 import type { ResultWithContext } from '@/app/types/result'
 
 interface JobMetadataHeaderProps {
@@ -15,13 +16,7 @@ export function JobMetadataHeader({ result }: JobMetadataHeaderProps) {
   const pressure = job?.experiment_params?.pressure_kpa ?? '—'
 
   function downloadJSON() {
-    const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `evofab-result-${result.id.slice(0, 8)}.json`
-    a.click()
-    URL.revokeObjectURL(url)
+    downloadBlob(JSON.stringify(result, null, 2), `evofab-result-${result.id.slice(0, 8)}.json`, 'application/json')
   }
 
   function exportCSV() {
@@ -43,13 +38,7 @@ export function JobMetadataHeader({ result }: JobMetadataHeaderProps) {
     }
     const keys = Object.keys(flat) as (keyof typeof flat)[]
     const csv = [keys.join(','), keys.map((k) => flat[k] ?? '').join(',')].join('\n')
-    const blob = new Blob([csv], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `evofab-result-${result.id.slice(0, 8)}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
+    downloadBlob(csv, `evofab-result-${result.id.slice(0, 8)}.csv`, 'text/csv')
   }
 
   return (

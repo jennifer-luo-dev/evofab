@@ -57,10 +57,6 @@ export function ArcGauge({
   const fraction = Math.min(displayed / maxValue, 1)
   const angle = startAngle + sweepAngle * fraction
 
-  const toRad = (deg: number) => (deg * Math.PI) / 180
-  const arcX = (deg: number) => cx + radius * Math.cos(toRad(deg))
-  const arcY = (deg: number) => cy + radius * Math.sin(toRad(deg))
-
   const trackPath = describeArc(cx, cy, radius, startAngle, startAngle + sweepAngle)
   const fillPath = fraction > 0
     ? describeArc(cx, cy, radius, startAngle, angle)
@@ -76,7 +72,7 @@ export function ArcGauge({
         <text x={cx} y={cy - 4} textAnchor="middle" className="font-mono" fill="var(--color-text)" fontSize="18" fontWeight="600">
           {displayed.toFixed(2)}
         </text>
-        <text x={cx} y={cy + 14} textAnchor="middle" fill="var(--color-muted)" fontSize="10">
+        <text x={cx} y={cy + 14} textAnchor="middle" className="text-muted" fontSize="10">
           mm⁻¹
         </text>
       </svg>

@@ -1,6 +1,18 @@
 import type { PrintSettings, ExperimentParams } from './job'
 import type { Printer } from './printer'
 
+export const RESULT_SELECT = `
+  *,
+  job:jobs(
+    filename,
+    print_settings,
+    experiment_params,
+    printer:printers(name, model),
+    material_profile:material_profiles(name, nozzle_temp),
+    experiment:experiments(display_name)
+  )
+`
+
 export interface ResultRecord {
   id: string
   job_id: string
