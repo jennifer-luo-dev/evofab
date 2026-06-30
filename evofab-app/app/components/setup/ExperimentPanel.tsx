@@ -8,6 +8,7 @@ interface ExperimentPanelProps {
   experiments: Experiment[]
 }
 
+/** Experiment selector with dynamic parameter inputs driven by each experiment's JSON schema. */
 export function ExperimentPanel({ experiments }: ExperimentPanelProps) {
   const { selectedExperiment, setSelectedExperiment, experimentParams, updateExperimentParam } = usePrinter()
 

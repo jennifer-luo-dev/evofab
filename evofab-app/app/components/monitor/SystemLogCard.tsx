@@ -20,6 +20,10 @@ interface SystemLogCardProps {
   jobActive: boolean
 }
 
+/**
+ * Scrollable log panel with a live Supabase Realtime subscription for new entries.
+ * Includes a job-abort button that PATCHes the job status and redirects to /setup.
+ */
 export function SystemLogCard({ jobId, initialLogs, jobActive }: SystemLogCardProps) {
   const router = useRouter()
   const [logs, setLogs] = useState<LogEntry[]>(initialLogs)
@@ -47,6 +51,7 @@ export function SystemLogCard({ jobId, initialLogs, jobActive }: SystemLogCardPr
     return () => { supabase.removeChannel(channel) }
   }, [jobId])
 
+  /** Marks the job as aborted and navigates back to setup. */
   async function handleAbort() {
     await fetch(`/api/jobs/${jobId}`, {
       method: 'PATCH',

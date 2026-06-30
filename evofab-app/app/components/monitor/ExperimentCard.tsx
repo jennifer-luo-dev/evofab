@@ -6,6 +6,7 @@ interface ExperimentCardProps {
   script?: string
 }
 
+/** Displays experiment parameters (pressure, cycles, script) as metric tiles. */
 export function ExperimentCard({
   pressure = '—',
   cycles = '—',

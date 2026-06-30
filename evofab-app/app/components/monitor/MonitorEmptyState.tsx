@@ -6,6 +6,7 @@ interface MonitorEmptyStateProps {
   jobId: string
 }
 
+/** Fallback UI shown when a monitor page is visited with a missing or invalid job ID. */
 export function MonitorEmptyState({ jobId }: MonitorEmptyStateProps) {
   return (
     <div className="max-w-5xl mx-auto px-6 py-8 flex flex-col gap-4 animate-fade-up">

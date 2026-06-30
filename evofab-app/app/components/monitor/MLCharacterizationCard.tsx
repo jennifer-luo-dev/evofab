@@ -24,6 +24,7 @@ const statusColor: Record<MLStatus, string> = {
   error:   'text-[var(--color-red)]',
 }
 
+/** Displays ML curvature-analysis status and run metadata (script, method, input file). */
 export function MLCharacterizationCard({
   status = 'pending',
   script = '—',

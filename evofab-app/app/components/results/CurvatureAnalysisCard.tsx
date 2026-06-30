@@ -7,6 +7,7 @@ interface CurvatureAnalysisCardProps {
   result: ResultRecord
 }
 
+/** Displays before/after curvature gauges, delta change, confidence, and pass/fail badge. */
 export function CurvatureAnalysisCard({ result }: CurvatureAnalysisCardProps) {
   const before = result.curvature_before ?? 0
   const after  = result.curvature_after  ?? 0

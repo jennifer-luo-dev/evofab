@@ -10,6 +10,7 @@ interface PrinterMetricsCardProps {
   printerStatus: PrinterStatus | null
 }
 
+/** Formats seconds into a human-readable ETA string ("1h 23m" or "45m"). Returns "—" for null. */
 function formatEta(seconds: number | null): string {
   if (seconds === null) return '—'
   const h = Math.floor(seconds / 3600)
@@ -17,6 +18,7 @@ function formatEta(seconds: number | null): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`
 }
 
+/** Shows print progress, layer counts, and live hotend/bed temperatures from Moonraker. */
 export function PrinterMetricsCard({
   printerName,
   jobProgress,

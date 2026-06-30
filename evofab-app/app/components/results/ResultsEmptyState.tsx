@@ -6,6 +6,7 @@ interface ResultsEmptyStateProps {
   jobId: string
 }
 
+/** Fallback UI shown when a results page has no result record for the given job. */
 export function ResultsEmptyState({ jobId }: ResultsEmptyStateProps) {
   return (
     <div className="max-w-5xl mx-auto px-6 py-8 flex flex-col gap-4 animate-fade-up">

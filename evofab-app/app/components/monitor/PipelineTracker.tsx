@@ -8,6 +8,7 @@ interface PipelineTrackerProps {
   currentStep: PipelineStepId | null
 }
 
+/** Step-by-step pipeline progress tracker with done/running/pending states per stage. */
 export function PipelineTracker({ currentStep }: PipelineTrackerProps) {
   const currentIndex = currentStep
     ? PIPE_STEPS.findIndex((s) => s.id === currentStep)

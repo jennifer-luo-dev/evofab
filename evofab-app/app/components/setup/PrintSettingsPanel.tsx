@@ -23,6 +23,7 @@ interface PrintSettingsPanelProps {
   materialProfiles: MaterialProfile[];
 }
 
+/** Collapsible panel for selecting a material profile and overriding print settings. */
 export function PrintSettingsPanel({
   materialProfiles,
 }: PrintSettingsPanelProps) {

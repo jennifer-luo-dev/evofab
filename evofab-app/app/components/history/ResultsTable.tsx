@@ -8,9 +8,11 @@ interface ResultsTableProps {
   results: ResultWithContext[]
 }
 
+/** Sortable table of all job results with row-click navigation and a bulk CSV export. */
 export function ResultsTable({ results }: ResultsTableProps) {
   const router = useRouter()
 
+  /** Flattens every result row into a CSV and triggers a browser download. */
   function exportAllCSV() {
     if (!results.length) return
     const headers = [

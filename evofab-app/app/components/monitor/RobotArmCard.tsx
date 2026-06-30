@@ -17,6 +17,7 @@ interface RobotArmCardProps {
 }
 
 // Translate raw RTDE integers and booleans into a single human-readable label.
+/** Translates raw RTDE robot_mode and runtime_state into a human-readable label, prioritising safety stops. */
 function describeStatus(r: RobotState): string {
   if (!r.connected) return "Offline";
   if (r.is_emergency_stopped) return "E-Stop";
@@ -31,6 +32,7 @@ function describeStatus(r: RobotState): string {
   return "Ready";
 }
 
+/** Live robot arm status card sourcing data from RobotContext. */
 export function RobotArmCard({ program = "—" }: RobotArmCardProps) {
   const robot = useRobot();
 

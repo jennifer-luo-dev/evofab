@@ -7,6 +7,7 @@ interface JobMetadataHeaderProps {
   result: ResultWithContext
 }
 
+/** Job summary header with JSON download and CSV export actions. */
 export function JobMetadataHeader({ result }: JobMetadataHeaderProps) {
   const job = result.job
   const printer = job?.printer?.name ?? '—'
@@ -15,10 +16,12 @@ export function JobMetadataHeader({ result }: JobMetadataHeaderProps) {
   const cycles = job?.experiment_params?.cycles ?? '—'
   const pressure = job?.experiment_params?.pressure_kpa ?? '—'
 
+  /** Downloads the full result record as a pretty-printed JSON file. */
   function downloadJSON() {
     downloadBlob(JSON.stringify(result, null, 2), `evofab-result-${result.id.slice(0, 8)}.json`, 'application/json')
   }
 
+  /** Flattens the result record's key fields and downloads them as a single-row CSV. */
   function exportCSV() {
     const flat = {
       id: result.id,

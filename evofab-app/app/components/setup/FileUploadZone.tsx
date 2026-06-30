@@ -11,6 +11,7 @@ const ACCEPTED_EXTENSIONS = [".gcode", ".stl", ".3mf"];
 
 type CheckResult = { label: string; detail?: string; ok: boolean | null };
 
+/** Builds the pre-flight checklist (format, build-volume fit, time estimate) shown for an uploaded file. */
 function buildChecks(
   file: File,
   buildVolume: string | null | undefined,
@@ -68,6 +69,7 @@ function buildChecks(
   ];
 }
 
+/** Drag-and-drop print file upload zone; analyzes G-code bounds and runs build-volume checks. */
 export function FileUploadZone() {
   const { uploadedFile, setUploadedFile, selectedPrinter, applySettings } =
     usePrinter();

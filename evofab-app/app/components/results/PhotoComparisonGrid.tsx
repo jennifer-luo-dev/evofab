@@ -5,6 +5,11 @@ interface PhotoComparisonGridProps {
   supabaseUrl?: string
 }
 
+/**
+ * Resolves an image key to a full URL.
+ * Absolute URLs are returned as-is; relative keys are treated as Supabase Storage paths
+ * in the "results" bucket.
+ */
 function resolveImageUrl(key: string | null, supabaseUrl?: string): string | null {
   if (!key) return null
   if (key.startsWith('http')) return key
@@ -14,6 +19,7 @@ function resolveImageUrl(key: string | null, supabaseUrl?: string): string | nul
     : null
 }
 
+/** Side-by-side before/after photo comparison with curvature value overlays. */
 export function PhotoComparisonGrid({ result, supabaseUrl }: PhotoComparisonGridProps) {
   const beforeUrl = resolveImageUrl(result.before_image_key, supabaseUrl)
   const afterUrl  = resolveImageUrl(result.after_image_key,  supabaseUrl)

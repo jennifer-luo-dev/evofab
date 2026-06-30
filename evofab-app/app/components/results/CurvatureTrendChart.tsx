@@ -17,6 +17,10 @@ interface CurvatureTrendChartProps {
   results: ResultRecord[]
 }
 
+/**
+ * Area chart of curvature before/after across all jobs, in chronological order.
+ * Renders nothing if fewer than two results exist — no trend to display.
+ */
 export function CurvatureTrendChart({ results }: CurvatureTrendChartProps) {
   if (results.length < 2) return null
 

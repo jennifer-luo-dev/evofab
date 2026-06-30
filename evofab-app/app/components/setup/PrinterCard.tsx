@@ -11,6 +11,7 @@ interface PrinterCardProps {
   onSelect: (printer: PrinterWithStatus) => void
 }
 
+/** Selectable card showing a printer's status, progress, and temperatures; disabled when unavailable. */
 export function PrinterCard({ printer, selected, onSelect }: PrinterCardProps) {
   const ps = printer.printer_status
   const status: PrinterStatusType = ps?.status ?? 'offline'

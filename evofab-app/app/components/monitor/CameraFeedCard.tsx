@@ -9,6 +9,10 @@ interface CameraFeedCardProps {
   streamUrl?: string | null
 }
 
+/**
+ * Camera feed card showing the Orbbec 335L MJPEG stream.
+ * Falls back to a standby state if the stream URL is absent or the image fails to load.
+ */
 export function CameraFeedCard({ live = false, showCrosshair = false, streamUrl }: CameraFeedCardProps) {
   const [streamError, setStreamError] = useState(false)
   const showStream = !!streamUrl && !streamError

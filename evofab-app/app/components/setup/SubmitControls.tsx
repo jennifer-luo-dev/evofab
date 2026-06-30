@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { usePrinter } from "@/app/contexts/PrinterContext";
 import { useJob } from "@/app/contexts/JobContext";
 
+/** Submit/clear controls for the setup flow; posts the job to the API and navigates to its monitor page. */
 export function SubmitControls() {
   const router = useRouter();
   const {
@@ -24,6 +25,7 @@ export function SubmitControls() {
   const canSubmit =
     selectedPrinter !== null && isAvailable && uploadedFile !== null;
 
+  /** Uploads the print file and job parameters, then redirects to the new job's monitor page. */
   async function handleSubmit() {
     if (!canSubmit || !selectedPrinter || !uploadedFile) return;
     setLoading(true);
