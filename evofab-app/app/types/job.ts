@@ -1,3 +1,7 @@
+// job.ts
+// Shared TypeScript types for jobs, print settings, experiments, and the
+// pipeline-stage definitions used to drive the monitor UI.
+
 export interface PrintSettings {
   nozzle_temp: number
   bed_temp: number

@@ -1,3 +1,7 @@
+// PrintSettingsPanel.tsx
+// Collapsible setup-flow panel for selecting a material profile and
+// overriding individual print settings.
+
 "use client";
 
 import { useState } from "react";

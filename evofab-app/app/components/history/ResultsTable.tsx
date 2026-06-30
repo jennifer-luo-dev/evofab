@@ -1,3 +1,7 @@
+// ResultsTable.tsx
+// Sortable table of all job results on the history page, with row-click
+// navigation to a result's detail page and a bulk CSV export.
+
 'use client'
 
 import { useRouter } from 'next/navigation'

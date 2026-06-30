@@ -1,3 +1,7 @@
+// CurvatureTrendChart.tsx
+// Results chart showing curvature before/after across all jobs in
+// chronological order, used to spot drift over a series of experiments.
+
 'use client'
 
 import {

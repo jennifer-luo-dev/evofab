@@ -1,3 +1,7 @@
+// PrinterGrid.tsx
+// Setup-flow grid of selectable printer cards, polling live status from
+// each printer's Moonraker instance every 5 seconds.
+
 'use client'
 
 import { useState, useEffect } from 'react'

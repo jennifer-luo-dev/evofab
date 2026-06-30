@@ -1,3 +1,7 @@
+// ResultsEmptyState.tsx
+// Fallback UI shown when a results page has no result record for the
+// given job.
+
 'use client'
 
 import Link from 'next/link'

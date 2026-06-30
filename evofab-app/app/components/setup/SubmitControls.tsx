@@ -1,3 +1,7 @@
+// SubmitControls.tsx
+// Submit/clear controls for the setup flow; posts the assembled job to
+// the API and navigates to its monitor page on success.
+
 "use client";
 
 import { useState } from "react";

@@ -1,3 +1,7 @@
+// PhotoComparisonGrid.tsx
+// Results component showing a side-by-side before/after photo comparison
+// with curvature value overlays, resolving image keys to Supabase Storage URLs.
+
 import type { ResultRecord } from '@/app/types/result'
 
 interface PhotoComparisonGridProps {

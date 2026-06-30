@@ -1,3 +1,7 @@
+// ExperimentPanel.tsx
+// Setup-flow experiment selector with dynamic parameter inputs driven by
+// each experiment's JSON schema.
+
 'use client'
 
 import { cn } from '@/app/lib/utils'

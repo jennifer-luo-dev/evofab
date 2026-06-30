@@ -1,3 +1,7 @@
+// CurvatureAnalysisCard.tsx
+// Results card displaying before/after curvature gauges, delta change,
+// confidence, and pass/fail badge for a single result.
+
 import { ArcGauge } from '@/app/components/ui/ArcGauge'
 import { ProgressBar } from '@/app/components/ui/ProgressBar'
 import { cn } from '@/app/lib/utils'

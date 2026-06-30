@@ -1,3 +1,7 @@
+// FileUploadZone.tsx
+// Setup-flow drag-and-drop print file upload zone; analyzes G-code bounds
+// and runs build-volume pre-flight checks against the selected printer.
+
 "use client";
 
 import { useCallback, useEffect, useState } from "react";

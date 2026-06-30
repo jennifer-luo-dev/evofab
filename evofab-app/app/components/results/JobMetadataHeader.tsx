@@ -1,3 +1,7 @@
+// JobMetadataHeader.tsx
+// Results page header summarizing job metadata, with JSON download and
+// CSV export actions for the single result record.
+
 'use client'
 
 import { downloadBlob } from '@/app/lib/utils'

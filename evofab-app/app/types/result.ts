@@ -1,3 +1,7 @@
+// result.ts
+// Shared TypeScript types for curvature analysis result records, including
+// the joined shape returned by queries that pull in job/printer context.
+
 import type { PrintSettings, ExperimentParams } from './job'
 import type { Printer } from './printer'
 

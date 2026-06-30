@@ -1,3 +1,7 @@
+// PrinterCard.tsx
+// Selectable setup-flow card showing a single printer's status, progress,
+// and temperatures; disabled when the printer is unavailable.
+
 'use client'
 
 import { cn } from '@/app/lib/utils'

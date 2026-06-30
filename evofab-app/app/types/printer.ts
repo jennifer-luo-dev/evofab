@@ -1,3 +1,6 @@
+// printer.ts
+// Shared TypeScript types for printers and their live Moonraker status.
+
 export type PrinterStatusType = 'idle' | 'printing' | 'paused' | 'error' | 'offline'
 export type PrinterType = 'FGF' | 'FDM'
 
