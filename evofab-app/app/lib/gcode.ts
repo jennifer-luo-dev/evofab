@@ -1,3 +1,7 @@
+// gcode.ts
+// Parses G-code file headers (Cura/PrusaSlicer/OrcaSlicer comment formats,
+// with a raw move-scan fallback) to extract print bounds and slicer settings.
+
 import type { PrintSettings } from '@/app/types/job'
 
 export type GCodeBounds = { x: number; y: number; z: number }

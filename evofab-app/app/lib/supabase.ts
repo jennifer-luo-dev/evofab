@@ -1,3 +1,6 @@
+// supabase.ts
+// Browser-side Supabase client factory for use in Client Components.
+
 import { createBrowserClient } from '@supabase/ssr'
 
 /** Creates a Supabase browser client using public env vars. Use in Client Components. */

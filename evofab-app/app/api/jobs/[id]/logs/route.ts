@@ -1,3 +1,6 @@
+// route.ts (api/jobs/[id]/logs)
+// Reads and appends log entries for a single job.
+
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/app/lib/supabase-server'
 

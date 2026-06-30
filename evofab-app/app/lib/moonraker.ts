@@ -1,3 +1,7 @@
+// moonraker.ts
+// Client for Klipper's Moonraker HTTP API: status parsing, G-code upload,
+// print settings, and print start/stream URL helpers.
+
 import type { PrintSettings } from '@/app/types/job'
 import type { PrinterStatus, PrinterStatusType } from '@/app/types/printer'
 

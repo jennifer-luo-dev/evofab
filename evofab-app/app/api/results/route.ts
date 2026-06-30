@@ -1,3 +1,6 @@
+// route.ts (api/results)
+// Returns all curvature analysis result records, newest-first.
+
 import { NextResponse } from 'next/server'
 import { createClient } from '@/app/lib/supabase-server'
 

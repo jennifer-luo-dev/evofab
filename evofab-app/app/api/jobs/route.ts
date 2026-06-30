@@ -1,3 +1,7 @@
+// route.ts (api/jobs)
+// Lists jobs and creates new ones — job creation uploads the G-code to
+// Moonraker, applies print settings, and starts the print in one request.
+
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/app/lib/supabase-server'
 import { uploadGcode, applyPrintSettings, startPrint } from '@/app/lib/moonraker'

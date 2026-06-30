@@ -1,3 +1,7 @@
+// supabase-server.ts
+// Server-side Supabase client factory for use in Server Components and
+// Route Handlers, wired up to read/write cookies via Next.js's request context.
+
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 

@@ -1,3 +1,7 @@
+// PrinterContext.tsx
+// React context exposing the saved printer list and a refresh function so any
+// component can read or trigger reloads of printer configuration.
+
 'use client'
 
 import { createContext, useContext, useState, useCallback, ReactNode } from 'react'

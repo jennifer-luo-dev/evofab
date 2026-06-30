@@ -1,3 +1,7 @@
+// utils.ts
+// Small shared helpers used across components: class-name merging and
+// triggering client-side file downloads.
+
 /** Merges class names, filtering out falsy values. */
 export function cn(...classes: Array<string | undefined | null | false>) {
   return classes.filter(Boolean).join(" ");

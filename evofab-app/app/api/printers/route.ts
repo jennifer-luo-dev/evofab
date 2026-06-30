@@ -1,3 +1,7 @@
+// route.ts (api/printers)
+// Returns saved printers enriched with live status polled directly from
+// each printer's Moonraker instance.
+
 import { NextResponse } from "next/server";
 import { createClient } from "@/app/lib/supabase-server";
 import { parseMoonrakerStatus, offlinePrinterStatus } from "@/app/lib/moonraker";

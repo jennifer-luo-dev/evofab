@@ -1,3 +1,7 @@
+// JobContext.tsx
+// React context tracking the currently active job (if any) and the live
+// result count for that job, shared across the setup/monitor/results pages.
+
 'use client'
 
 import { createContext, useContext, useReducer, ReactNode } from 'react'

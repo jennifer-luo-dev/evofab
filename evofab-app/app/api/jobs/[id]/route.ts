@@ -1,3 +1,6 @@
+// route.ts (api/jobs/[id])
+// Reads and partially updates a single job row by ID.
+
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/app/lib/supabase-server'
 
