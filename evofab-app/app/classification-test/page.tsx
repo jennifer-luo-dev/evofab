@@ -8,12 +8,14 @@ type MoveStatus = "idle" | "sending" | "success" | "error";
 
 const DEFAULT_TARGET = { x: 0.15, y: 0.15, z: 0.30 };
 
+/** Manual UR7e test page for moving to a fixed classification position. */
 export default function ClassificationTestPage() {
   const robot = useRobot();
   const [target, setTarget] = useState(DEFAULT_TARGET);
   const [status, setStatus] = useState<MoveStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
 
+  /** Sends a Cartesian move command to the target position. */
   async function handleRun() {
     setStatus("sending");
     setMessage(null);

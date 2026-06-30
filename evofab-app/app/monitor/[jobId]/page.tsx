@@ -9,6 +9,7 @@ interface Props {
   params: Promise<{ jobId: string }>
 }
 
+/** Server-rendered monitor page; loads job, logs, and printer status, then hands off to the client component for live updates. */
 export default async function MonitorPage({ params }: Props) {
   const { jobId } = await params
   const supabase = await createClient()

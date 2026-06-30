@@ -7,6 +7,7 @@ import { SubmitControls } from "@/app/components/setup/SubmitControls";
 import type { PrinterWithStatus } from "@/app/types/printer";
 import type { MaterialProfile, Experiment } from "@/app/types/job";
 
+/** Server-rendered setup flow: fetches printers, material profiles, and experiments, then renders the setup form. */
 export default async function SetupPage() {
   const supabase = await createClient();
 

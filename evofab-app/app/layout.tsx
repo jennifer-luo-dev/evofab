@@ -28,6 +28,7 @@ export const metadata: Metadata = {
   description: "Self-Driving Lab — Nemitz Robotics Lab · Tufts ME",
 };
 
+/** Wraps every page with the navigation shell and global context providers. */
 export default function RootLayout({
   children,
 }: Readonly<{

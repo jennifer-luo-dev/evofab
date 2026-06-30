@@ -11,6 +11,7 @@ interface Props {
   params: Promise<{ jobId: string }>
 }
 
+/** Server-rendered results page: loads a job's result plus all results (for trend context) and renders the analysis views. */
 export default async function ResultsPage({ params }: Props) {
   const { jobId } = await params
   const supabase = await createClient()

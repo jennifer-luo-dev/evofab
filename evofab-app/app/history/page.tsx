@@ -4,6 +4,7 @@ import { CurvatureTrendChart } from '@/app/components/results/CurvatureTrendChar
 import { RESULT_SELECT } from '@/app/types/result'
 import type { ResultWithContext } from '@/app/types/result'
 
+/** Server-rendered history page listing all results with a curvature trend chart. */
 export default async function HistoryPage() {
   const supabase = await createClient()
   const { data: results } = await supabase

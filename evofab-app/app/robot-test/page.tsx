@@ -24,6 +24,7 @@ const JOG_STEPS = [
   { label: "50 mm", value: 0.05 },
 ];
 
+/** Manual UR7e test page: jog controls, a waypoint queue, and a gripper test panel. */
 export default function RobotTestPage() {
   const robot = useRobot();
   const [target, setTarget] = useState(DEFAULT_TARGET);
@@ -48,6 +49,7 @@ export default function RobotTestPage() {
     }
   }, [robot.tcp_pose]);
 
+  /** Sends a Cartesian move command to the robot and updates the status/message state. */
   async function sendMove(coords: { x: number; y: number; z: number }): Promise<boolean> {
     setStatus("sending");
     setMessage(null);
@@ -74,6 +76,7 @@ export default function RobotTestPage() {
     }
   }
 
+  /** Jogs one axis by the current step size from the robot's actual TCP position. */
   function handleJog(axis: "x" | "y" | "z", direction: 1 | -1) {
     // Always increment from actual TCP, not the UI target, so the step is exact.
     const base = robot.tcp_pose
@@ -87,6 +90,7 @@ export default function RobotTestPage() {
     void sendMove(newTarget);
   }
 
+  /** Appends a new waypoint to the queue. */
   function addWaypoint(coords: { x: number; y: number; z: number }, name = "") {
     setQueue((prev) => [
       ...prev,
@@ -95,6 +99,7 @@ export default function RobotTestPage() {
     setAddName("");
   }
 
+  /** Updates a single field of a waypoint by id. */
   function updateWaypoint(
     id: string,
     field: keyof Omit<Waypoint, "id">,
@@ -105,10 +110,12 @@ export default function RobotTestPage() {
     );
   }
 
+  /** Removes a waypoint from the queue by id. */
   function removeWaypoint(id: string) {
     setQueue((prev) => prev.filter((wp) => wp.id !== id));
   }
 
+  /** Runs each queued waypoint in order, stopping immediately if any move fails. */
   async function handleRunQueue() {
     for (let i = 0; i < queue.length; i++) {
       setQueueIndex(i);
@@ -410,11 +417,13 @@ export default function RobotTestPage() {
 
 const DEFAULT_GRIPPER = { position: 128, speed: 128, force: 50 };
 
+/** Robotiq gripper test panel: sets position/speed/force registers and runs the gripper cycle URP. */
 function GripperControl({ canRun }: { canRun: boolean }) {
   const [params, setParams] = useState(DEFAULT_GRIPPER);
   const [status, setStatus] = useState<ActionStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
 
+  /** Posts the current gripper parameters to the server and runs the gripper test cycle. */
   async function handleRunGripper() {
     setStatus("sending");
     setMessage(null);

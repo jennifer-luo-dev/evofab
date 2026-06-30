@@ -9,6 +9,7 @@ type ChannelStatus = "idle" | "firing" | "done" | "error";
 
 const DEFAULT_DURATION = 500; // ms
 
+/** Manual Arduino solenoid test page: per-channel pulse firing with a global abort. */
 export default function ActuationTestPage() {
   const [durations, setDurations] = useState<Record<Channel, number>>({
     1: DEFAULT_DURATION,
@@ -33,6 +34,7 @@ export default function ActuationTestPage() {
   );
   const [arduinoPort, setArduinoPort] = useState<string>("");
 
+  /** Polls the Arduino connection status (connected, serial port). */
   const fetchStatus = useCallback(async () => {
     try {
       const res = await fetch(`${API}/actuation/status`);
@@ -50,6 +52,7 @@ export default function ActuationTestPage() {
     fetchStatus();
   }, [fetchStatus]);
 
+  /** Fires a timed solenoid pulse on the given channel and tracks its status. */
   async function firePulse(channel: Channel) {
     setChannelStatus((s) => ({ ...s, [channel]: "firing" }));
     setChannelMessage((m) => ({ ...m, [channel]: null }));
@@ -85,6 +88,7 @@ export default function ActuationTestPage() {
     }
   }
 
+  /** Sends an abort command to close all solenoid valves and resets any firing channels to idle. */
   async function handleAbort() {
     setAbortStatus("sending");
     setAbortMessage(null);
@@ -205,6 +209,7 @@ export default function ActuationTestPage() {
   );
 }
 
+/** Single solenoid channel card with a duration slider and fire button. */
 function ChannelCard({
   channel,
   duration,

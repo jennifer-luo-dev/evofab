@@ -37,6 +37,7 @@ interface Props {
   moonrakerWsUrl: string | null;
 }
 
+/** Live monitor view for an active job: subscribes to Supabase Realtime and Moonraker's WebSocket for live status. */
 export function MonitorClient({
   initialJob,
   initialLogs,
@@ -134,6 +135,7 @@ export function MonitorClient({
     let lastProgress = 0;
     let lastPrintDuration = 0;
 
+    /** Merges a partial Moonraker status payload into printer state and recomputes the ETA. */
     function applyStatus(status: Record<string, Record<string, unknown>>) {
       const patch: Partial<PrinterStatus> = {};
 
