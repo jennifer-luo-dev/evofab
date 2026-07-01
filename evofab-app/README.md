@@ -18,6 +18,24 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
+## Moonraker Safety Modes
+
+Read-side Moonraker status calls use an explicit mode:
+
+```bash
+MOONRAKER_MODE=mock      # default; only loopback mock URLs are allowed
+MOONRAKER_MODE=local     # Moonraker calls are disabled
+MOONRAKER_MODE=hardware  # real printer IP/port calls require confirmation
+```
+
+Hardware mode requires:
+
+```bash
+HARDWARE_CONFIRMATION=I_UNDERSTAND_THIS_CONTROLS_PHYSICAL_HARDWARE
+```
+
+The safe status connector normalizes Moonraker `/printer/objects/query` responses into the existing `printer_status` shape. Local/demo status development should still prefer `npm run status:mock`.
+
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
 ## Learn More

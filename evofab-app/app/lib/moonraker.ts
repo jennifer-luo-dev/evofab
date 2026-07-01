@@ -1,7 +1,19 @@
 import type { PrintSettings } from '@/app/types/job'
+import { resolveMoonrakerBaseUrl } from './moonraker-config'
+export { HARDWARE_CONFIRMATION, getMoonrakerMode } from './moonraker-config'
+export { MoonrakerError } from './moonraker-errors'
+export {
+  MoonrakerStatusConnector,
+  normalizeMoonrakerStatus,
+  type PrinterStatusConnector,
+} from './moonraker-client'
 
 function base(ip: string, port: number) {
-  return `http://${ip}:${port}`
+  return resolveMoonrakerBaseUrl({
+    printerId: `${ip}:${port}`,
+    ip,
+    port,
+  })
 }
 
 export async function uploadGcode(ip: string, port: number, file: File): Promise<string> {
