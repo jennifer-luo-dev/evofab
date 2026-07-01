@@ -1,27 +1,29 @@
-'use client'
+"use client";
 
-import type { ResultWithContext } from '@/app/types/result'
+import type { ResultWithContext } from "@/app/types/result";
 
 interface JobMetadataHeaderProps {
-  result: ResultWithContext
+  result: ResultWithContext;
 }
 
 export function JobMetadataHeader({ result }: JobMetadataHeaderProps) {
-  const job = result.job
-  const printer = job?.printer?.name ?? '—'
-  const material = job?.material_profile?.name ?? '—'
-  const nozzle = job?.print_settings?.nozzle_temp ?? '—'
-  const cycles = job?.experiment_params?.cycles ?? '—'
-  const pressure = job?.experiment_params?.pressure_kpa ?? '—'
+  const job = result.job;
+  const printer = job?.printer?.name ?? "—";
+  const material = job?.material_profile?.name ?? "—";
+  const nozzle = job?.print_settings?.nozzle_temp ?? "—";
+  const cycles = job?.experiment_params?.cycles ?? "—";
+  const pressure = job?.experiment_params?.pressure_kpa ?? "—";
 
   function downloadJSON() {
-    const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `evofab-result-${result.id.slice(0, 8)}.json`
-    a.click()
-    URL.revokeObjectURL(url)
+    const blob = new Blob([JSON.stringify(result, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `evofab-result-${result.id.slice(0, 8)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   function exportCSV() {
@@ -40,32 +42,43 @@ export function JobMetadataHeader({ result }: JobMetadataHeaderProps) {
       confidence: result.confidence,
       passed: result.passed,
       created_at: result.created_at,
-    }
-    const keys = Object.keys(flat) as (keyof typeof flat)[]
-    const csv = [keys.join(','), keys.map((k) => flat[k] ?? '').join(',')].join('\n')
-    const blob = new Blob([csv], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `evofab-result-${result.id.slice(0, 8)}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
+    };
+    const keys = Object.keys(flat) as (keyof typeof flat)[];
+    const csv = [keys.join(","), keys.map((k) => flat[k] ?? "").join(",")].join(
+      "\n",
+    );
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `evofab-result-${result.id.slice(0, 8)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   return (
     <div className="flex items-start justify-between gap-4 p-5 rounded-xl border border-border bg-surface">
       <div>
-        <p className="text-xs text-muted uppercase tracking-widest mb-1">Job Result</p>
-        <p className="font-mono text-sm text-text">{printer} · {material}</p>
+        <p className="text-xs text-muted uppercase tracking-widest mb-1">
+          Job Result
+        </p>
+        <p className="font-mono text-sm text-text">
+          {printer} · {material}
+        </p>
         <div className="flex flex-wrap gap-4 mt-2">
           {[
-            { label: 'Timestamp', value: new Date(result.created_at).toLocaleString() },
-            { label: 'Nozzle',    value: `${nozzle}°C` },
-            { label: 'Cycles',    value: String(cycles) },
-            { label: 'Pressure',  value: `${pressure} kPa` },
+            {
+              label: "Timestamp",
+              value: new Date(result.created_at).toLocaleString(),
+            },
+            { label: "Nozzle", value: `${nozzle}°C` },
+            { label: "Cycles", value: String(cycles) },
+            { label: "Pressure", value: `${pressure} kPa` },
           ].map((item) => (
             <div key={item.label} className="flex flex-col">
-              <span className="text-[10px] uppercase tracking-wider text-muted">{item.label}</span>
+              <span className="text-[10px] uppercase tracking-wider text-muted">
+                {item.label}
+              </span>
               <span className="font-mono text-xs text-text">{item.value}</span>
             </div>
           ))}
@@ -86,5 +99,5 @@ export function JobMetadataHeader({ result }: JobMetadataHeaderProps) {
         </button>
       </div>
     </div>
-  )
+  );
 }

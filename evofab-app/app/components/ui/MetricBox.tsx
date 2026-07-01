@@ -1,28 +1,43 @@
-import { cn } from '@/app/lib/utils'
+import { cn } from "@/app/lib/utils";
 
 interface MetricBoxProps {
-  label: string
-  value: string | number
-  unit?: string
-  className?: string
-  valueClassName?: string
+  label: string;
+  value: string | number;
+  unit?: string;
+  className?: string;
+  valueClassName?: string;
 }
 
-export function MetricBox({ label, value, unit, className, valueClassName }: MetricBoxProps) {
+export function MetricBox({
+  label,
+  value,
+  unit,
+  className,
+  valueClassName,
+}: MetricBoxProps) {
   return (
     <div
       className={cn(
-        'flex flex-col gap-1 p-3 rounded-lg bg-white/[0.03] border border-[var(--color-border)]',
-        className
+        "flex flex-col gap-1 p-3 rounded-lg bg-white/[0.03] border border-[var(--color-border)]",
+        className,
       )}
     >
       <span className="text-[10px] uppercase tracking-widest text-[var(--color-muted)] font-medium">
         {label}
       </span>
-      <span className={cn('font-mono text-sm text-[var(--color-text)]', valueClassName)}>
+      <span
+        className={cn(
+          "font-mono text-sm text-[var(--color-text)]",
+          valueClassName,
+        )}
+      >
         {value}
-        {unit && <span className="text-[var(--color-muted)] ml-0.5 text-xs">{unit}</span>}
+        {unit && (
+          <span className="text-[var(--color-muted)] ml-0.5 text-xs">
+            {unit}
+          </span>
+        )}
       </span>
     </div>
-  )
+  );
 }

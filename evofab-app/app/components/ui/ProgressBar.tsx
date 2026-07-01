@@ -1,11 +1,11 @@
-import { cn } from '@/app/lib/utils'
+import { cn } from "@/app/lib/utils";
 
 interface ProgressBarProps {
-  value: number
-  className?: string
-  trackClassName?: string
-  fillClassName?: string
-  height?: 'sm' | 'md'
+  value: number;
+  className?: string;
+  trackClassName?: string;
+  fillClassName?: string;
+  height?: "sm" | "md";
 }
 
 export function ProgressBar({
@@ -13,26 +13,26 @@ export function ProgressBar({
   className,
   trackClassName,
   fillClassName,
-  height = 'sm',
+  height = "sm",
 }: ProgressBarProps) {
-  const clamped = Math.max(0, Math.min(100, value))
+  const clamped = Math.max(0, Math.min(100, value));
   return (
     <div
       className={cn(
-        'w-full rounded-full overflow-hidden bg-white/5',
-        height === 'sm' ? 'h-1' : 'h-1.5',
+        "w-full rounded-full overflow-hidden bg-white/5",
+        height === "sm" ? "h-1" : "h-1.5",
         trackClassName,
-        className
+        className,
       )}
     >
       <div
         className={cn(
-          'h-full rounded-full transition-all duration-500',
-          'bg-[var(--color-teal)]',
-          fillClassName
+          "h-full rounded-full transition-all duration-500",
+          "bg-[var(--color-teal)]",
+          fillClassName,
         )}
         style={{ width: `${clamped}%` }}
       />
     </div>
-  )
+  );
 }

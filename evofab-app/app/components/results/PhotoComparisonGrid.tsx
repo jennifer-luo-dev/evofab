@@ -1,24 +1,30 @@
-import type { ResultRecord } from '@/app/types/result'
+import type { ResultRecord } from "@/app/types/result";
 
 interface PhotoComparisonGridProps {
-  result: ResultRecord
-  supabaseUrl?: string
+  result: ResultRecord;
+  supabaseUrl?: string;
 }
 
-function resolveImageUrl(key: string | null, supabaseUrl?: string): string | null {
-  if (!key) return null
-  if (key.startsWith('http')) return key
+function resolveImageUrl(
+  key: string | null,
+  supabaseUrl?: string,
+): string | null {
+  if (!key) return null;
+  if (key.startsWith("http")) return key;
   // Treat as Supabase Storage path in the "results" bucket
   return supabaseUrl
     ? `${supabaseUrl}/storage/v1/object/public/results/${key}`
-    : null
+    : null;
 }
 
-export function PhotoComparisonGrid({ result, supabaseUrl }: PhotoComparisonGridProps) {
-  const beforeUrl = resolveImageUrl(result.before_image_key, supabaseUrl)
-  const afterUrl  = resolveImageUrl(result.after_image_key,  supabaseUrl)
-  const before = result.curvature_before ?? 0
-  const after  = result.curvature_after  ?? 0
+export function PhotoComparisonGrid({
+  result,
+  supabaseUrl,
+}: PhotoComparisonGridProps) {
+  const beforeUrl = resolveImageUrl(result.before_image_key, supabaseUrl);
+  const afterUrl = resolveImageUrl(result.after_image_key, supabaseUrl);
+  const before = result.curvature_before ?? 0;
+  const after = result.curvature_after ?? 0;
 
   return (
     <div className="p-5 rounded-xl border border-border bg-surface">
@@ -27,13 +33,23 @@ export function PhotoComparisonGrid({ result, supabaseUrl }: PhotoComparisonGrid
       </h3>
       <div className="grid grid-cols-2 gap-4">
         {[
-          { label: 'Before', url: beforeUrl, curvature: before, colorVar: 'var(--color-blue)' },
-          { label: 'After',  url: afterUrl,  curvature: after,  colorVar: 'var(--color-teal)' },
+          {
+            label: "Before",
+            url: beforeUrl,
+            curvature: before,
+            colorVar: "var(--color-blue)",
+          },
+          {
+            label: "After",
+            url: afterUrl,
+            curvature: after,
+            colorVar: "var(--color-teal)",
+          },
         ].map((item) => (
           <div key={item.label} className="flex flex-col gap-2">
             <div
               className="relative w-full bg-surface-2 rounded-lg overflow-hidden border border-border"
-              style={{ aspectRatio: '4/3' }}
+              style={{ aspectRatio: "4/3" }}
             >
               {item.url ? (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -57,10 +73,12 @@ export function PhotoComparisonGrid({ result, supabaseUrl }: PhotoComparisonGrid
                 κ = {item.curvature.toFixed(4)}
               </div>
             </div>
-            <p className="text-xs text-muted text-center uppercase tracking-wider">{item.label}</p>
+            <p className="text-xs text-muted text-center uppercase tracking-wider">
+              {item.label}
+            </p>
           </div>
         ))}
       </div>
     </div>
-  )
+  );
 }

@@ -2,28 +2,29 @@
 
 @theme {
   /* EvoFab color palette */
-  --color-bg: #0A0E1A;
-  --color-surface: #0F1525;
-  --color-surface-2: #141C30;
-  --color-teal: #00D4B4;
+  --color-bg: #0a0e1a;
+  --color-surface: #0f1525;
+  --color-surface-2: #141c30;
+  --color-teal: #00d4b4;
   --color-teal-dim: rgba(0, 212, 180, 0.15);
-  --color-amber: #F59E0B;
-  --color-green: #10B981;
-  --color-red: #F43F5E;
-  --color-blue: #3B82F6;
-  --color-text: #E8EDF5;
-  --color-muted: #5A6480;
+  --color-amber: #f59e0b;
+  --color-green: #10b981;
+  --color-red: #f43f5e;
+  --color-blue: #3b82f6;
+  --color-text: #e8edf5;
+  --color-muted: #5a6480;
   --color-border: rgba(255, 255, 255, 0.07);
   --color-border-2: rgba(255, 255, 255, 0.12);
 
   /* Fonts */
-  --font-sans: var(--font-dm-sans), var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --font-sans:
+    "Avenir Next", "SF Pro Display", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "SFMono-Regular", "Cascadia Code", ui-monospace, monospace;
 }
 
 :root {
-  --background: #0A0E1A;
-  --foreground: #E8EDF5;
+  --background: #0a0e1a;
+  --foreground: #e8edf5;
 }
 
 body {
@@ -51,25 +52,50 @@ body {
 
 /* Pipeline step animations */
 @keyframes pulse-ring {
-  0% { box-shadow: 0 0 0 0 rgba(0, 212, 180, 0.4); }
-  70% { box-shadow: 0 0 0 8px rgba(0, 212, 180, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(0, 212, 180, 0); }
+  0% {
+    box-shadow: 0 0 0 0 rgba(0, 212, 180, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(0, 212, 180, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(0, 212, 180, 0);
+  }
 }
 
 @keyframes pulse-dot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 
 @keyframes fade-up {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes badge-pop {
-  0% { transform: scale(0.6); opacity: 0; }
-  60% { transform: scale(1.15); }
-  100% { transform: scale(1); opacity: 1; }
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.15);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .animate-pulse-ring {
@@ -86,4 +112,8 @@ body {
 
 .animate-badge-pop {
   animation: badge-pop 0.3s ease forwards;
+}
+
+.demo-button {
+  @apply px-3 py-2 rounded-lg text-xs font-semibold border border-border bg-white/5 text-text transition-all hover:border-border-2 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed;
 }

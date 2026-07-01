@@ -1,36 +1,55 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# EvoFab App
 
-## Getting Started
+Next.js dashboard for printer setup, Moonraker/Klipper control, monitoring, and
+EvoFab experiment records.
 
-First, run the development server:
+## Quick start
+
+Requirements: Node 22, npm 10+, Docker, and the Supabase CLI.
+
+```bash
+nvm use
+npm ci
+cp .env.example .env.local
+npx supabase start
+```
+
+Copy the local Supabase URL and anon key printed by `supabase start` into
+`.env.local`, then run:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+This starts Next.js and a loopback-only Moonraker simulator. Open
+<http://127.0.0.1:3000/setup> and select **Mock Sovol Zero**.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Operating modes
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Command                | Moonraker behavior               | Intended use                       |
+| ---------------------- | -------------------------------- | ---------------------------------- |
+| `npm run dev`          | Loopback simulator               | Default feature development        |
+| `npm run dev:local`    | Printer commands disabled        | UI/database work without a printer |
+| `npm run dev:hardware` | Real addresses from the database | Supervised work on lab Wi-Fi       |
 
-## Learn More
+Hardware mode prints a warning and requires the explicit command. Automated
+hardware tests have an additional environment gate and never run under
+`npm test` or `npm run check`.
 
-To learn more about Next.js, take a look at the following resources:
+## Verification
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npm run format:check
+npm run test:watch
+npm run test:integration
+npm run test:e2e
+npm run check
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+`npm run check` runs lint, TypeScript, unit tests, and a production build. E2E
+tests require local Supabase to be running. See
+[`docs/local-development.md`](./docs/local-development.md) for the complete
+iteration and troubleshooting process.
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Run `npm run format` before committing code changes. Contribution workflow and
+PR requirements live in [`../CONTRIBUTING.md`](../CONTRIBUTING.md).

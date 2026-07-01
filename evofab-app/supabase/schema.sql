@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS printers (
   id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   name         TEXT        NOT NULL UNIQUE,          -- "FGF-01", "SV07"
   model        TEXT        NOT NULL,                 -- "Custom FGF · Klipper"
-  ip           TEXT        NOT NULL UNIQUE,          -- "10.247.137.89"
+  ip           TEXT        NOT NULL UNIQUE,          -- local mock: "127.0.0.1"
   port         INTEGER     NOT NULL DEFAULT 80,
   type         TEXT        NOT NULL CHECK (type IN ('FGF', 'FDM')),
   material     TEXT,                                 -- default material for this printer
@@ -259,7 +259,7 @@ ON CONFLICT (name) DO NOTHING;
 
 -- Printers (update IPs to match your actual lab network before running)
 INSERT INTO printers (name, model, ip, port, type, material, build_volume) VALUES
-  ('EvoFab Sovol Zero', 'SOVOL ZERO', '10.247.137.89', 80, 'FDM', 'Shore 20A TPE', '152.4×152.4×152.4mm')
+  ('Mock Sovol Zero', 'SOVOL ZERO (simulated)', '127.0.0.1', 7125, 'FDM', 'PLA', '152.4x152.4x152.4mm')
 ON CONFLICT (name) DO NOTHING;
 
 -- Initialize printer_status rows for each seeded printer

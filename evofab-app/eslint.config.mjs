@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    "app/playground-1.mongodb.js",
+    "playwright-report/**",
+    "test-results/**",
   ]),
 ]);
 
