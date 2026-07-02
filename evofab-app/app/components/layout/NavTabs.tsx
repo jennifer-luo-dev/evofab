@@ -6,10 +6,12 @@ import { cn } from '@/app/lib/utils'
 import { useJob } from '@/app/contexts/JobContext'
 
 const TABS = [
-  { label: 'Setup',   href: '/setup' },
-  { label: 'Monitor', href: '/monitor' },
-  { label: 'Results', href: '/results' },
-  { label: 'History', href: '/history' },
+  { label: 'Setup',        href: '/setup' },
+  { label: 'Monitor',      href: '/monitor' },
+  { label: 'Results',      href: '/results' },
+  { label: 'History',      href: '/history' },
+  { label: 'Cloud Slicer', href: '/cloud-slicer' },
+  { label: 'Printers',     href: '/printers' },
 ]
 
 export function NavTabs() {
