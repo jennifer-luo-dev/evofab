@@ -4,7 +4,7 @@
 
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 const API = "http://localhost:8001";
 const CHANNELS = [1, 2, 3, 4] as const;
@@ -12,6 +12,8 @@ type Channel = (typeof CHANNELS)[number];
 type ChannelStatus = "idle" | "firing" | "done" | "error";
 
 const DEFAULT_DURATION = 500; // ms
+const SWEEP_DURATION = 200;   // ms — short enough to be safe, loud enough to hear
+const SWEEP_GAP_MS = 600;     // ms pause between channels during a sweep
 
 /** Manual Arduino solenoid test page: per-channel pulse firing with a global abort. */
 export default function ActuationTestPage() {
@@ -38,6 +40,10 @@ export default function ActuationTestPage() {
   );
   const [arduinoPort, setArduinoPort] = useState<string>("");
 
+  const [sweeping, setSweeping] = useState(false);
+  const [sweepChannel, setSweepChannel] = useState<Channel | null>(null);
+  const sweepAbortRef = useRef(false);
+
   /** Polls the Arduino connection status (connected, serial port). */
   const fetchStatus = useCallback(async () => {
     try {
@@ -57,7 +63,8 @@ export default function ActuationTestPage() {
   }, [fetchStatus]);
 
   /** Fires a timed solenoid pulse on the given channel and tracks its status. */
-  async function firePulse(channel: Channel) {
+  async function firePulse(channel: Channel, durationOverride?: number) {
+    const duration_ms = durationOverride ?? durations[channel];
     setChannelStatus((s) => ({ ...s, [channel]: "firing" }));
     setChannelMessage((m) => ({ ...m, [channel]: null }));
     setAbortStatus("idle");
@@ -67,13 +74,12 @@ export default function ActuationTestPage() {
       const res = await fetch(`${API}/actuation/pulse`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channel, duration_ms: durations[channel] }),
+        body: JSON.stringify({ channel, duration_ms }),
       });
       const data = await res.json();
       if (res.ok) {
         setChannelStatus((s) => ({ ...s, [channel]: "done" }));
         setChannelMessage((m) => ({ ...m, [channel]: data.message }));
-        // Refresh connection state (port opens on first pulse)
         fetchStatus();
       } else {
         setChannelStatus((s) => ({ ...s, [channel]: "error" }));
@@ -92,8 +98,38 @@ export default function ActuationTestPage() {
     }
   }
 
+  /**
+   * Fires each channel in sequence with a short SWEEP_DURATION pulse so you
+   * can listen for which solenoid clicks and map channel numbers to actuators.
+   * Stops early if sweepAbortRef is set.
+   */
+  async function handleSweep() {
+    setSweeping(true);
+    sweepAbortRef.current = false;
+    setChannelStatus({ 1: "idle", 2: "idle", 3: "idle", 4: "idle" });
+    setChannelMessage({ 1: null, 2: null, 3: null, 4: null });
+
+    for (const ch of CHANNELS) {
+      if (sweepAbortRef.current) break;
+      setSweepChannel(ch);
+      await firePulse(ch, SWEEP_DURATION);
+      // Brief pause so it's easy to hear each click as a distinct event.
+      await new Promise((r) => setTimeout(r, SWEEP_GAP_MS));
+    }
+
+    setSweeping(false);
+    setSweepChannel(null);
+  }
+
+  function stopSweep() {
+    sweepAbortRef.current = true;
+  }
+
   /** Sends an abort command to close all solenoid valves and resets any firing channels to idle. */
   async function handleAbort() {
+    sweepAbortRef.current = true;
+    setSweeping(false);
+    setSweepChannel(null);
     setAbortStatus("sending");
     setAbortMessage(null);
     try {
@@ -102,7 +138,6 @@ export default function ActuationTestPage() {
       if (res.ok) {
         setAbortStatus("done");
         setAbortMessage(data.message);
-        // Mark all firing channels as interrupted
         setChannelStatus((s) => {
           const next = { ...s };
           for (const ch of CHANNELS) {
@@ -162,10 +197,40 @@ export default function ActuationTestPage() {
         {arduinoConnected === false && (
           <p className="text-xs text-muted pt-1">
             Port opens on first pulse. Set{" "}
-            <code className="text-text">ARDUINO_PORT</code> env var if the
-            device is not at <code className="text-text">/dev/ttyACM0</code>.
+            <code className="text-text">ARDUINO_PORT</code> env var if
+            auto-detect fails.
           </p>
         )}
+      </div>
+
+      {/* Channel identification sweep */}
+      <div className="rounded-lg border border-border bg-surface p-4 space-y-3">
+        <div>
+          <p className="text-sm font-medium text-text">Identify Channels</p>
+          <p className="text-xs text-muted mt-0.5">
+            Fires CH 1→4 in sequence with a {SWEEP_DURATION} ms pulse. Listen
+            for solenoid clicks to map channel numbers to your actuators.
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={sweeping ? stopSweep : handleSweep}
+            disabled={abortStatus === "sending"}
+            className={`rounded px-4 py-2 text-sm font-semibold transition-colors
+              disabled:opacity-40 disabled:cursor-not-allowed
+              ${sweeping
+                ? "bg-amber-500/10 border border-amber-500/40 text-amber-400 hover:bg-amber-500/20"
+                : "bg-surface border border-border text-text hover:bg-teal/10"
+              }`}
+          >
+            {sweeping ? "Stop Sweep" : "Sweep CH 1→4"}
+          </button>
+          {sweeping && sweepChannel !== null && (
+            <span className="text-sm text-muted font-mono">
+              firing CH {sweepChannel}…
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Channel cards */}
@@ -177,10 +242,12 @@ export default function ActuationTestPage() {
             duration={durations[ch]}
             status={channelStatus[ch]}
             message={channelMessage[ch]}
+            highlighted={sweeping && sweepChannel === ch}
             onDurationChange={(v) =>
               setDurations((d) => ({ ...d, [ch]: v }))
             }
             onFire={() => firePulse(ch)}
+            disabled={sweeping}
           />
         ))}
       </div>
@@ -219,15 +286,19 @@ function ChannelCard({
   duration,
   status,
   message,
+  highlighted,
   onDurationChange,
   onFire,
+  disabled,
 }: {
   channel: Channel;
   duration: number;
   status: ChannelStatus;
   message: string | null;
+  highlighted: boolean;
   onDurationChange: (v: number) => void;
   onFire: () => void;
+  disabled: boolean;
 }) {
   const isFiring = status === "firing";
 
@@ -250,7 +321,11 @@ function ChannelCard({
           : "idle";
 
   return (
-    <div className="rounded-lg border border-border bg-surface p-4 space-y-3">
+    <div
+      className={`rounded-lg border bg-surface p-4 space-y-3 transition-colors ${
+        highlighted ? "border-teal/60 ring-1 ring-teal/30" : "border-border"
+      }`}
+    >
       <div className="flex items-center justify-between">
         <span className="text-sm font-semibold text-text">CH {channel}</span>
         <span className={`text-xs font-mono ${statusColor}`}>
@@ -273,13 +348,14 @@ function ChannelCard({
           step={50}
           value={duration}
           onChange={(e) => onDurationChange(parseInt(e.target.value))}
-          className="accent-teal w-full"
+          disabled={disabled}
+          className="accent-teal w-full disabled:opacity-40"
         />
       </label>
 
       <button
         onClick={onFire}
-        disabled={isFiring}
+        disabled={isFiring || disabled}
         className="w-full rounded px-3 py-2 text-sm font-semibold transition-colors
           bg-teal text-white hover:opacity-90 active:opacity-80
           disabled:opacity-40 disabled:cursor-not-allowed"

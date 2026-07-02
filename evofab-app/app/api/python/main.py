@@ -110,38 +110,178 @@ def _rtde_reader() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Camera characterization streaming
+# Camera characterization streaming — Orbbec Gemini 335Lg (G4005-270)
 #
-# A background thread captures frames, runs mask → skeleton → curvature, and
-# writes the result into two module-level variables (atomic under the GIL):
-#   _camera_frame   — JPEG bytes of the latest annotated frame (or None)
-#   _camera_metrics — dict with curvature metrics and status string
+# A background thread opens the Orbbec pipeline (colour + depth, HW-aligned),
+# runs mask → skeleton → curvature on the depth stream, and writes results
+# into two module-level variables (atomic under the GIL):
+#   _camera_frame   — JPEG bytes of the latest annotated colour frame (or None)
+#   _camera_metrics — dict with curvature metrics, status, and sense_mode
 #
-# Config is updated via POST /camera/config; the thread reads it each loop and
-# reopens the camera when camera_index changes.
+# Sense modes:
+#   "depth" — ActuatorAnalyzer depth-gates on the Y16 depth frame (preferred)
+#   "rgb"   — brightness-threshold fallback if depth frame is unavailable
+#
+# Config is updated via POST /camera/config; the thread re-opens the pipeline
+# when camera_index changes.
 # ---------------------------------------------------------------------------
 
 _camera_config: dict = {
-    "camera_index": 0,
-    "threshold": 200,
-    "overlay_mode": "combined",  # "combined" | "raw" | "mask" | "skeleton"
-    "ppm": 2800.0,
+    "camera_index": 1,          # Orbbec Gemini 335Lg (index 1 on this machine)
+    "z_min": 0.40,              # Near depth gate (metres)
+    "z_max": 0.55,              # Far depth gate (metres)
+    "threshold": 200,           # RGB brightness threshold (fallback only)
+    "overlay_mode": "combined", # "combined" | "raw" | "mask" | "skeleton"
+    "ppm": 2800.0,              # Pixels per metre for curvature scaling
 }
 
 _camera_frame: Optional[bytes] = None
 _camera_metrics: dict = {"status": "IDLE"}
 
+# ---------------------------------------------------------------------------
+# Chessboard calibration state
+# ---------------------------------------------------------------------------
+_CALIB_FILE = "camera_calibration.json"
+_calib_lock = threading.Lock()
+_calib: dict = {
+    "active": False,
+    "grid_cols": 9,
+    "grid_rows": 6,
+    "square_mm": 25.0,
+    "frame_count": 0,
+    "img_size": None,
+    "last_found": False,
+    "result": None,   # {rms, ppm, applied} set after calibrate/run
+}
+_calib_obj_pts: list = []   # accumulated 3-D object point arrays
+_calib_img_pts: list = []   # accumulated 2-D image point arrays
+_calib_pending: Optional[dict] = None   # latest detection: {found, objp, corners, img_size}
+_calib_mtx = None    # numpy camera matrix (or None)
+_calib_dist = None   # numpy distortion coefficients (or None)
+
+
+def _load_saved_calibration() -> None:
+    global _calib_mtx, _calib_dist
+    try:
+        import numpy as _np
+        with open(_CALIB_FILE) as fh:
+            data = json.load(fh)
+        _calib_mtx = _np.array(data["matrix"])
+        _calib_dist = _np.array(data["dist"])
+        _calib["result"] = {"rms": data.get("rms"), "ppm": data.get("ppm"), "applied": True}
+    except Exception:
+        pass
+
+
+def _annotate_and_store(cv2, np, color_bgr, mask, sense_mode, cfg, compute_spine_curvature) -> None:
+    """Shared: skeleton → curvature → annotated JPEG → write globals. Called by both camera paths."""
+    global _camera_frame, _camera_metrics, _calib_pending
+
+    skeleton = cv2.ximgproc.thinning(mask) if hasattr(cv2, "ximgproc") else np.zeros_like(mask)
+
+    result = compute_spine_curvature(skeleton, cfg["ppm"])
+
+    _camera_metrics = {
+        "status": result.status,
+        "mean_curvature": round(result.mean_curvature, 3),
+        "bend_angle_deg": round(result.bend_angle_deg, 2),
+        "radius_mm": round(result.radius_mm, 1),
+        "sense_mode": sense_mode,
+    }
+
+    overlay_mode = cfg["overlay_mode"]
+    if overlay_mode == "raw":
+        display = color_bgr.copy()
+    elif overlay_mode == "mask":
+        display = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+    elif overlay_mode == "skeleton":
+        display = np.zeros_like(color_bgr)
+        display[skeleton > 0] = [180, 212, 0]
+    else:  # combined
+        display = color_bgr.copy()
+        green_layer = np.zeros_like(color_bgr)
+        green_layer[mask > 0] = [0, 80, 0]
+        display = cv2.addWeighted(display, 1.0, green_layer, 0.5, 0)
+        display[skeleton > 0] = [180, 212, 0]
+
+    # Bounding box around the largest detected contour
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        largest = max(contours, key=cv2.contourArea)
+        bx, by, bw, bh = cv2.boundingRect(largest)
+        box_color = (180, 212, 0) if result.status == "TRACKING" else (60, 160, 160)
+        cv2.rectangle(display, (bx, by), (bx + bw, by + bh), box_color, 2)
+
+    # Fitted curvature arc — draw the circle segment spanning the skeleton extent
+    if result.status == "TRACKING" and result.radius_px > 1:
+        ys, xs = np.where(skeleton > 0)
+        if len(ys) >= 2:
+            cx, cy = result.center_px
+            r = int(round(result.radius_px))
+            angles = np.degrees(np.arctan2(ys.astype(float) - cy,
+                                           xs.astype(float) - cx))
+            a_min, a_max = float(angles.min()), float(angles.max())
+            # Expand arc slightly so it visually extends past the skeleton tips
+            pad = max(5.0, (a_max - a_min) * 0.1)
+            cv2.ellipse(display, (cx, cy), (r, r), 0,
+                        a_min - pad, a_max + pad,
+                        (0, 180, 255), 2, cv2.LINE_AA)
+            # Mark circle centre
+            cv2.circle(display, (cx, cy), 5, (0, 180, 255), -1, cv2.LINE_AA)
+
+    txt_color = (180, 212, 0) if result.status == "TRACKING" else (80, 100, 90)
+    cv2.putText(display, result.status, (12, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.8, txt_color, 2)
+    cv2.putText(display, f"[{sense_mode}]", (12, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (60, 90, 80), 1)
+    if result.status == "TRACKING":
+        cv2.putText(display, f"K: {result.mean_curvature:.2f} 1/m", (12, 80),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, txt_color, 1)
+        cv2.putText(display, f"Angle: {result.bend_angle_deg:.1f} deg", (12, 104),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, txt_color, 1)
+        cv2.putText(display, f"R: {result.radius_mm:.0f} mm", (12, 128),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, txt_color, 1)
+
+    # Chessboard corner detection overlay (calibration mode)
+    if _calib.get("active"):
+        gray_c = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2GRAY)
+        cols_n, rows_n = _calib["grid_cols"], _calib["grid_rows"]
+        found, corners = cv2.findChessboardCorners(
+            gray_c, (cols_n, rows_n),
+            cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_NORMALIZE_IMAGE,
+        )
+        if found:
+            cv2.cornerSubPix(gray_c, corners, (11, 11), (-1, -1),
+                             (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001))
+            cv2.drawChessboardCorners(display, (cols_n, rows_n), corners, found)
+            objp = np.zeros((rows_n * cols_n, 3), np.float32)
+            objp[:, :2] = np.mgrid[0:cols_n, 0:rows_n].T.reshape(-1, 2)
+            objp *= _calib["square_mm"]
+            _calib_pending = {
+                "found": True, "objp": objp, "corners": corners,
+                "img_size": (gray_c.shape[1], gray_c.shape[0]),
+            }
+        else:
+            _calib_pending = {"found": False}
+            cv2.putText(display, "NO CORNERS", (12, display.shape[0] - 16),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (40, 80, 200), 1)
+        _calib["last_found"] = bool(found)
+
+    _, buf = cv2.imencode(".jpg", display, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    _camera_frame = buf.tobytes()
+
 
 def _camera_reader() -> None:
     global _camera_frame, _camera_metrics
 
+    # macOS AVFoundation: prevent authorization dialog on background threads
+    os.environ.setdefault("OPENCV_AVFOUNDATION_SKIP_AUTH", "1")
+
+    # ── Core imports (required by both paths) ──────────────────────────────
     try:
         import cv2
         import numpy as np
     except ImportError:
         _camera_metrics = {"status": "ERROR", "error": "opencv not installed — pip install opencv-contrib-python-headless"}
         return
-
     try:
         from analyzer import ActuatorAnalyzer
         from geometry import compute_spine_curvature
@@ -149,99 +289,185 @@ def _camera_reader() -> None:
         _camera_metrics = {"status": "ERROR", "error": f"analyzer/geometry import failed: {exc}"}
         return
 
+    # ── Choose path: Orbbec SDK (depth+colour) or cv2 fallback (colour only) ─
+    # Mirrors camera.py which used cv2.VideoCapture and worked out of the box.
+    # pyorbbecsdk requires the Orbbec SDK driver to be installed separately.
+    try:
+        from pyorbbecsdk import Pipeline, Config, Context, OBSensorType, OBFormat, OBAlignMode, OBError
+        _use_orbbec = True
+    except ImportError:
+        _use_orbbec = False
+
     while True:
         cfg = _camera_config
-        idx = cfg["camera_index"]
 
-        # Open camera with a platform-appropriate backend
-        if platform.system() == "Windows":
-            cap = cv2.VideoCapture(idx, cv2.CAP_MSMF)
+        # ════════════════════════════════════════════════════════════════
+        # PATH A — Orbbec SDK: colour + depth, hardware-aligned
+        # ════════════════════════════════════════════════════════════════
+        if _use_orbbec:
             try:
-                fourcc = cv2.VideoWriter.fourcc(*"MJPG")
-            except AttributeError:
-                fourcc = cv2.VideoWriter_fourcc(*"MJPG")  # type: ignore
-            cap.set(cv2.CAP_PROP_FOURCC, fourcc)
+                ctx = Context()
+                device_list = ctx.query_devices()
+                if device_list.get_count() == 0:
+                    _camera_metrics = {"status": "NO_CAMERA",
+                                       "error": "Gemini not detected — check USB connection"}
+                    _camera_frame = None
+                    time.sleep(3)
+                    continue
+
+                device = device_list.get_device(min(cfg["camera_index"], device_list.get_count() - 1))
+                pipeline = Pipeline(device)
+                pipe_cfg = Config()
+
+                try:
+                    color_profiles = pipeline.get_stream_profile_list(OBSensorType.COLOR_SENSOR)
+                    color_profile = color_profiles.get_video_stream_profile(1280, 720, OBFormat.RGB888, 30)
+                    pipe_cfg.enable_stream(color_profile)
+                except OBError:
+                    pipe_cfg.enable_video_stream(OBSensorType.COLOR_SENSOR, 1280, 720, 30, OBFormat.UNKNOWN)
+
+                try:
+                    depth_profiles = pipeline.get_stream_profile_list(OBSensorType.DEPTH_SENSOR)
+                    depth_profile = depth_profiles.get_video_stream_profile(640, 576, OBFormat.Y16, 30)
+                    pipe_cfg.enable_stream(depth_profile)
+                except OBError:
+                    pipe_cfg.enable_video_stream(OBSensorType.DEPTH_SENSOR, 0, 0, 30, OBFormat.UNKNOWN)
+
+                try:
+                    pipe_cfg.set_align_mode(OBAlignMode.HW_MODE)
+                except Exception:
+                    pass
+
+                pipeline.start(pipe_cfg)
+                pipeline.enable_frame_sync()
+
+                analyzer = ActuatorAnalyzer(z_min=cfg["z_min"], z_max=cfg["z_max"], threshold=cfg["threshold"])
+                _camera_metrics = {"status": "IDLE", "sense_mode": "depth"}
+
+                try:
+                    while True:
+                        frames = pipeline.wait_for_frames(100)
+                        if frames is None:
+                            continue
+
+                        color_frame = frames.get_color_frame()
+                        if color_frame is None:
+                            continue
+
+                        cfg = _camera_config
+                        analyzer.z_min = cfg["z_min"]
+                        analyzer.z_max = cfg["z_max"]
+                        analyzer.threshold = cfg["threshold"]
+
+                        color_data = np.asarray(color_frame.get_data(), dtype=np.uint8)
+                        color_bgr = cv2.cvtColor(
+                            color_data.reshape(color_frame.get_height(), color_frame.get_width(), 3),
+                            cv2.COLOR_RGB2BGR,
+                        )
+                        if _calib_mtx is not None:
+                            color_bgr = cv2.undistort(color_bgr, _calib_mtx, _calib_dist)
+
+                        depth_frame = frames.get_depth_frame()
+                        if depth_frame is not None:
+                            depth_scale = depth_frame.get_depth_scale()
+                            depth_raw = np.asarray(depth_frame.get_data(), dtype=np.uint16).reshape(
+                                depth_frame.get_height(), depth_frame.get_width()
+                            )
+                            if depth_raw.shape[:2] != color_bgr.shape[:2]:
+                                depth_raw = cv2.resize(depth_raw,
+                                                       (color_bgr.shape[1], color_bgr.shape[0]),
+                                                       interpolation=cv2.INTER_NEAREST)
+                            mask = analyzer.generate_mask(depth_raw, depth_scale=depth_scale)
+                            sense_mode = "depth"
+                        else:
+                            mask = analyzer.generate_mask(color_bgr)
+                            sense_mode = "rgb"
+
+                        _annotate_and_store(cv2, np, color_bgr, mask, sense_mode, cfg, compute_spine_curvature)
+
+                        if _camera_config["camera_index"] != cfg["camera_index"]:
+                            break
+                finally:
+                    pipeline.stop()
+
+            except Exception as exc:
+                _camera_metrics = {"status": "NO_CAMERA", "error": str(exc)}
+                _camera_frame = None
+                time.sleep(3)
+                continue
+
+        # ════════════════════════════════════════════════════════════════
+        # PATH B — cv2.VideoCapture fallback (matches camera.py approach)
+        #          Colour stream only; brightness-threshold masking.
+        # ════════════════════════════════════════════════════════════════
         else:
-            cap = cv2.VideoCapture(idx)
+            idx = cfg["camera_index"]
 
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            if platform.system() == "Windows":
+                cap = cv2.VideoCapture(idx, cv2.CAP_MSMF)
+                try:
+                    fourcc = cv2.VideoWriter.fourcc(*"MJPG")
+                except AttributeError:
+                    fourcc = cv2.VideoWriter_fourcc(*"MJPG")  # type: ignore
+                cap.set(cv2.CAP_PROP_FOURCC, fourcc)
+            else:
+                cap = cv2.VideoCapture(idx)
 
-        if not cap.isOpened():
-            _camera_metrics = {"status": "NO_CAMERA", "error": f"Cannot open camera index {idx}"}
-            _camera_frame = None
-            time.sleep(3)
-            continue
+            cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1.0)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
-        analyzer = ActuatorAnalyzer(threshold=cfg["threshold"])
-
-        try:
-            while True:
-                ret, frame = cap.read()
-                if not ret:
+            # Warmup — drain initial stale frames (mirrors camera.py)
+            for _ in range(15):
+                ret, _ = cap.read()
+                if ret:
                     break
+                time.sleep(0.05)
 
-                cfg = _camera_config
-                analyzer.threshold = cfg["threshold"]
-                ppm = cfg["ppm"]
-                overlay_mode = cfg["overlay_mode"]
+            if not cap.isOpened():
+                _camera_metrics = {"status": "NO_CAMERA", "error": f"cv2: cannot open camera index {idx}"}
+                _camera_frame = None
+                time.sleep(3)
+                continue
 
-                mask = analyzer.generate_mask(frame)
-                skeleton = analyzer.extract_spine(mask)
+            analyzer = ActuatorAnalyzer(threshold=cfg["threshold"])
+            _camera_metrics = {"status": "IDLE", "sense_mode": "rgb"}
 
-                result = compute_spine_curvature(skeleton, ppm)
+            try:
+                while True:
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
 
-                _camera_metrics = {
-                    "status": result.status,
-                    "mean_curvature": round(result.mean_curvature, 3),
-                    "bend_angle_deg": round(result.bend_angle_deg, 2),
-                    "radius_mm": round(result.radius_mm, 1),
-                }
+                    if _calib_mtx is not None:
+                        frame = cv2.undistort(frame, _calib_mtx, _calib_dist)
 
-                # Build annotated display frame
-                if overlay_mode == "raw":
-                    display = frame.copy()
-                elif overlay_mode == "mask":
-                    display = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-                elif overlay_mode == "skeleton":
-                    display = np.zeros_like(frame)
-                    display[skeleton > 0] = [180, 212, 0]  # BGR teal
-                else:  # combined
-                    display = frame.copy()
-                    green_layer = np.zeros_like(frame)
-                    green_layer[mask > 0] = [0, 80, 0]
-                    display = cv2.addWeighted(display, 1.0, green_layer, 0.5, 0)
-                    display[skeleton > 0] = [180, 212, 0]  # BGR teal
+                    cfg = _camera_config
+                    analyzer.threshold = cfg["threshold"]
+                    mask = analyzer.generate_mask(frame)
 
-                # Metrics overlay text
-                txt_color = (180, 212, 0) if result.status == "TRACKING" else (80, 100, 90)
-                cv2.putText(display, result.status, (12, 32),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, txt_color, 2)
-                if result.status == "TRACKING":
-                    cv2.putText(display, f"K: {result.mean_curvature:.2f} 1/m", (12, 62),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.65, txt_color, 1)
-                    cv2.putText(display, f"Angle: {result.bend_angle_deg:.1f} deg", (12, 88),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.65, txt_color, 1)
-                    cv2.putText(display, f"R: {result.radius_mm:.0f} mm", (12, 114),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.65, txt_color, 1)
+                    try:
+                        _annotate_and_store(cv2, np, frame, mask, "rgb", cfg, compute_spine_curvature)
+                    except Exception:
+                        time.sleep(0.1)
+                        continue
 
-                _, buf = cv2.imencode(".jpg", display, [cv2.IMWRITE_JPEG_QUALITY, 80])
-                _camera_frame = buf.tobytes()
+                    if _camera_config["camera_index"] != idx:
+                        break
 
-                # Break inner loop if camera index changed so we reopen
-                if _camera_config["camera_index"] != idx:
-                    break
-
-                time.sleep(1 / 30)
-
-        finally:
-            cap.release()
+                    time.sleep(1 / 30)
+            except Exception as loop_exc:
+                _camera_metrics = {"status": "ERROR", "error": str(loop_exc)}
+                _camera_frame = None
+            finally:
+                cap.release()
 
         time.sleep(0.5)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    _load_saved_calibration()
     threading.Thread(target=_rtde_reader, daemon=True).start()
     threading.Thread(target=_camera_reader, daemon=True).start()
     yield
@@ -355,7 +581,7 @@ def _execute_move(x: float, y: float, z: float) -> tuple[bool, str]:
         deadline = time.time() + 30.0
         started = False
         while time.time() < deadline:
-            time.sleep(0.3)
+            time.sleep(0.1)
             if not recv.isConnected():
                 break
             spd = recv.getActualTCPSpeed()
@@ -480,7 +706,7 @@ def _execute_gripper(position: int, speed: int, force: int) -> tuple[bool, str]:
 
 @app.post("/robot/gripper")
 async def robot_gripper(body: GripperRequest) -> dict:
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     ok, msg = await loop.run_in_executor(
         None, _execute_gripper, body.position, body.speed, body.force
     )
@@ -492,7 +718,7 @@ async def robot_gripper(body: GripperRequest) -> dict:
 @app.post("/robot/move")
 async def robot_move(body: MoveRequest) -> dict:
     """Execute a Cartesian move on the UR7e via RTDEControlInterface.moveL()."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     ok, msg = await loop.run_in_executor(None, _execute_move, body.x, body.y, body.z)
     if ok:
         return {"ok": True, "message": msg}
@@ -513,14 +739,51 @@ async def robot_move(body: MoveRequest) -> dict:
 #   STATUS:ABORT_COMPLETE  — all channels closed after ABORT
 #
 # Environment variables:
-#   ARDUINO_PORT — serial device path (default: /dev/ttyACM0)
+#   ARDUINO_PORT — serial device path; auto-detected if unset
 # ---------------------------------------------------------------------------
 
-ARDUINO_PORT = os.getenv("ARDUINO_PORT", "/dev/ttyACM0")
+ARDUINO_PORT = os.getenv("ARDUINO_PORT", "")  # empty = auto-detect
 ARDUINO_BAUD = 115200
 
 _serial_lock: threading.Lock = threading.Lock()
 _serial_conn = None  # serial.Serial | None
+
+
+def _find_arduino_port() -> str:
+    """Return the best-guess serial port for an Arduino Uno.
+
+    Checks for an explicitly configured ARDUINO_PORT env var first, then
+    scans connected ports for known Arduino USB VID/PID pairs and common
+    device name patterns (macOS cu.usbmodem*, Linux ttyACM*).
+    """
+    if ARDUINO_PORT:
+        return ARDUINO_PORT
+
+    # Arduino Uno R3 USB VID:PID (ATmega16U2 USB bridge)
+    ARDUINO_VIDS = {0x2341, 0x1A86, 0x0403}  # Arduino, CH340, FTDI
+
+    import serial.tools.list_ports  # subpackage; must be imported explicitly  # noqa: PLC0415
+    ports = serial.tools.list_ports.comports()
+
+    # Prefer ports whose VID matches a known Arduino USB chip.
+    for p in ports:
+        if getattr(p, "vid", None) in ARDUINO_VIDS:
+            return p.device
+
+    # Fall back to name-pattern heuristics.
+    import platform
+    system = platform.system()
+    for p in ports:
+        dev = p.device
+        if system == "Darwin" and ("usbmodem" in dev or "usbserial" in dev):
+            return dev
+        if system == "Linux" and ("ttyACM" in dev or "ttyUSB" in dev):
+            return dev
+
+    raise RuntimeError(
+        "No Arduino port found. Connect the board or set ARDUINO_PORT "
+        "(e.g. export ARDUINO_PORT=/dev/cu.usbmodem14101)."
+    )
 
 
 def _get_serial_conn():
@@ -539,7 +802,8 @@ def _get_serial_conn():
     except ImportError:
         raise RuntimeError("pyserial not installed — run: pip install pyserial")
 
-    conn = pyserial.Serial(ARDUINO_PORT, ARDUINO_BAUD, timeout=2)
+    port = _find_arduino_port()
+    conn = pyserial.Serial(port, ARDUINO_BAUD, timeout=2)
     time.sleep(2)  # wait for Arduino to finish reset
     while conn.in_waiting:
         conn.readline()  # drain STATUS:READY and any startup noise
@@ -555,47 +819,51 @@ def _pulse_channel(channel: int, duration_ms: int) -> tuple[bool, str]:
     valve timer is independent of this lock — the solenoid opens as soon as
     the command is received.
     """
+    global _serial_conn
     with _serial_lock:
         try:
             ser = _get_serial_conn()
+            ser.write(f"START:{channel}:{duration_ms}\n".encode())
+
+            # Wait up to (duration + 5 s grace) for the DONE acknowledgment.
+            deadline = time.time() + (duration_ms / 1000.0) + 5.0
+            while time.time() < deadline:
+                raw = ser.readline()
+                if not raw:
+                    continue
+                line = raw.decode(errors="replace").strip()
+                if line == f"STATUS:DONE:CH{channel}":
+                    return True, f"Channel {channel} pulse complete ({duration_ms} ms)."
+                if line == "STATUS:ABORT_COMPLETE":
+                    return False, "Pulse interrupted by ABORT."
+
+            return False, f"Timeout: no DONE response from CH{channel} within {duration_ms + 5000} ms."
+
         except Exception as exc:
-            return False, f"Cannot open {ARDUINO_PORT}: {exc}"
-
-        ser.write(f"START:{channel}:{duration_ms}\n".encode())
-
-        # Wait up to (duration + 5 s grace) for the DONE acknowledgment.
-        deadline = time.time() + (duration_ms / 1000.0) + 5.0
-        while time.time() < deadline:
-            raw = ser.readline()
-            if not raw:
-                continue
-            line = raw.decode(errors="replace").strip()
-            if line == f"STATUS:DONE:CH{channel}":
-                return True, f"Channel {channel} pulse complete ({duration_ms} ms)."
-            if line == "STATUS:ABORT_COMPLETE":
-                return False, "Pulse interrupted by ABORT."
-
-        return False, f"Timeout: no DONE response from CH{channel} within {duration_ms + 5000} ms."
+            # Reset so the next request gets a fresh connection.
+            _serial_conn = None
+            return False, f"Serial error on CH{channel}: {exc}"
 
 
 def _abort_all_channels() -> tuple[bool, str]:
     """Send ABORT and wait for STATUS:ABORT_COMPLETE (up to 5 s)."""
+    global _serial_conn
     with _serial_lock:
         try:
             ser = _get_serial_conn()
+            ser.write(b"ABORT\n")
+            deadline = time.time() + 5.0
+            while time.time() < deadline:
+                raw = ser.readline()
+                if not raw:
+                    continue
+                if raw.decode(errors="replace").strip() == "STATUS:ABORT_COMPLETE":
+                    return True, "All channels aborted."
+            return False, "No ABORT_COMPLETE response within 5 s."
+
         except Exception as exc:
-            return False, f"Cannot open {ARDUINO_PORT}: {exc}"
-
-        ser.write(b"ABORT\n")
-        deadline = time.time() + 5.0
-        while time.time() < deadline:
-            raw = ser.readline()
-            if not raw:
-                continue
-            if raw.decode(errors="replace").strip() == "STATUS:ABORT_COMPLETE":
-                return True, "All channels aborted."
-
-        return False, "No ABORT_COMPLETE response within 5 s."
+            _serial_conn = None
+            return False, f"Serial error on abort: {exc}"
 
 
 class PulseRequest(BaseModel):
@@ -610,7 +878,7 @@ async def actuation_pulse(body: PulseRequest) -> dict:
         raise HTTPException(status_code=422, detail="channel must be 1–4")
     if not (1 <= body.duration_ms <= 10_000):
         raise HTTPException(status_code=422, detail="duration_ms must be 1–10000")
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     ok, msg = await loop.run_in_executor(None, _pulse_channel, body.channel, body.duration_ms)
     if ok:
         return {"ok": True, "message": msg}
@@ -620,7 +888,7 @@ async def actuation_pulse(body: PulseRequest) -> dict:
 @app.post("/actuation/abort")
 async def actuation_abort() -> dict:
     """Emergency stop: immediately close all solenoid valves."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     ok, msg = await loop.run_in_executor(None, _abort_all_channels)
     if ok:
         return {"ok": True, "message": msg}
@@ -630,10 +898,136 @@ async def actuation_abort() -> dict:
 @app.get("/actuation/status")
 async def actuation_status() -> dict:
     """Return whether the Arduino serial port is currently open."""
-    return {
-        "port": ARDUINO_PORT,
-        "connected": _serial_conn is not None and _serial_conn.is_open,
+    connected = _serial_conn is not None and _serial_conn.is_open
+    # Report the actual device path when connected, fall back to env var or hint.
+    port = (_serial_conn.port if connected else None) or ARDUINO_PORT or "auto-detect"
+    return {"port": port, "connected": connected}
+
+
+# ---------------------------------------------------------------------------
+# Camera calibration endpoints
+# ---------------------------------------------------------------------------
+
+class CalibConfigRequest(BaseModel):
+    active: Optional[bool] = None
+    grid_cols: Optional[int] = None
+    grid_rows: Optional[int] = None
+    square_mm: Optional[float] = None
+
+
+@app.get("/camera/calibrate")
+async def calib_status_get() -> dict:
+    with _calib_lock:
+        return {**_calib, "calibrated": _calib_mtx is not None}
+
+
+@app.post("/camera/calibrate/config")
+async def calib_config_post(body: CalibConfigRequest) -> dict:
+    with _calib_lock:
+        if body.active is not None:
+            _calib["active"] = body.active
+        if body.grid_cols is not None and body.grid_cols >= 2:
+            _calib["grid_cols"] = body.grid_cols
+        if body.grid_rows is not None and body.grid_rows >= 2:
+            _calib["grid_rows"] = body.grid_rows
+        if body.square_mm is not None and body.square_mm > 0:
+            _calib["square_mm"] = body.square_mm
+    return _calib
+
+
+@app.post("/camera/calibrate/capture")
+async def calib_capture() -> dict:
+    pending = _calib_pending
+    if not pending or not pending.get("found"):
+        raise HTTPException(status_code=422, detail="No chessboard detected in current frame")
+    with _calib_lock:
+        _calib_obj_pts.append(pending["objp"])
+        _calib_img_pts.append(pending["corners"])
+        if _calib["img_size"] is None:
+            _calib["img_size"] = pending["img_size"]
+        _calib["frame_count"] += 1
+    return {"ok": True, "frame_count": _calib["frame_count"]}
+
+
+@app.post("/camera/calibrate/run")
+async def calib_run() -> dict:
+    with _calib_lock:
+        n = len(_calib_obj_pts)
+        if n < 8:
+            raise HTTPException(status_code=422, detail=f"Need ≥8 frames, have {n}")
+        img_size = _calib["img_size"]
+        obj_snap = list(_calib_obj_pts)
+        img_snap = list(_calib_img_pts)
+        sq_mm = _calib["square_mm"]
+        g_cols = _calib["grid_cols"]
+        g_rows = _calib["grid_rows"]
+
+    def _run_calib():
+        import numpy as _np
+        import cv2 as _cv2
+        rms, mtx, dist, _, _ = _cv2.calibrateCamera(obj_snap, img_snap, img_size, None, None)
+        # Estimate ppm: average horizontal pixel spacing between adjacent corners
+        spacings = []
+        for corners in img_snap:
+            pts = corners.reshape(g_rows, g_cols, 2)
+            for r in range(g_rows):
+                diffs = _np.diff(pts[r], axis=0)
+                spacings.extend(_np.linalg.norm(diffs, axis=1).tolist())
+        avg_px = float(_np.mean(spacings)) if spacings else 0.0
+        ppm = avg_px / (sq_mm / 1000.0) if avg_px > 0 else _camera_config["ppm"]
+        return rms, mtx, dist, ppm
+
+    loop = asyncio.get_running_loop()
+    rms, mtx, dist, ppm = await loop.run_in_executor(None, _run_calib)
+
+    global _calib_mtx, _calib_dist
+    _calib_mtx = mtx
+    _calib_dist = dist
+    result = {"rms": round(float(rms), 4), "ppm": round(float(ppm), 1), "applied": False}
+    _calib["result"] = result
+    return result
+
+
+@app.post("/camera/calibrate/apply")
+async def calib_apply() -> dict:
+    if _calib_mtx is None:
+        raise HTTPException(status_code=422, detail="Run calibration first")
+    ppm = _calib["result"]["ppm"]
+    global _camera_config
+    _camera_config = {**_camera_config, "ppm": ppm}
+    _calib["result"]["applied"] = True
+    data = {
+        "matrix": _calib_mtx.tolist(),
+        "dist": _calib_dist.tolist(),
+        "rms": _calib["result"]["rms"],
+        "ppm": ppm,
     }
+    try:
+        with open(_CALIB_FILE, "w") as fh:
+            json.dump(data, fh, indent=2)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not save calibration: {exc}")
+    return {"ok": True, **data}
+
+
+@app.post("/camera/calibrate/clear")
+async def calib_clear() -> dict:
+    global _calib_pending, _calib_mtx, _calib_dist
+    with _calib_lock:
+        _calib_obj_pts.clear()
+        _calib_img_pts.clear()
+        _calib_pending = None
+        _calib_mtx = None
+        _calib_dist = None
+        _calib.update({
+            "active": False, "frame_count": 0, "img_size": None,
+            "last_found": False, "result": None,
+        })
+    try:
+        os.remove(_CALIB_FILE)
+    except FileNotFoundError:
+        pass
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
@@ -642,7 +1036,9 @@ async def actuation_status() -> dict:
 
 class CameraConfigRequest(BaseModel):
     camera_index: Optional[int] = None
-    threshold: Optional[int] = None
+    z_min: Optional[float] = None   # Near depth gate (metres)
+    z_max: Optional[float] = None   # Far depth gate (metres)
+    threshold: Optional[int] = None  # RGB brightness threshold (fallback)
     overlay_mode: Optional[str] = None
     ppm: Optional[float] = None
 
@@ -658,7 +1054,11 @@ async def camera_config_post(body: CameraConfigRequest) -> dict:
     global _camera_config
     new = dict(_camera_config)
     if body.camera_index is not None:
-        new["camera_index"] = body.camera_index
+        new["camera_index"] = max(0, body.camera_index)
+    if body.z_min is not None and 0.0 < body.z_min < 5.0:
+        new["z_min"] = body.z_min
+    if body.z_max is not None and 0.0 < body.z_max <= 5.0:
+        new["z_max"] = body.z_max
     if body.threshold is not None:
         new["threshold"] = max(0, min(255, body.threshold))
     if body.overlay_mode is not None and body.overlay_mode in ("combined", "raw", "mask", "skeleton"):

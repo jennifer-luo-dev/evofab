@@ -1,0 +1,225 @@
+[06/26 13:12:26.445442][debug][2219268][Context.cpp:30] Context creating, work_dir=/Users/jennifer/evofab/evofab/evofab-app
+[06/26 13:12:26.445500][debug][2219268][Context.cpp:49] Config file version=1.1
+[06/26 13:12:26.445515][debug][2219268][FrameBufferManager.cpp:23] Max global frame buffer size updated! size=2048.000MB
+[06/26 13:12:26.445521][info][2219268][Context.cpp:68] Context created with config: default config!
+[06/26 13:12:26.445550][info][2219268][Context.cpp:73] Work directory=/Users/jennifer/evofab/evofab/evofab-app, SDK version=v1.10.5-20240511-7dc8be970
+[06/26 13:12:26.445558][debug][2219268][DeviceManager.cpp:30] DeviceManager init ...
+[06/26 13:12:26.445561][info][2219268][MacPal.cpp:30] createObPal: create MacPal!
+[06/26 13:12:26.452963][debug][2219268][DeviceManager.cpp:34] Enable USB Device Enumerator ...
+[06/26 13:12:26.452988][debug][2219268][EnumeratorLibusb.cpp:322] queryDevicesInfo done!
+[06/26 13:12:26.453002][info][2219268][MacPal.cpp:120] Create PollingDeviceWatcher!
+[06/26 13:12:26.453015][debug][2219268][UsbDeviceEnumerator.cpp:75] No matched usb device found!
+[06/26 13:12:26.453022][info][2219268][DeviceManager.cpp:15] Current found device(s): (0)
+[06/26 13:12:26.453027][debug][2219268][DeviceManager.cpp:52] DeviceManager construct done!
+[06/26 13:16:05.048897][debug][2222120][Context.cpp:30] Context creating, work_dir=/Users/jennifer/evofab/evofab/evofab-app
+[06/26 13:16:05.048929][debug][2222120][Context.cpp:49] Config file version=1.1
+[06/26 13:16:05.048941][debug][2222120][FrameBufferManager.cpp:23] Max global frame buffer size updated! size=2048.000MB
+[06/26 13:16:05.048948][info][2222120][Context.cpp:68] Context created with config: default config!
+[06/26 13:16:05.048977][info][2222120][Context.cpp:73] Work directory=/Users/jennifer/evofab/evofab/evofab-app, SDK version=v1.10.5-20240511-7dc8be970
+[06/26 13:16:05.048986][debug][2222120][DeviceManager.cpp:30] DeviceManager init ...
+[06/26 13:16:05.048989][info][2222120][MacPal.cpp:30] createObPal: create MacPal!
+[06/26 13:16:05.064467][debug][2222120][DeviceManager.cpp:34] Enable USB Device Enumerator ...
+[06/26 13:16:05.064494][debug][2222120][EnumeratorLibusb.cpp:322] queryDevicesInfo done!
+[06/26 13:16:05.064508][info][2222120][MacPal.cpp:120] Create PollingDeviceWatcher!
+[06/26 13:16:05.064518][debug][2222120][UsbDeviceEnumerator.cpp:75] No matched usb device found!
+[06/26 13:16:05.064525][info][2222120][DeviceManager.cpp:15] Current found device(s): (0)
+[06/26 13:16:05.064530][debug][2222120][DeviceManager.cpp:52] DeviceManager construct done!
+[06/26 13:16:47.455751][debug][2223047][Context.cpp:30] Context creating, work_dir=/Users/jennifer/evofab/evofab/evofab-app
+[06/26 13:16:47.455790][debug][2223047][Context.cpp:49] Config file version=1.1
+[06/26 13:16:47.455807][debug][2223047][FrameBufferManager.cpp:23] Max global frame buffer size updated! size=2048.000MB
+[06/26 13:16:47.455817][info][2223047][Context.cpp:68] Context created with config: default config!
+[06/26 13:16:47.455849][info][2223047][Context.cpp:73] Work directory=/Users/jennifer/evofab/evofab/evofab-app, SDK version=v1.10.5-20240511-7dc8be970
+[06/26 13:16:47.455862][debug][2223047][DeviceManager.cpp:30] DeviceManager init ...
+[06/26 13:16:47.455871][info][2223047][MacPal.cpp:30] createObPal: create MacPal!
+[06/26 13:16:47.467516][debug][2223047][DeviceManager.cpp:34] Enable USB Device Enumerator ...
+[06/26 13:16:47.467541][debug][2223047][EnumeratorLibusb.cpp:322] queryDevicesInfo done!
+[06/26 13:16:47.467556][info][2223047][MacPal.cpp:120] Create PollingDeviceWatcher!
+[06/26 13:16:47.467567][debug][2223047][UsbDeviceEnumerator.cpp:75] No matched usb device found!
+[06/26 13:16:47.467573][info][2223047][DeviceManager.cpp:15] Current found device(s): (0)
+[06/26 13:16:47.467578][debug][2223047][DeviceManager.cpp:52] DeviceManager construct done!
+[06/26 13:16:51.042124][debug][2223434][Context.cpp:30] Context creating, work_dir=/Users/jennifer/evofab/evofab/evofab-app
+[06/26 13:16:51.042158][debug][2223434][Context.cpp:49] Config file version=1.1
+[06/26 13:16:51.042170][debug][2223434][FrameBufferManager.cpp:23] Max global frame buffer size updated! size=2048.000MB
+[06/26 13:16:51.042190][info][2223434][Context.cpp:68] Context created with config: default config!
+[06/26 13:16:51.042215][info][2223434][Context.cpp:73] Work directory=/Users/jennifer/evofab/evofab/evofab-app, SDK version=v1.10.5-20240511-7dc8be970
+[06/26 13:16:51.042222][debug][2223434][DeviceManager.cpp:30] DeviceManager init ...
+[06/26 13:16:51.042225][info][2223434][MacPal.cpp:30] createObPal: create MacPal!
+[06/26 13:16:51.050429][debug][2223434][DeviceManager.cpp:34] Enable USB Device Enumerator ...
+[06/26 13:16:51.050450][debug][2223434][EnumeratorLibusb.cpp:322] queryDevicesInfo done!
+[06/26 13:16:51.050464][info][2223434][MacPal.cpp:120] Create PollingDeviceWatcher!
+[06/26 13:16:51.050475][debug][2223434][UsbDeviceEnumerator.cpp:75] No matched usb device found!
+[06/26 13:16:51.050482][info][2223434][DeviceManager.cpp:15] Current found device(s): (0)
+[06/26 13:16:51.050486][debug][2223434][DeviceManager.cpp:52] DeviceManager construct done!
+[06/26 13:17:20.426448][debug][2224314][Context.cpp:30] Context creating, work_dir=/Users/jennifer/evofab/evofab/evofab-app
+[06/26 13:17:20.426508][debug][2224314][Context.cpp:49] Config file version=1.1
+[06/26 13:17:20.426530][debug][2224314][FrameBufferManager.cpp:23] Max global frame buffer size updated! size=2048.000MB
+[06/26 13:17:20.426542][info][2224314][Context.cpp:68] Context created with config: default config!
+[06/26 13:17:20.426598][info][2224314][Context.cpp:73] Work directory=/Users/jennifer/evofab/evofab/evofab-app, SDK version=v1.10.5-20240511-7dc8be970
+[06/26 13:17:20.426615][debug][2224314][DeviceManager.cpp:30] DeviceManager init ...
+[06/26 13:17:20.426623][info][2224314][MacPal.cpp:30] createObPal: create MacPal!
+[06/26 13:17:20.439736][debug][2224314][DeviceManager.cpp:34] Enable USB Device Enumerator ...
+[06/26 13:17:20.443597][debug][2224314][EnumeratorLibusb.cpp:322] queryDevicesInfo done!
+[06/26 13:17:20.443618][info][2224314][MacPal.cpp:120] Create PollingDeviceWatcher!
+[06/26 13:17:20.443634][debug][2224314][UsbDeviceEnumerator.cpp:75] No matched usb device found!
+[06/26 13:17:20.443645][info][2224314][DeviceManager.cpp:15] Current found device(s): (0)
+[06/26 13:17:20.443654][debug][2224314][DeviceManager.cpp:52] DeviceManager construct done!
+[06/30 16:24:33.979645][debug][1115460][Context.cpp:30] Context creating, work_dir=/Users/jennifer/evofab/evofab/evofab-app
+[06/30 16:24:33.979909][debug][1115460][Context.cpp:49] Config file version=1.1
+[06/30 16:24:33.979949][debug][1115460][FrameBufferManager.cpp:23] Max global frame buffer size updated! size=2048.000MB
+[06/30 16:24:33.979956][info][1115460][Context.cpp:68] Context created with config: default config!
+[06/30 16:24:33.979989][info][1115460][Context.cpp:73] Work directory=/Users/jennifer/evofab/evofab/evofab-app, SDK version=v1.10.5-20240511-7dc8be970
+[06/30 16:24:33.979997][debug][1115460][DeviceManager.cpp:30] DeviceManager init ...
+[06/30 16:24:33.980000][info][1115460][MacPal.cpp:30] createObPal: create MacPal!
+[06/30 16:24:33.980343][debug][1115460][DeviceManager.cpp:34] Enable USB Device Enumerator ...
+[06/30 16:24:33.980367][debug][1115460][EnumeratorLibusb.cpp:322] queryDevicesInfo done!
+[06/30 16:24:33.980393][info][1115460][MacPal.cpp:120] Create PollingDeviceWatcher!
+[06/30 16:24:33.980402][debug][1115460][UsbDeviceEnumerator.cpp:75] No matched usb device found!
+[06/30 16:24:33.980420][info][1115460][DeviceManager.cpp:15] Current found device(s): (0)
+[06/30 16:24:33.980425][debug][1115460][DeviceManager.cpp:52] DeviceManager construct done!
+[07/01 11:21:59.696369][debug][46392][Context.cpp:30] Context creating, work_dir=/Users/jennifer/evofab/evofab/evofab-app
+[07/01 11:21:59.696656][debug][46392][Context.cpp:49] Config file version=1.1
+[07/01 11:21:59.696695][debug][46392][FrameBufferManager.cpp:23] Max global frame buffer size updated! size=2048.000MB
+[07/01 11:21:59.696701][info][46392][Context.cpp:68] Context created with config: default config!
+[07/01 11:21:59.696727][info][46392][Context.cpp:73] Work directory=/Users/jennifer/evofab/evofab/evofab-app, SDK version=v1.10.5-20240511-7dc8be970
+[07/01 11:21:59.696751][debug][46392][DeviceManager.cpp:30] DeviceManager init ...
+[07/01 11:21:59.696754][info][46392][MacPal.cpp:30] createObPal: create MacPal!
+[07/01 11:21:59.704574][debug][46392][DeviceManager.cpp:34] Enable USB Device Enumerator ...
+[07/01 11:21:59.704600][debug][46392][EnumeratorLibusb.cpp:322] queryDevicesInfo done!
+[07/01 11:21:59.704638][info][46392][MacPal.cpp:120] Create PollingDeviceWatcher!
+[07/01 11:21:59.704650][debug][46392][UsbDeviceEnumerator.cpp:75] No matched usb device found!
+[07/01 11:21:59.704676][info][46392][DeviceManager.cpp:15] Current found device(s): (0)
+[07/01 11:21:59.704684][debug][46392][DeviceManager.cpp:52] DeviceManager construct done!
+[07/01 11:38:00.086683][debug][60545][Context.cpp:30] Context creating, work_dir=/Users/jennifer/evofab/evofab/evofab-app
+[07/01 11:38:00.086730][debug][60545][Context.cpp:49] Config file version=1.1
+[07/01 11:38:00.086749][debug][60545][FrameBufferManager.cpp:23] Max global frame buffer size updated! size=2048.000MB
+[07/01 11:38:00.086762][info][60545][Context.cpp:68] Context created with config: default config!
+[07/01 11:38:00.086797][info][60545][Context.cpp:73] Work directory=/Users/jennifer/evofab/evofab/evofab-app, SDK version=v1.10.5-20240511-7dc8be970
+[07/01 11:38:00.086809][debug][60545][DeviceManager.cpp:30] DeviceManager init ...
+[07/01 11:38:00.086818][info][60545][MacPal.cpp:30] createObPal: create MacPal!
+[07/01 11:38:00.096878][debug][60545][DeviceManager.cpp:34] Enable USB Device Enumerator ...
+[07/01 11:38:00.096906][debug][60545][EnumeratorLibusb.cpp:322] queryDevicesInfo done!
+[07/01 11:38:00.096921][info][60545][MacPal.cpp:120] Create PollingDeviceWatcher!
+[07/01 11:38:00.096933][debug][60545][UsbDeviceEnumerator.cpp:75] No matched usb device found!
+[07/01 11:38:00.096939][info][60545][DeviceManager.cpp:15] Current found device(s): (0)
+[07/01 11:38:00.096945][debug][60545][DeviceManager.cpp:52] DeviceManager construct done!
+[07/01 11:38:00.430156][debug][60571][Context.cpp:30] Context creating, work_dir=/Users/jennifer/evofab/evofab/evofab-app
+[07/01 11:38:00.430236][debug][60571][Context.cpp:49] Config file version=1.1
+[07/01 11:38:00.430266][debug][60571][FrameBufferManager.cpp:23] Max global frame buffer size updated! size=2048.000MB
+[07/01 11:38:00.430285][info][60571][Context.cpp:68] Context created with config: default config!
+[07/01 11:38:00.430348][info][60571][Context.cpp:73] Work directory=/Users/jennifer/evofab/evofab/evofab-app, SDK version=v1.10.5-20240511-7dc8be970
+[07/01 11:38:00.430371][debug][60571][DeviceManager.cpp:30] DeviceManager init ...
+[07/01 11:38:00.430384][info][60571][MacPal.cpp:30] createObPal: create MacPal!
+[07/01 11:38:00.440279][debug][60571][DeviceManager.cpp:34] Enable USB Device Enumerator ...
+[07/01 11:38:00.440310][debug][60571][EnumeratorLibusb.cpp:322] queryDevicesInfo done!
+[07/01 11:38:00.440325][info][60571][MacPal.cpp:120] Create PollingDeviceWatcher!
+[07/01 11:38:00.440338][debug][60571][UsbDeviceEnumerator.cpp:75] No matched usb device found!
+[07/01 11:38:00.440345][info][60571][DeviceManager.cpp:15] Current found device(s): (0)
+[07/01 11:38:00.440350][debug][60571][DeviceManager.cpp:52] DeviceManager construct done!
+[07/01 11:52:38.021304][debug][73273][Context.cpp:30] Context creating, work_dir=/Users/jennifer/evofab/evofab/evofab-app
+[07/01 11:52:38.021346][debug][73273][Context.cpp:49] Config file version=1.1
+[07/01 11:52:38.021363][debug][73273][FrameBufferManager.cpp:23] Max global frame buffer size updated! size=2048.000MB
+[07/01 11:52:38.021376][info][73273][Context.cpp:68] Context created with config: default config!
+[07/01 11:52:38.021411][info][73273][Context.cpp:73] Work directory=/Users/jennifer/evofab/evofab/evofab-app, SDK version=v1.10.5-20240511-7dc8be970
+[07/01 11:52:38.021426][debug][73273][DeviceManager.cpp:30] DeviceManager init ...
+[07/01 11:52:38.021436][info][73273][MacPal.cpp:30] createObPal: create MacPal!
+[07/01 11:52:38.030726][debug][73273][DeviceManager.cpp:34] Enable USB Device Enumerator ...
+[07/01 11:52:38.030756][debug][73273][EnumeratorLibusb.cpp:322] queryDevicesInfo done!
+[07/01 11:52:38.030770][info][73273][MacPal.cpp:120] Create PollingDeviceWatcher!
+[07/01 11:52:38.030780][debug][73273][UsbDeviceEnumerator.cpp:75] No matched usb device found!
+[07/01 11:52:38.030785][info][73273][DeviceManager.cpp:15] Current found device(s): (0)
+[07/01 11:52:38.030790][debug][73273][DeviceManager.cpp:52] DeviceManager construct done!
+[07/01 11:52:38.369614][debug][73296][Context.cpp:30] Context creating, work_dir=/Users/jennifer/evofab/evofab/evofab-app
+[07/01 11:52:38.369653][debug][73296][Context.cpp:49] Config file version=1.1
+[07/01 11:52:38.369671][debug][73296][FrameBufferManager.cpp:23] Max global frame buffer size updated! size=2048.000MB
+[07/01 11:52:38.369683][info][73296][Context.cpp:68] Context created with config: default config!
+[07/01 11:52:38.369717][info][73296][Context.cpp:73] Work directory=/Users/jennifer/evofab/evofab/evofab-app, SDK version=v1.10.5-20240511-7dc8be970
+[07/01 11:52:38.369730][debug][73296][DeviceManager.cpp:30] DeviceManager init ...
+[07/01 11:52:38.369740][info][73296][MacPal.cpp:30] createObPal: create MacPal!
+[07/01 11:52:38.379832][debug][73296][DeviceManager.cpp:34] Enable USB Device Enumerator ...
+[07/01 11:52:38.379864][debug][73296][EnumeratorLibusb.cpp:322] queryDevicesInfo done!
+[07/01 11:52:38.379886][info][73296][MacPal.cpp:120] Create PollingDeviceWatcher!
+[07/01 11:52:38.379902][debug][73296][UsbDeviceEnumerator.cpp:75] No matched usb device found!
+[07/01 11:52:38.379914][info][73296][DeviceManager.cpp:15] Current found device(s): (0)
+[07/01 11:52:38.379926][debug][73296][DeviceManager.cpp:52] DeviceManager construct done!
+[07/01 11:56:43.043928][debug][77207][Context.cpp:30] Context creating, work_dir=/Users/jennifer/evofab/evofab/evofab-app
+[07/01 11:56:43.044127][debug][77207][Context.cpp:49] Config file version=1.1
+[07/01 11:56:43.044163][debug][77207][FrameBufferManager.cpp:23] Max global frame buffer size updated! size=2048.000MB
+[07/01 11:56:43.044175][info][77207][Context.cpp:68] Context created with config: default config!
+[07/01 11:56:43.044224][info][77207][Context.cpp:73] Work directory=/Users/jennifer/evofab/evofab/evofab-app, SDK version=v1.10.5-20240511-7dc8be970
+[07/01 11:56:43.044236][debug][77207][DeviceManager.cpp:30] DeviceManager init ...
+[07/01 11:56:43.044243][info][77207][MacPal.cpp:30] createObPal: create MacPal!
+[07/01 11:56:43.054902][debug][77207][DeviceManager.cpp:34] Enable USB Device Enumerator ...
+[07/01 11:56:43.054922][debug][77207][EnumeratorLibusb.cpp:322] queryDevicesInfo done!
+[07/01 11:56:43.054935][info][77207][MacPal.cpp:120] Create PollingDeviceWatcher!
+[07/01 11:56:43.054946][debug][77207][UsbDeviceEnumerator.cpp:75] No matched usb device found!
+[07/01 11:56:43.054952][info][77207][DeviceManager.cpp:15] Current found device(s): (0)
+[07/01 11:56:43.054957][debug][77207][DeviceManager.cpp:52] DeviceManager construct done!
+[07/01 12:05:04.060882][debug][77233][MacPal.cpp:207] Device arrival event occurred
+[07/01 12:05:07.069583][debug][77234][EnumeratorLibusb.cpp:322] queryDevicesInfo done!
+[07/01 12:05:07.069702][debug][77234][UsbDeviceEnumerator.cpp:160] Current usb device port list:
+[07/01 12:05:07.069739][debug][77234][UsbDeviceEnumerator.cpp:163]  - 0-2.3-6.0 | Orbbec Gemini 335Lg Depth Camera
+[07/01 12:05:07.069754][debug][77234][UsbDeviceEnumerator.cpp:163]  - 0-2.3-6.4 | Orbbec Gemini 335Lg RGB Camera
+[07/01 12:05:07.069764][debug][77234][UsbDeviceEnumerator.cpp:163]  - 0-2.3-6.6 | Orbbec Gemini 335Lg Imu
+[07/01 12:05:07.069992][debug][77234][UsbDeviceEnumerator.cpp:232] device list changed: added=1, current=1
+[07/01 12:05:07.070014][debug][77234][UsbDeviceEnumerator.cpp:234] Current device list: 
+[07/01 12:05:07.070031][debug][77234][UsbDeviceEnumerator.cpp:236]   - Name: Orbbec Gemini 335Lg, PID: 0x080B, SN/ID: CP4R84P00081
+[07/01 12:05:07.070119][info][83649][DeviceManager.cpp:181] Device changed! removed: 0, added: 1
+[07/01 12:05:07.070204][info][83649][DeviceManager.cpp:15] Current device(s) list: (1)
+[07/01 12:05:07.070266][info][83649][DeviceManager.cpp:24] 	- Name: Orbbec Gemini 335Lg, PID: 0x080b, SN/ID: CP4R84P00081, Connection: USB3.2
+[07/01 12:31:24.227051][debug][107920][Context.cpp:30] Context creating, work_dir=/Users/jennifer/evofab/evofab/evofab-app
+[07/01 12:31:24.227133][debug][107920][Context.cpp:49] Config file version=1.1
+[07/01 12:31:24.227202][debug][107920][FrameBufferManager.cpp:23] Max global frame buffer size updated! size=2048.000MB
+[07/01 12:31:24.227214][info][107920][Context.cpp:68] Context created with config: default config!
+[07/01 12:31:24.227251][info][107920][Context.cpp:73] Work directory=/Users/jennifer/evofab/evofab/evofab-app, SDK version=v1.10.5-20240511-7dc8be970
+[07/01 12:31:24.227263][debug][107920][DeviceManager.cpp:30] DeviceManager init ...
+[07/01 12:31:24.227270][info][107920][MacPal.cpp:30] createObPal: create MacPal!
+[07/01 12:31:24.236853][debug][107920][DeviceManager.cpp:34] Enable USB Device Enumerator ...
+[07/01 12:31:24.237801][debug][107920][EnumeratorLibusb.cpp:322] queryDevicesInfo done!
+[07/01 12:31:24.237818][debug][107920][UsbDeviceEnumerator.cpp:160] Current usb device port list:
+[07/01 12:31:24.237828][debug][107920][UsbDeviceEnumerator.cpp:163]  - 0-2.3-6.0 | Orbbec Gemini 335Lg Depth Camera
+[07/01 12:31:24.237836][debug][107920][UsbDeviceEnumerator.cpp:163]  - 0-2.3-6.4 | Orbbec Gemini 335Lg RGB Camera
+[07/01 12:31:24.237845][debug][107920][UsbDeviceEnumerator.cpp:163]  - 0-2.3-6.6 | Orbbec Gemini 335Lg Imu
+[07/01 12:31:24.237871][info][107920][MacPal.cpp:120] Create PollingDeviceWatcher!
+[07/01 12:31:24.237888][debug][107920][UsbDeviceEnumerator.cpp:68] Found 1 device(s):
+[07/01 12:31:24.237897][debug][107920][UsbDeviceEnumerator.cpp:71]   - Name: Orbbec Gemini 335Lg, PID: 0x080B, SN/ID: CP4R84P00081, connection: USB3.2
+[07/01 12:31:24.237905][info][107920][DeviceManager.cpp:15] Current found device(s): (1)
+[07/01 12:31:24.237915][info][107920][DeviceManager.cpp:24] 	- Name: Orbbec Gemini 335Lg, PID: 0x080b, SN/ID: CP4R84P00081, Connection: USB3.2
+[07/01 12:31:24.237924][debug][107920][DeviceManager.cpp:52] DeviceManager construct done!
+[07/01 12:42:16.355593][debug][107931][MacPal.cpp:214] Device removed event occurred
+[07/01 12:42:16.365009][debug][107931][UsbDeviceEnumerator.cpp:134] usb device removed: 0-2.3-6
+[07/01 12:42:16.365059][debug][107931][UsbDeviceEnumerator.cpp:134] usb device removed: 0-2.3-6
+[07/01 12:42:16.365070][debug][107931][UsbDeviceEnumerator.cpp:134] usb device removed: 0-2.3-6
+[07/01 12:42:16.365078][debug][107931][UsbDeviceEnumerator.cpp:139] Current usb device port list:
+[07/01 12:42:16.369024][debug][107931][UsbDeviceEnumerator.cpp:102] device list changed: removed=1, current=0
+[07/01 12:42:16.369055][debug][107931][UsbDeviceEnumerator.cpp:104] Removed device list:
+[07/01 12:42:16.369067][debug][107931][UsbDeviceEnumerator.cpp:106]   - Name: Orbbec Gemini 335Lg, PID: 0x080B, SN/ID: CP4R84P00081
+[07/01 12:42:16.369182][info][115405][DeviceManager.cpp:181] Device changed! removed: 1, added: 0
+[07/01 12:42:16.369401][info][115405][DeviceManager.cpp:15] Removed device(s) list: (1)
+[07/01 12:42:16.369416][info][115405][DeviceManager.cpp:24] 	- Name: Orbbec Gemini 335Lg, PID: 0x080b, SN/ID: CP4R84P00081, Connection: USB3.2
+[07/01 12:42:16.369428][info][115405][DeviceManager.cpp:15] Current device(s) list: (0)
+[07/01 13:47:11.598178][debug][159966][Context.cpp:30] Context creating, work_dir=/Users/jennifer/evofab/evofab/evofab-app
+[07/01 13:47:11.598261][debug][159966][Context.cpp:49] Config file version=1.1
+[07/01 13:47:11.598379][debug][159966][FrameBufferManager.cpp:23] Max global frame buffer size updated! size=2048.000MB
+[07/01 13:47:11.598393][info][159966][Context.cpp:68] Context created with config: default config!
+[07/01 13:47:11.598429][info][159966][Context.cpp:73] Work directory=/Users/jennifer/evofab/evofab/evofab-app, SDK version=v1.10.5-20240511-7dc8be970
+[07/01 13:47:11.598438][debug][159966][DeviceManager.cpp:30] DeviceManager init ...
+[07/01 13:47:11.598442][info][159966][MacPal.cpp:30] createObPal: create MacPal!
+[07/01 13:47:11.599167][debug][159966][DeviceManager.cpp:34] Enable USB Device Enumerator ...
+[07/01 13:47:11.599181][debug][159966][EnumeratorLibusb.cpp:322] queryDevicesInfo done!
+[07/01 13:47:11.599193][info][159966][MacPal.cpp:120] Create PollingDeviceWatcher!
+[07/01 13:47:11.599202][debug][159966][UsbDeviceEnumerator.cpp:75] No matched usb device found!
+[07/01 13:47:11.599208][info][159966][DeviceManager.cpp:15] Current found device(s): (0)
+[07/01 13:47:11.599212][debug][159966][DeviceManager.cpp:52] DeviceManager construct done!
+[07/02 10:32:03.492056][debug][458728][Context.cpp:30] Context creating, work_dir=/Users/jennifer/evofab/evofab/evofab-app
+[07/02 10:32:03.492245][debug][458728][Context.cpp:49] Config file version=1.1
+[07/02 10:32:03.492333][debug][458728][FrameBufferManager.cpp:23] Max global frame buffer size updated! size=2048.000MB
+[07/02 10:32:03.492344][info][458728][Context.cpp:68] Context created with config: default config!
+[07/02 10:32:03.492383][info][458728][Context.cpp:73] Work directory=/Users/jennifer/evofab/evofab/evofab-app, SDK version=v1.10.5-20240511-7dc8be970
+[07/02 10:32:03.492391][debug][458728][DeviceManager.cpp:30] DeviceManager init ...
+[07/02 10:32:03.492395][info][458728][MacPal.cpp:30] createObPal: create MacPal!
+[07/02 10:32:03.493070][debug][458728][DeviceManager.cpp:34] Enable USB Device Enumerator ...
+[07/02 10:32:03.493085][debug][458728][EnumeratorLibusb.cpp:322] queryDevicesInfo done!
+[07/02 10:32:03.493273][info][458728][MacPal.cpp:120] Create PollingDeviceWatcher!
+[07/02 10:32:03.493284][debug][458728][UsbDeviceEnumerator.cpp:75] No matched usb device found!
+[07/02 10:32:03.493300][info][458728][DeviceManager.cpp:15] Current found device(s): (0)
+[07/02 10:32:03.493306][debug][458728][DeviceManager.cpp:52] DeviceManager construct done!

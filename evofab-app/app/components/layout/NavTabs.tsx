@@ -16,6 +16,7 @@ const TABS = [
   { label: 'Actuation Test',    href: '/actuation-test' },
   { label: 'Classification',    href: '/classification-test' },
   { label: 'Camera Test',       href: '/camera-test' },
+  { label: 'Calibration',       href: '/calibration' },
 ]
 
 /**

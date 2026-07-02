@@ -13,6 +13,7 @@ interface CameraMetrics {
   mean_curvature?: number;
   bend_angle_deg?: number;
   radius_mm?: number;
+  sense_mode?: "depth" | "rgb";
   error?: string;
 }
 
@@ -23,15 +24,20 @@ export default function CameraTestPage() {
   const [wsConnected, setWsConnected] = useState(false);
   const [streamError, setStreamError] = useState(false);
 
+  // Controls (mirrored from server config on mount)
   const [cameraIndex, setCameraIndex] = useState(0);
+  const [zMin, setZMin] = useState(0.40);
+  const [zMax, setZMax] = useState(0.55);
   const [threshold, setThreshold] = useState(200);
   const [overlayMode, setOverlayMode] = useState<OverlayMode>("combined");
   const [ppm, setPpm] = useState(2800);
 
-  const thresholdDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const ppmDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const zMinDebounce  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const zMaxDebounce  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const threshDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ppmDebounce   = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // WebSocket for live metrics
+  // WebSocket — auto-reconnect every 3 s on close
   useEffect(() => {
     let ws: WebSocket;
     let cancelled = false;
@@ -40,10 +46,7 @@ export default function CameraTestPage() {
       ws = new WebSocket(WS_URL);
       ws.onopen = () => { if (!cancelled) setWsConnected(true); };
       ws.onclose = () => {
-        if (!cancelled) {
-          setWsConnected(false);
-          setTimeout(connect, 3000);
-        }
+        if (!cancelled) { setWsConnected(false); setTimeout(connect, 3000); }
       };
       ws.onerror = () => { if (!cancelled) setWsConnected(false); };
       ws.onmessage = (e) => {
@@ -55,12 +58,14 @@ export default function CameraTestPage() {
     return () => { cancelled = true; ws?.close(); };
   }, []);
 
-  // Sync initial config from server on mount
+  // Mirror server config on mount
   useEffect(() => {
     fetch(`${API}/camera/config`)
       .then((r) => r.json())
       .then((cfg) => {
         setCameraIndex(cfg.camera_index ?? 0);
+        setZMin(cfg.z_min ?? 0.40);
+        setZMax(cfg.z_max ?? 0.55);
         setThreshold(cfg.threshold ?? 200);
         setOverlayMode(cfg.overlay_mode ?? "combined");
         setPpm(cfg.ppm ?? 2800);
@@ -79,14 +84,25 @@ export default function CameraTestPage() {
   function handleCameraIndex(idx: number) {
     setCameraIndex(idx);
     patchConfig({ camera_index: idx });
-    // Reset stream so the <img> re-requests with the new camera
-    setStreamError(false);
+    setStreamError(false); // force <img> remount
+  }
+
+  function handleZMin(v: number) {
+    setZMin(v);
+    if (zMinDebounce.current) clearTimeout(zMinDebounce.current);
+    zMinDebounce.current = setTimeout(() => patchConfig({ z_min: v }), 80);
+  }
+
+  function handleZMax(v: number) {
+    setZMax(v);
+    if (zMaxDebounce.current) clearTimeout(zMaxDebounce.current);
+    zMaxDebounce.current = setTimeout(() => patchConfig({ z_max: v }), 80);
   }
 
   function handleThreshold(v: number) {
     setThreshold(v);
-    if (thresholdDebounce.current) clearTimeout(thresholdDebounce.current);
-    thresholdDebounce.current = setTimeout(() => patchConfig({ threshold: v }), 80);
+    if (threshDebounce.current) clearTimeout(threshDebounce.current);
+    threshDebounce.current = setTimeout(() => patchConfig({ threshold: v }), 80);
   }
 
   function handleOverlayMode(mode: OverlayMode) {
@@ -101,39 +117,52 @@ export default function CameraTestPage() {
   }
 
   const statusColor =
-    metrics.status === "TRACKING"   ? "text-[var(--color-teal)]" :
+    metrics.status === "TRACKING"   ? "text-teal" :
     metrics.status === "NO_TARGET"  ? "text-amber-400" :
     metrics.status === "MATH_ERROR" ? "text-red-400" :
     metrics.status === "NO_CAMERA"  ? "text-red-400" :
     metrics.status === "ERROR"      ? "text-red-400" :
-    "text-[var(--color-muted)]";
+    "text-muted";
 
   const isTracking = metrics.status === "TRACKING";
 
   return (
     <div className="max-w-6xl mx-auto mt-8 px-6 pb-12 space-y-6">
       <div>
-        <h1 className="text-xl font-semibold text-[var(--color-text)]">
+        <h1 className="text-xl font-semibold text-text">
           Camera + Characterization Test
         </h1>
-        <p className="text-sm text-[var(--color-muted)] mt-1">
-          Live feed with real-time PneuNet curvature analysis. Mask, skeleton,
-          and metrics are computed on the server and overlaid on the stream.
+        <p className="text-sm text-muted mt-1">
+          Orbbec Gemini 335Lg — depth-gated mask → skeleton → curvature, live.
         </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-5">
+
         {/* ── Camera feed ─────────────────────────────────────────────── */}
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
-          {/* Feed header */}
+        <div className="rounded-xl border border-border bg-surface p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-widest text-[var(--color-muted)]">
-              Live Feed
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-widest text-muted">
+                Live Feed
+              </span>
+              <span className="text-xs font-mono text-muted">Gemini 335Lg</span>
+            </div>
             <div className="flex items-center gap-3">
+              {/* Sense mode badge */}
+              {metrics.sense_mode && (
+                <span className={cn(
+                  "text-xs font-mono px-1.5 py-0.5 rounded border",
+                  metrics.sense_mode === "depth"
+                    ? "text-teal border-teal/30 bg-teal/10"
+                    : "text-amber-400 border-amber-400/30 bg-amber-400/10"
+                )}>
+                  {metrics.sense_mode}
+                </span>
+              )}
               {wsConnected && (
-                <span className="flex items-center gap-1.5 text-xs font-mono text-[var(--color-teal)]">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-teal)] animate-pulse-dot" />
+                <span className="flex items-center gap-1.5 text-xs font-mono text-teal">
+                  <span className="w-1.5 h-1.5 rounded-full bg-teal animate-pulse-dot" />
                   WS
                 </span>
               )}
@@ -143,12 +172,11 @@ export default function CameraTestPage() {
             </div>
           </div>
 
-          {/* Video area */}
+          {/* Video */}
           <div
             className="relative w-full bg-black rounded-lg overflow-hidden"
             style={{ aspectRatio: "16/9" }}
           >
-            {/* LIVE badge */}
             <div className="absolute top-3 left-3 flex items-center gap-1.5 z-10">
               <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse-dot" />
               <span className="text-xs font-mono font-bold text-white">LIVE</span>
@@ -157,7 +185,7 @@ export default function CameraTestPage() {
             {!streamError ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                key={cameraIndex} // remount when index changes
+                key={cameraIndex}
                 src={`${API}/camera/stream`}
                 alt="Camera characterization feed"
                 className="absolute inset-0 w-full h-full object-contain"
@@ -165,12 +193,12 @@ export default function CameraTestPage() {
               />
             ) : (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-                <span className="text-xs font-mono text-[var(--color-muted)] uppercase tracking-widest">
+                <span className="text-xs font-mono text-muted uppercase tracking-widest">
                   Stream unavailable
                 </span>
                 <button
                   onClick={() => setStreamError(false)}
-                  className="text-xs text-[var(--color-teal)] hover:underline"
+                  className="text-xs text-teal hover:underline"
                 >
                   Retry
                 </button>
@@ -180,7 +208,7 @@ export default function CameraTestPage() {
 
           {/* Overlay mode chips */}
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs text-[var(--color-muted)] mr-1">Overlay:</span>
+            <span className="text-xs text-muted mr-1">Overlay:</span>
             {OVERLAY_MODES.map((m) => (
               <button
                 key={m}
@@ -188,8 +216,8 @@ export default function CameraTestPage() {
                 className={cn(
                   "px-3 py-1 text-xs rounded font-medium border transition-colors",
                   overlayMode === m
-                    ? "bg-[var(--color-teal)]/20 text-[var(--color-teal)] border-[var(--color-teal)]/30"
-                    : "bg-[var(--color-surface-2)] text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"
+                    ? "bg-teal/20 text-teal border-teal/30"
+                    : "bg-surface-2 text-muted border-border hover:text-text"
                 )}
               >
                 {m}
@@ -200,47 +228,34 @@ export default function CameraTestPage() {
 
         {/* ── Right panel ─────────────────────────────────────────────── */}
         <div className="space-y-4">
-          {/* Metrics card */}
-          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
-            <span className="text-xs font-semibold uppercase tracking-widest text-[var(--color-muted)]">
+
+          {/* Metrics */}
+          <div className="rounded-xl border border-border bg-surface p-4 space-y-3">
+            <span className="text-xs font-semibold uppercase tracking-widest text-muted">
               Curvature Metrics
             </span>
-
             <div className="space-y-2 text-sm font-mono">
-              <MetricRow
-                label="Status"
-                value={metrics.status}
-                valueClass={statusColor}
-              />
-              <MetricRow
-                label="Curvature"
-                value={isTracking ? `${metrics.mean_curvature!.toFixed(2)} 1/m` : "—"}
-              />
-              <MetricRow
-                label="Bend angle"
-                value={isTracking ? `${metrics.bend_angle_deg!.toFixed(1)}°` : "—"}
-              />
-              <MetricRow
-                label="Radius"
-                value={isTracking ? `${metrics.radius_mm!.toFixed(0)} mm` : "—"}
-              />
+              <MetricRow label="Status"     value={metrics.status} valueClass={statusColor} />
+              <MetricRow label="Sense"      value={metrics.sense_mode ?? "—"} />
+              <MetricRow label="Curvature"  value={isTracking ? `${metrics.mean_curvature!.toFixed(2)} 1/m` : "—"} />
+              <MetricRow label="Bend angle" value={isTracking ? `${metrics.bend_angle_deg!.toFixed(1)}°` : "—"} />
+              <MetricRow label="Radius"     value={isTracking ? `${metrics.radius_mm!.toFixed(0)} mm` : "—"} />
             </div>
-
             {metrics.error && (
               <p className="text-xs text-red-400 break-words">{metrics.error}</p>
             )}
           </div>
 
-          {/* Controls card */}
-          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-4">
-            <span className="text-xs font-semibold uppercase tracking-widest text-[var(--color-muted)]">
+          {/* Controls */}
+          <div className="rounded-xl border border-border bg-surface p-4 space-y-4">
+            <span className="text-xs font-semibold uppercase tracking-widest text-muted">
               Controls
             </span>
 
-            {/* Camera index */}
+            {/* Device index */}
             <div className="space-y-1.5">
-              <span className="text-xs text-[var(--color-muted)] uppercase tracking-wide">
-                Camera Index
+              <span className="text-xs text-muted uppercase tracking-wide">
+                Device Index
               </span>
               <div className="flex gap-2">
                 {[0, 1, 2].map((i) => (
@@ -250,8 +265,8 @@ export default function CameraTestPage() {
                     className={cn(
                       "flex-1 py-1.5 text-sm rounded font-medium border transition-colors",
                       cameraIndex === i
-                        ? "bg-[var(--color-teal)]/20 text-[var(--color-teal)] border-[var(--color-teal)]/30"
-                        : "bg-[var(--color-surface)] text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"
+                        ? "bg-teal/20 text-teal border-teal/30"
+                        : "bg-surface text-muted border-border hover:text-text"
                     )}
                   >
                     {i}
@@ -260,52 +275,77 @@ export default function CameraTestPage() {
               </div>
             </div>
 
-            {/* Threshold */}
+            {/* Depth window */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs text-muted">
+                <span className="uppercase tracking-wide">Depth Window</span>
+                <span className="font-mono text-teal">
+                  {zMin.toFixed(2)} – {zMax.toFixed(2)} m
+                </span>
+              </div>
+
+              <label className="flex flex-col gap-1">
+                <div className="flex justify-between text-xs text-muted">
+                  <span>Near (z_min)</span>
+                  <span className="font-mono">{zMin.toFixed(2)} m</span>
+                </div>
+                <input
+                  type="range" min={0.05} max={1.50} step={0.01}
+                  value={zMin}
+                  onChange={(e) => handleZMin(parseFloat(e.target.value))}
+                  className="accent-teal w-full"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1">
+                <div className="flex justify-between text-xs text-muted">
+                  <span>Far (z_max)</span>
+                  <span className="font-mono">{zMax.toFixed(2)} m</span>
+                </div>
+                <input
+                  type="range" min={0.10} max={2.00} step={0.01}
+                  value={zMax}
+                  onChange={(e) => handleZMax(parseFloat(e.target.value))}
+                  className="accent-teal w-full"
+                />
+              </label>
+            </div>
+
+            {/* RGB threshold (fallback) */}
             <div className="space-y-1.5">
-              <div className="flex justify-between text-xs text-[var(--color-muted)]">
-                <span className="uppercase tracking-wide">Brightness Threshold</span>
+              <div className="flex justify-between text-xs text-muted">
+                <span className="uppercase tracking-wide">RGB Threshold <span className="normal-case">(fallback)</span></span>
                 <span className="font-mono">{threshold}</span>
               </div>
               <input
-                type="range"
-                min={0}
-                max={255}
-                step={1}
+                type="range" min={0} max={255} step={1}
                 value={threshold}
                 onChange={(e) => handleThreshold(parseInt(e.target.value))}
                 className="accent-teal w-full"
               />
-              <p className="text-xs text-[var(--color-muted)]">
-                Isolates bright actuator from dark background (0–255).
-              </p>
             </div>
 
             {/* PPM */}
             <div className="space-y-1.5">
-              <div className="flex justify-between text-xs text-[var(--color-muted)]">
-                <span className="uppercase tracking-wide">Pixels per Meter</span>
+              <div className="flex justify-between text-xs text-muted">
+                <span className="uppercase tracking-wide">Pixels / Meter</span>
                 <span className="font-mono">{ppm}</span>
               </div>
               <input
                 type="number"
                 value={ppm}
                 onChange={(e) => handlePpm(parseFloat(e.target.value) || 2800)}
-                className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[var(--color-text)] font-mono focus:outline-none focus:ring-1 focus:ring-[var(--color-teal)]"
+                className="w-full rounded border border-border bg-surface-2 px-3 py-2 text-sm text-text font-mono focus:outline-none focus:ring-1 focus:ring-teal"
               />
             </div>
           </div>
 
           {!wsConnected && (
-            <p className="text-xs text-[var(--color-muted)]">
+            <p className="text-xs text-muted">
               Server not reachable — run{" "}
-              <code className="font-mono text-[var(--color-text)]">
-                uvicorn main:app
-              </code>{" "}
+              <code className="font-mono text-text">uvicorn main:app</code>{" "}
               in{" "}
-              <code className="font-mono text-[var(--color-text)]">
-                app/api/python/
-              </code>
-              .
+              <code className="font-mono text-text">app/api/python/</code>.
             </p>
           )}
         </div>
@@ -317,7 +357,7 @@ export default function CameraTestPage() {
 function MetricRow({
   label,
   value,
-  valueClass = "text-[var(--color-text)]",
+  valueClass = "text-text",
 }: {
   label: string;
   value: string;
@@ -325,7 +365,7 @@ function MetricRow({
 }) {
   return (
     <div className="flex justify-between">
-      <span className="text-[var(--color-muted)]">{label}</span>
+      <span className="text-muted">{label}</span>
       <span className={valueClass}>{value}</span>
     </div>
   );
