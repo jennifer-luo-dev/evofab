@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/app/lib/supabase";
 import { useJob } from "@/app/contexts/JobContext";
@@ -12,8 +13,17 @@ import { CameraFeedCard } from "@/app/components/monitor/CameraFeedCard";
 import { MLCharacterizationCard } from "@/app/components/monitor/MLCharacterizationCard";
 import { SystemLogCard } from "@/app/components/monitor/SystemLogCard";
 import { RuntimeOverridePanel } from "@/app/components/monitor/RuntimeOverridePanel";
+import { appendTemperaturePoint } from "@/app/lib/temperature-series";
 import type { Job, LogEntry, PipelineStepId } from "@/app/types/job";
 import type { PrinterStatus } from "@/app/types/printer";
+
+const TemperatureChart = dynamic(
+  () =>
+    import("@/app/components/monitor/TemperatureChart").then(
+      (module) => module.TemperatureChart,
+    ),
+  { ssr: false },
+);
 
 const INACTIVE_STATUSES = new Set(["complete", "failed", "aborted"]);
 const PRE_ML_STEPS = new Set<PipelineStepId>([
@@ -40,6 +50,9 @@ export function MonitorClient({
   const [job, setJob] = useState<Job>(initialJob);
   const [printerStatus, setPrinterStatus] = useState<PrinterStatus | null>(
     initialPrinterStatus,
+  );
+  const [temperatureSeries, setTemperatureSeries] = useState(() =>
+    appendTemperaturePoint([], initialPrinterStatus),
   );
   const [controlMessage, setControlMessage] = useState<string | null>(null);
   const [controlBusy, setControlBusy] = useState(false);
@@ -101,7 +114,11 @@ export function MonitorClient({
           filter: `printer_id=eq.${job.printer_id}`,
         },
         (payload) => {
-          setPrinterStatus(payload.new as PrinterStatus);
+          const nextStatus = payload.new as PrinterStatus;
+          setPrinterStatus(nextStatus);
+          setTemperatureSeries((series) =>
+            appendTemperaturePoint(series, nextStatus),
+          );
         },
       )
       .subscribe();
@@ -261,6 +278,8 @@ export function MonitorClient({
         jobActive={jobActive}
         printerStatus={printerStatus}
       />
+
+      <TemperatureChart series={temperatureSeries} />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <PrinterMetricsCard
