@@ -3,8 +3,12 @@ import { getMoonrakerMode, resolveMoonrakerBaseUrl } from "./moonraker-config";
 import {
   applyMockMoonrakerScript,
   controlMockMoonrakerPrint,
+  extrudeMockMoonrakerFilament,
+  homeMockMoonrakerToolhead,
   listMockMoonrakerFiles,
+  jogMockMoonrakerToolhead,
   mockPrinterKey,
+  offsetMockMoonrakerToolhead,
   uploadMockMoonrakerFile,
   startMockMoonrakerPrint,
 } from "./mock-moonraker";
@@ -90,7 +94,14 @@ export async function applyPrintSettings(
   settings: PrintSettings,
 ): Promise<void> {
   const script = overrideScript(settings);
+  await runGcodeScript(ip, port, script);
+}
 
+export async function runGcodeScript(
+  ip: string,
+  port: number,
+  script: string,
+): Promise<void> {
   if (getMoonrakerMode() === "mock") {
     await applyMockMoonrakerScript(mockPrinterKey({ ip, port }), script);
     return;
@@ -105,6 +116,67 @@ export async function applyPrintSettings(
     const text = await res.text();
     throw new Error(`Moonraker gcode script failed (${res.status}): ${text}`);
   }
+}
+
+export async function homeToolhead(ip: string, port: number): Promise<void> {
+  if (getMoonrakerMode() === "mock") {
+    await homeMockMoonrakerToolhead(mockPrinterKey({ ip, port }));
+    return;
+  }
+  await runGcodeScript(ip, port, "G28");
+}
+
+export async function jogToolhead(
+  ip: string,
+  port: number,
+  axis: "x" | "y" | "z",
+  distanceMm: number,
+  feedrateMmMin: number,
+): Promise<void> {
+  if (getMoonrakerMode() === "mock") {
+    await jogMockMoonrakerToolhead(
+      mockPrinterKey({ ip, port }),
+      axis,
+      distanceMm,
+      feedrateMmMin,
+    );
+    return;
+  }
+  const axisCode = axis.toUpperCase();
+  await runGcodeScript(
+    ip,
+    port,
+    `G91\nG1 ${axisCode}${distanceMm} F${feedrateMmMin}\nG90`,
+  );
+}
+
+export async function adjustZOffset(
+  ip: string,
+  port: number,
+  deltaMm: number,
+): Promise<void> {
+  if (getMoonrakerMode() === "mock") {
+    await offsetMockMoonrakerToolhead(mockPrinterKey({ ip, port }), deltaMm);
+    return;
+  }
+  await runGcodeScript(ip, port, `SET_GCODE_OFFSET Z_ADJUST=${deltaMm} MOVE=1`);
+}
+
+export async function extrudeFilament(
+  ip: string,
+  port: number,
+  lengthMm: number,
+  feedrateMmMin: number,
+): Promise<void> {
+  if (getMoonrakerMode() === "mock") {
+    await extrudeMockMoonrakerFilament(
+      mockPrinterKey({ ip, port }),
+      lengthMm,
+      feedrateMmMin,
+    );
+    return;
+  }
+  await runGcodeScript(ip, port, `M83\nG1 E${lengthMm} F${feedrateMmMin}`);
 }
 
 export async function startPrint(
@@ -172,7 +244,10 @@ export async function cancelPrint(ip: string, port: number): Promise<void> {
 
 export async function emergencyStop(ip: string, port: number): Promise<void> {
   if (getMoonrakerMode() === "mock") {
-    await controlMockMoonrakerPrint(mockPrinterKey({ ip, port }), "emergency_stop");
+    await controlMockMoonrakerPrint(
+      mockPrinterKey({ ip, port }),
+      "emergency_stop",
+    );
     return;
   }
   await moonrakerJsonRequest(ip, port, "/printer/emergency_stop");
@@ -183,7 +258,9 @@ export async function restartKlipper(ip: string, port: number): Promise<void> {
     await controlMockMoonrakerPrint(mockPrinterKey({ ip, port }), "restart");
     return;
   }
-  await moonrakerJsonRequest(ip, port, "/printer/gcode/script", { script: "RESTART" });
+  await moonrakerJsonRequest(ip, port, "/printer/gcode/script", {
+    script: "RESTART",
+  });
 }
 
 export async function firmwareRestartKlipper(
@@ -191,7 +268,10 @@ export async function firmwareRestartKlipper(
   port: number,
 ): Promise<void> {
   if (getMoonrakerMode() === "mock") {
-    await controlMockMoonrakerPrint(mockPrinterKey({ ip, port }), "firmware_restart");
+    await controlMockMoonrakerPrint(
+      mockPrinterKey({ ip, port }),
+      "firmware_restart",
+    );
     return;
   }
   await moonrakerJsonRequest(ip, port, "/printer/gcode/script", {
