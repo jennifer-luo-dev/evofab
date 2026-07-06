@@ -50,21 +50,27 @@ CREATE TABLE IF NOT EXISTS printer_status (
 
 -- ============================================================
 -- MATERIAL PROFILES
--- Named print setting presets (Yutong's Shore 40A/70A tunings etc.)
--- Referenced when creating a job to pre-fill settings.
+-- FGF material profiles used by the cloud slicer and setup defaults.
 -- ============================================================
 CREATE TABLE IF NOT EXISTS material_profiles (
-  id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  name         TEXT        NOT NULL UNIQUE,          -- "Shore 20A TPE", "Shore 40A TPE"
-  printer_type TEXT        NOT NULL CHECK (printer_type IN ('FGF', 'FDM', 'BOTH')),
-  nozzle_temp  NUMERIC(6,2) NOT NULL,               -- °C
-  bed_temp     NUMERIC(6,2) NOT NULL,               -- °C
-  speed        NUMERIC(6,2) NOT NULL,               -- mm/s
-  flow_rate    NUMERIC(5,3) NOT NULL,               -- e.g. 0.940
-  fan_speed    INTEGER      NOT NULL DEFAULT 0      -- 0–100 %
-                            CHECK (fan_speed BETWEEN 0 AND 100),
-  notes        TEXT,
-  created_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
+  id                              TEXT        PRIMARY KEY,
+  name                            TEXT        NOT NULL UNIQUE,
+  polymer                         TEXT        NOT NULL,
+  nozzle_diameter_mm              NUMERIC(8,3) NOT NULL,
+  layer_height_mm                 NUMERIC(8,3) NOT NULL,
+  line_width_mm                   NUMERIC(8,3) NOT NULL,
+  temps_json                      JSONB       NOT NULL DEFAULT '{}',
+  rotation_volume_mm3             NUMERIC(10,3) NOT NULL,
+  pellet_flow_coefficient         NUMERIC(8,4) NOT NULL,
+  pressure_advance                NUMERIC(8,4) NOT NULL,
+  pressure_advance_smooth_time    NUMERIC(8,4) NOT NULL,
+  max_volumetric_speed_mm3_s      NUMERIC(10,3) NOT NULL,
+  min_layer_time_s                NUMERIC(10,3) NOT NULL,
+  cooling_json                    JSONB       NOT NULL DEFAULT '{}',
+  overrides_json                  JSONB       NOT NULL DEFAULT '{}',
+  density_g_cm3                   NUMERIC(8,4) NOT NULL,
+  notes                           TEXT,
+  created_at                      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- ============================================================
@@ -96,7 +102,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   -- hardware refs
   printer_id          UUID        REFERENCES printers(id) ON DELETE SET NULL,
   experiment_id       UUID        REFERENCES experiments(id) ON DELETE SET NULL,
-  material_profile_id UUID        REFERENCES material_profiles(id) ON DELETE SET NULL,
+  material_profile_id TEXT        REFERENCES material_profiles(id) ON DELETE SET NULL,
 
   -- file
   filename            TEXT        NOT NULL,
@@ -213,14 +219,61 @@ CREATE INDEX IF NOT EXISTS idx_logs_created_at    ON logs(created_at DESC);
 -- SEED DATA (development only — remove before production)
 -- ============================================================
 
--- Material profiles (from Yutong's tuning logs)
-INSERT INTO material_profiles (name, printer_type, nozzle_temp, bed_temp, speed, flow_rate, fan_speed, notes) VALUES
-  ('Shore 20A TPE',  'FGF', 200, 60, 40, 0.940, 0,  'Soft pellet — low flow, no fan'),
-  ('Shore 40A TPE',  'FGF', 200, 60, 40, 0.940, 0,  'Best result: 200°C nozzle, 0.94 flow — Yutong Wei 2025'),
-  ('Shore 70A TPU',  'FGF', 210, 65, 45, 0.960, 0,  'Higher temp needed for 70A — Yutong Wei 2025'),
-  ('PLA Standard',   'FDM', 210, 60, 60, 1.000, 100,'Generic PLA profile'),
-  ('PETG Standard',  'FDM', 235, 80, 50, 0.950, 50, 'Generic PETG profile')
-ON CONFLICT (name) DO NOTHING;
+-- Material profiles
+INSERT INTO material_profiles (
+  id,
+  name,
+  polymer,
+  nozzle_diameter_mm,
+  layer_height_mm,
+  line_width_mm,
+  temps_json,
+  rotation_volume_mm3,
+  pellet_flow_coefficient,
+  pressure_advance,
+  pressure_advance_smooth_time,
+  max_volumetric_speed_mm3_s,
+  min_layer_time_s,
+  cooling_json,
+  overrides_json,
+  density_g_cm3,
+  notes
+) VALUES (
+  'pla-virgin-3mm',
+  'Virgin PLA — 3 mm nozzle',
+  'PLA',
+  3.0,
+  1.2,
+  4.0,
+  '{"feeding": 190, "melting": 190, "nozzle": 190, "bed": 60}',
+  210,
+  1,
+  0.3,
+  0.5,
+  250,
+  60,
+  '{"fan_min_pct": 0, "fan_max_pct": 0, "no_cooling_first_layers": 4}',
+  '{"retraction_length_mm": 2.0, "extra_length_on_restart_mm": 0.0, "wipe_distance_mm": 2.0, "z_hop_mm": 1.0}',
+  1.24,
+  ''
+)
+ON CONFLICT (id) DO UPDATE SET
+  name = EXCLUDED.name,
+  polymer = EXCLUDED.polymer,
+  nozzle_diameter_mm = EXCLUDED.nozzle_diameter_mm,
+  layer_height_mm = EXCLUDED.layer_height_mm,
+  line_width_mm = EXCLUDED.line_width_mm,
+  temps_json = EXCLUDED.temps_json,
+  rotation_volume_mm3 = EXCLUDED.rotation_volume_mm3,
+  pellet_flow_coefficient = EXCLUDED.pellet_flow_coefficient,
+  pressure_advance = EXCLUDED.pressure_advance,
+  pressure_advance_smooth_time = EXCLUDED.pressure_advance_smooth_time,
+  max_volumetric_speed_mm3_s = EXCLUDED.max_volumetric_speed_mm3_s,
+  min_layer_time_s = EXCLUDED.min_layer_time_s,
+  cooling_json = EXCLUDED.cooling_json,
+  overrides_json = EXCLUDED.overrides_json,
+  density_g_cm3 = EXCLUDED.density_g_cm3,
+  notes = EXCLUDED.notes;
 
 -- Experiments
 INSERT INTO experiments (name, display_name, description, script_path, default_params, param_schema) VALUES

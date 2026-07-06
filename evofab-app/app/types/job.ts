@@ -63,12 +63,37 @@ export interface LogEntry {
 export interface MaterialProfile {
   id: string
   name: string
-  printer_type: 'FGF' | 'FDM' | 'BOTH'
-  nozzle_temp: number
-  bed_temp: number
-  speed: number
-  flow_rate: number
-  fan_speed: number
+  polymer: string
+  nozzle_diameter_mm: number
+  layer_height_mm: number
+  line_width_mm: number
+  temps_json: {
+    feeding?: number
+    melting?: number
+    nozzle?: number
+    bed?: number
+    [key: string]: number | undefined
+  }
+  rotation_volume_mm3: number
+  pellet_flow_coefficient: number
+  pressure_advance: number
+  pressure_advance_smooth_time: number
+  max_volumetric_speed_mm3_s: number
+  min_layer_time_s: number
+  cooling_json: {
+    fan_min_pct?: number
+    fan_max_pct?: number
+    no_cooling_first_layers?: number
+    [key: string]: number | undefined
+  }
+  overrides_json: {
+    retraction_length_mm?: number
+    extra_length_on_restart_mm?: number
+    wipe_distance_mm?: number
+    z_hop_mm?: number
+    [key: string]: number | undefined
+  }
+  density_g_cm3: number
   notes: string | null
   created_at: string
 }
