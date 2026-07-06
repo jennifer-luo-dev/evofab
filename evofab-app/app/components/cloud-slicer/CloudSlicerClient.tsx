@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { MaterialProfile, PrintSettings } from "@/app/types/job";
 import type { PrinterWithStatus } from "@/app/types/printer";
@@ -83,7 +83,6 @@ export function CloudSlicerClient({
   printers,
 }: CloudSlicerClientProps) {
   const router = useRouter();
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState(
     materialProfiles[0]?.id ?? "",
@@ -142,16 +141,6 @@ export function CloudSlicerClient({
     }
 
     setSelectedFile(file);
-  }
-
-  function handleFileInput(fileList: FileList | null) {
-    handleFile(fileList?.[0] ?? null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  }
-
-  function handleDrop(event: React.DragEvent<HTMLDivElement>) {
-    event.preventDefault();
-    handleFileInput(event.dataTransfer.files);
   }
 
   async function pollJob(jobId: string): Promise<SlicerJob> {
@@ -294,27 +283,13 @@ export function CloudSlicerClient({
             </span>
           </div>
 
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".stl,model/stl"
-            className="sr-only"
-            onChange={(event) => handleFileInput(event.target.files)}
-          />
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => fileInputRef.current?.click()}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                fileInputRef.current?.click();
-              }
-            }}
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={handleDrop}
-            className="mt-5 flex min-h-44 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border-2)] bg-[var(--color-surface-2)] px-4 text-center transition-colors hover:border-[var(--color-teal)] focus:outline-none focus:ring-2 focus:ring-[var(--color-teal)]/50"
-          >
+          <label className="mt-5 flex min-h-44 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border-2)] bg-[var(--color-surface-2)] px-4 text-center transition-colors hover:border-[var(--color-teal)]">
+            <input
+              type="file"
+              accept=".stl,model/stl"
+              className="sr-only"
+              onChange={(event) => handleFile(event.target.files?.[0] ?? null)}
+            />
             <span className="text-2xl">{selectedFile ? "✓" : "+"}</span>
             <span className="mt-2 text-sm font-medium text-[var(--color-text)]">
               {selectedFile ? selectedFile.name : "Select STL"}
@@ -322,17 +297,7 @@ export function CloudSlicerClient({
             <span className="mt-1 text-xs text-[var(--color-muted)]">
               {selectedFile ? formatBytes(selectedFile.size) : "100 MB max"}
             </span>
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                fileInputRef.current?.click();
-              }}
-              className="mt-4 rounded-md border border-[var(--color-border-2)] px-3 py-1.5 text-xs font-semibold text-[var(--color-text)] transition-colors hover:border-[var(--color-teal)]"
-            >
-              Browse STL
-            </button>
-          </div>
+          </label>
 
           <div className="mt-5 grid md:grid-cols-2 gap-4">
             <label className="flex flex-col gap-2">
