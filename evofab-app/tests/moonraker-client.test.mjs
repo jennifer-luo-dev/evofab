@@ -191,6 +191,32 @@ test("normalizes null print_stats.info with estimated layer and ETA", () => {
   assert.equal(status.eta_seconds, 30);
 });
 
+test("normalizes Klipper shutdown fault text and MCU", () => {
+  const status = normalizeMoonrakerStatus(
+    "printer-1",
+    {
+      result: {
+        status: {
+          webhooks: {
+            state: "shutdown",
+            state_message: "MCU 'toolhead' shutdown: ADC out of range",
+          },
+          print_stats: {
+            state: "error",
+            message: "MCU 'toolhead' shutdown: ADC out of range",
+          },
+          virtual_sdcard: { progress: 0.25 },
+        },
+      },
+    },
+    new Date("2026-07-01T00:00:00.000Z")
+  );
+
+  assert.equal(status.status, "error");
+  assert.equal(status.fault_message, "MCU 'toolhead' shutdown: ADC out of range");
+  assert.equal(status.fault_mcu, "toolhead");
+});
+
 test("connector reads status only through a safe mock loopback URL", async (t) => {
   const originalFetch = globalThis.fetch;
   t.after(() => {

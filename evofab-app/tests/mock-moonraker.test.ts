@@ -4,6 +4,7 @@ import {
   applyMockMoonrakerScript,
   controlMockMoonrakerPrint,
   getMockMoonrakerState,
+  injectMockMoonrakerFault,
   listMockMoonrakerFiles,
   mockPrinterKey,
   resetMockMoonrakerState,
@@ -36,6 +37,26 @@ test("mock Moonraker uploads, lists, applies overrides, and starts printing", as
   assert.equal(state.bedTarget, 67);
   assert.equal(state.totalLayer, 9);
   assert.ok(state.progress > 0);
+});
+
+test("mock Moonraker injects an MCU fault and firmware restart clears it", async () => {
+  resetMockMoonrakerState();
+  const printerKey = mockPrinterKey({ ip: "127.0.0.1", port: 7125 });
+
+  injectMockMoonrakerFault(printerKey, "MCU 'toolhead' shutdown: ADC out of range", "toolhead");
+
+  assert.equal(getMockMoonrakerState(printerKey).state, "error");
+  assert.equal(
+    getMockMoonrakerState(printerKey).faultMessage,
+    "MCU 'toolhead' shutdown: ADC out of range",
+  );
+  assert.equal(getMockMoonrakerState(printerKey).faultMcu, "toolhead");
+
+  await controlMockMoonrakerPrint(printerKey, "firmware_restart");
+
+  assert.equal(getMockMoonrakerState(printerKey).state, "standby");
+  assert.equal(getMockMoonrakerState(printerKey).faultMessage, null);
+  assert.equal(getMockMoonrakerState(printerKey).faultMcu, null);
 });
 
 test("mock Moonraker handles pause, resume, cancel, e-stop, and recovery", async () => {

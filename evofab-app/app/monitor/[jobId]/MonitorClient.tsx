@@ -202,6 +202,14 @@ export function MonitorClient({ initialJob, initialLogs, initialPrinterStatus }:
             {controlMessage}
           </p>
         )}
+        {printerStatus?.fault_message && (
+          <div className="mt-3 rounded-md border border-red/30 bg-red/10 px-3 py-2">
+            <p className="text-xs font-semibold uppercase tracking-widest text-red">
+              Klipper fault{printerStatus.fault_mcu ? ` · ${printerStatus.fault_mcu}` : ''}
+            </p>
+            <p className="mt-1 text-sm text-red">{printerStatus.fault_message}</p>
+          </div>
+        )}
       </section>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

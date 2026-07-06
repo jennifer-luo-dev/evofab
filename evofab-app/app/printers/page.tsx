@@ -84,6 +84,17 @@ export default async function PrintersPage() {
                   </p>
                 </div>
               </div>
+              {status?.fault_message && (
+                <div className="mt-3 rounded-lg border border-[var(--color-red)]/30 bg-[var(--color-red)]/10 p-3">
+                  <p className="text-[10px] uppercase tracking-wider text-[var(--color-red)]">
+                    Klipper fault
+                    {status.fault_mcu ? ` · ${status.fault_mcu}` : ""}
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--color-red)]">
+                    {status.fault_message}
+                  </p>
+                </div>
+              )}
             </section>
           );
         })}
