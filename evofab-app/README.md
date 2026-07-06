@@ -11,6 +11,27 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser.
 
+Copy `.env.local.example` to `.env.local` and fill values from the local
+Supabase project or William's hosted project. Keep `.env.local` private.
+
+Required environment variables:
+
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY` for server-side/local script writes and
+  integration tests
+- `SUPABASE_PROJECT_REF` for `supabase link --project-ref "$SUPABASE_PROJECT_REF"`
+- `MOONRAKER_MODE=mock` for local Phase F work
+- `SLICER_MODE=mock` for local Phase F work
+- `SLICER_TOKEN` only when `SLICER_MODE=real`
+
+To initialize a fresh hosted Supabase project after the environment is set:
+
+```bash
+supabase link --project-ref "$SUPABASE_PROJECT_REF"
+supabase db push
+```
+
 ## Mock Printer Status
 
 The dashboard reads live printer state from Supabase `printer_status`. For local

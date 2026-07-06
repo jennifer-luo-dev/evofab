@@ -213,12 +213,8 @@ CREATE INDEX IF NOT EXISTS idx_logs_created_at    ON logs(created_at DESC);
 
 -- ============================================================
 -- REALTIME
--- Uncomment in Supabase Dashboard:
--- Database > Replication > Tables > toggle each table ON
--- Or run these statements:
--- ALTER PUBLICATION supabase_realtime ADD TABLE jobs;
--- ALTER PUBLICATION supabase_realtime ADD TABLE logs;
--- ALTER PUBLICATION supabase_realtime ADD TABLE printer_status;
+-- Phase F migrations add jobs, logs, and printer_status to the
+-- supabase_realtime publication idempotently for fresh projects.
 -- ============================================================
 
 -- ============================================================
