@@ -114,7 +114,8 @@ export function normalizeMoonrakerStatus(
   const progress = progressToPercent(virtualSd.progress)
   const exactCurrentLayer = printStats.info?.current_layer ?? null
   const exactTotalLayer = printStats.info?.total_layer ?? null
-  const layerCurrent = exactCurrentLayer ?? estimateLayer(progress, exactTotalLayer)
+  const estimatedTotalLayer = progress > 0 && exactTotalLayer === null ? 100 : exactTotalLayer
+  const layerCurrent = exactCurrentLayer ?? estimateLayer(progress, estimatedTotalLayer)
   const layerSource =
     exactCurrentLayer !== null && exactTotalLayer !== null
       ? 'exact'
@@ -134,7 +135,7 @@ export function normalizeMoonrakerStatus(
     filename: printStats.filename || null,
     progress,
     layer_current: layerCurrent,
-    layer_total: exactTotalLayer,
+    layer_total: estimatedTotalLayer,
     hotend_temp: extruder.temperature ?? null,
     hotend_target: extruder.target ?? null,
     bed_temp: bed.temperature ?? null,

@@ -164,6 +164,33 @@ test("normalizes Moonraker object query responses into printer_status rows", () 
   });
 });
 
+test("normalizes null print_stats.info with estimated layer and ETA", () => {
+  const status = normalizeMoonrakerStatus(
+    "printer-1",
+    {
+      result: {
+        status: {
+          webhooks: { state: "ready" },
+          print_stats: {
+            state: "printing",
+            filename: "fallback.gcode",
+            print_duration: 30,
+            info: { current_layer: null, total_layer: null },
+          },
+          virtual_sdcard: { progress: 0.5 },
+        },
+      },
+    },
+    new Date("2026-07-01T00:00:00.000Z")
+  );
+
+  assert.equal(status.progress, 50);
+  assert.equal(status.layer_current, 50);
+  assert.equal(status.layer_total, 100);
+  assert.equal(status.layer_source, "estimated");
+  assert.equal(status.eta_seconds, 30);
+});
+
 test("connector reads status only through a safe mock loopback URL", async (t) => {
   const originalFetch = globalThis.fetch;
   t.after(() => {
