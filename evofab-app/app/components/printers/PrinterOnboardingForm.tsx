@@ -1,0 +1,153 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import type { PrinterType } from "@/app/types/printer";
+
+interface FormState {
+  name: string;
+  model: string;
+  ip: string;
+  port: string;
+  type: PrinterType;
+  material: string;
+  build_volume: string;
+}
+
+const EMPTY_FORM: FormState = {
+  name: "",
+  model: "",
+  ip: "",
+  port: "7125",
+  type: "FDM",
+  material: "",
+  build_volume: "",
+};
+
+export function PrinterOnboardingForm() {
+  const router = useRouter();
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{
+    tone: "ok" | "error";
+    text: string;
+  } | null>(null);
+
+  function update<K extends keyof FormState>(key: K, value: FormState[K]) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/printers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...form,
+          port: Number(form.port),
+        }),
+      });
+      const json = await response.json().catch(() => null);
+      if (!response.ok) {
+        const code = json?.error?.code;
+        const text =
+          json?.error?.message ?? `Printer create failed (${response.status}).`;
+        throw new Error(code ? `${code}: ${text}` : text);
+      }
+      setForm(EMPTY_FORM);
+      setMessage({ tone: "ok", text: "Printer added." });
+      router.refresh();
+    } catch (error) {
+      setMessage({
+        tone: "error",
+        text: error instanceof Error ? error.message : "Unable to add printer.",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const inputClass =
+    "rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-teal)]";
+
+  return (
+    <form
+      onSubmit={submit}
+      className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
+    >
+      <div className="grid gap-3 md:grid-cols-3">
+        <input
+          className={inputClass}
+          placeholder="Name"
+          value={form.name}
+          onChange={(event) => update("name", event.target.value)}
+          required
+        />
+        <input
+          className={inputClass}
+          placeholder="Model"
+          value={form.model}
+          onChange={(event) => update("model", event.target.value)}
+          required
+        />
+        <select
+          className={inputClass}
+          value={form.type}
+          onChange={(event) =>
+            update("type", event.target.value as PrinterType)
+          }
+        >
+          <option value="FDM">FDM</option>
+          <option value="FGF">FGF</option>
+        </select>
+        <input
+          className={inputClass}
+          placeholder="Moonraker IP"
+          value={form.ip}
+          onChange={(event) => update("ip", event.target.value)}
+          required
+        />
+        <input
+          className={inputClass}
+          inputMode="numeric"
+          placeholder="Port"
+          value={form.port}
+          onChange={(event) => update("port", event.target.value)}
+          required
+        />
+        <input
+          className={inputClass}
+          placeholder="Build volume"
+          value={form.build_volume}
+          onChange={(event) => update("build_volume", event.target.value)}
+        />
+        <input
+          className={inputClass}
+          placeholder="Material"
+          value={form.material}
+          onChange={(event) => update("material", event.target.value)}
+        />
+        <button
+          disabled={busy}
+          className="rounded-lg bg-[var(--color-teal)] px-4 py-2 text-sm font-semibold text-[var(--color-bg)] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 md:col-span-2"
+        >
+          {busy ? "Adding..." : "Add Printer"}
+        </button>
+      </div>
+      {message && (
+        <p
+          className={
+            message.tone === "error"
+              ? "mt-3 text-xs text-[var(--color-red)]"
+              : "mt-3 text-xs text-[var(--color-green)]"
+          }
+        >
+          {message.text}
+        </p>
+      )}
+    </form>
+  );
+}

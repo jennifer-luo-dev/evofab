@@ -1,6 +1,7 @@
 import { StatusDot } from "@/app/components/ui/StatusDot";
 import { PrinterMacroPanel } from "@/app/components/printers/PrinterMacroPanel";
 import { PrinterMotionPanel } from "@/app/components/printers/PrinterMotionPanel";
+import { PrinterOnboardingForm } from "@/app/components/printers/PrinterOnboardingForm";
 import { getActivePrintersWithStatus } from "@/app/lib/printer-status-source";
 
 export default async function PrintersPage() {
@@ -20,6 +21,10 @@ export default async function PrintersPage() {
         <span className="rounded-md bg-white/5 px-2.5 py-1 text-xs font-mono text-[var(--color-muted)]">
           {printers.length} active
         </span>
+      </div>
+
+      <div className="mt-6">
+        <PrinterOnboardingForm />
       </div>
 
       <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
