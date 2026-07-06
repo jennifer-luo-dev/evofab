@@ -1,4 +1,5 @@
 import { StatusDot } from "@/app/components/ui/StatusDot";
+import { PrinterMacroPanel } from "@/app/components/printers/PrinterMacroPanel";
 import { PrinterMotionPanel } from "@/app/components/printers/PrinterMotionPanel";
 import { getActivePrintersWithStatus } from "@/app/lib/printer-status-source";
 
@@ -97,6 +98,7 @@ export default async function PrintersPage() {
                 </div>
               )}
               <PrinterMotionPanel printer={printer} />
+              <PrinterMacroPanel printer={printer} />
             </section>
           );
         })}
