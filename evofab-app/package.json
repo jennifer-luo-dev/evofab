@@ -9,7 +9,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "format:check": "prettier --check README.md app/lib/mock-status-producer.ts app/lib/mock-status-scenarios.ts scripts/mock-status-producer.ts tests/**/*.ts",
-    "test": "tsx --test tests/*.test.ts",
+    "test": "tsx --test tests/*.test.ts tests/*.test.mjs",
     "test:integration": "tsx --test tests/integration/*.test.ts",
     "status:mock": "tsx scripts/mock-status-producer.ts"
   },
