@@ -8,33 +8,10 @@ import type {
   Experiment,
   ExperimentParams,
 } from "@/app/types/job";
-
-const DEFAULT_SETTINGS: PrintSettings = {
-  nozzle_temp: 200,
-  bed_temp: 60,
-  speed: 40,
-  flow_rate: 0.94,
-  fan_speed: 0,
-};
-
-function settingsFromMaterialProfile(profile: MaterialProfile): PrintSettings {
-  return {
-    nozzle_temp:
-      profile.temps_json.nozzle ??
-      profile.temps_json.melting ??
-      DEFAULT_SETTINGS.nozzle_temp,
-    bed_temp: profile.temps_json.bed ?? DEFAULT_SETTINGS.bed_temp,
-    speed: Math.max(
-      1,
-      Math.round(
-        profile.max_volumetric_speed_mm3_s /
-          Math.max(profile.line_width_mm * profile.layer_height_mm, 1),
-      ),
-    ),
-    flow_rate: profile.pellet_flow_coefficient,
-    fan_speed: profile.cooling_json.fan_max_pct ?? DEFAULT_SETTINGS.fan_speed,
-  };
-}
+import {
+  EMPTY_PRINT_SETTINGS,
+  settingsFromMaterialProfile,
+} from "@/app/lib/material-profiles";
 
 interface PrinterContextValue {
   selectedPrinter: PrinterWithStatus | null;
@@ -57,7 +34,7 @@ const PrinterContext = createContext<PrinterContextValue | null>(null);
 export function PrinterProvider({ children }: { children: ReactNode }) {
   const [selectedPrinter, setSelectedPrinter] =
     useState<PrinterWithStatus | null>(null);
-  const [settings, setSettings] = useState<PrintSettings>(DEFAULT_SETTINGS);
+  const [settings, setSettings] = useState<PrintSettings>(EMPTY_PRINT_SETTINGS);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [selectedMaterialProfile, _setSelectedMaterialProfile] =
     useState<MaterialProfile | null>(null);
@@ -89,7 +66,7 @@ export function PrinterProvider({ children }: { children: ReactNode }) {
 
   const resetSetup = () => {
     setSelectedPrinter(null);
-    setSettings(DEFAULT_SETTINGS);
+    setSettings(EMPTY_PRINT_SETTINGS);
     setUploadedFile(null);
     _setSelectedMaterialProfile(null);
     _setSelectedExperiment(null);

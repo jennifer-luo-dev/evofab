@@ -76,7 +76,7 @@ test("mock slicer completes STL submit, poll, and G-code fetch", async () => {
     model: new File(["solid cube\nendsolid cube\n"], "cube.stl", {
       type: "model/stl",
     }),
-    profileId: "pla-virgin-3mm",
+    profileId: "pla-fgf",
   });
   const job = await client.pollJob(submit.job_id);
   const gcode = await client.fetchGcode(job.job_id);
@@ -117,13 +117,13 @@ test("submitSlice sends bearer auth and multipart model/profile fields", async (
     model: new File(["solid cube\nendsolid cube\n"], "cube.stl", {
       type: "model/stl",
     }),
-    profileId: "pla-virgin-3mm",
+    profileId: "pla-fgf",
   });
 
   assert.deepEqual(response, { job_id: "job-1", status: "queued" });
   assert.equal(seenRequest.url, "http://slicer.test/slice");
   assert.equal(seenRequest.init.headers.Authorization, "Bearer secret");
-  assert.equal(seenRequest.init.body.get("profile_id"), "pla-virgin-3mm");
+  assert.equal(seenRequest.init.body.get("profile_id"), "pla-fgf");
   assert.equal(seenRequest.init.body.get("model").name, "cube.stl");
 });
 

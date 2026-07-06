@@ -126,7 +126,7 @@ const MOCK_RESULT: SlicerJobResult = {
   material_used_mm3: 14032.26,
   material_used_g: 17.42,
   engine: "mock",
-  profile_id: "pla-virgin-3mm",
+  profile_id: "pla-fgf",
 };
 
 async function parseJsonSafely(text: string): Promise<unknown> {
