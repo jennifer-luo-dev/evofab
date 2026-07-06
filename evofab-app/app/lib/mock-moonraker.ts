@@ -21,6 +21,9 @@ export interface MockMoonrakerPrinterState {
   bedTarget: number;
   hotendTemp: number;
   bedTemp: number;
+  speedFactor: number;
+  flowFactor: number;
+  fanSpeed: number;
   lastScript: string | null;
   lastMotionScript: string | null;
   emergencyStopped: boolean;
@@ -56,6 +59,9 @@ function createState(printerKey: string): MockMoonrakerPrinterState {
     bedTarget: 0,
     hotendTemp: 32,
     bedTemp: 26,
+    speedFactor: 100,
+    flowFactor: 100,
+    fanSpeed: 0,
     lastScript: null,
     lastMotionScript: null,
     emergencyStopped: false,
@@ -80,6 +86,21 @@ function parseTarget(script: string, code: "M104" | "M140"): number | null {
   if (!match) return null;
   const value = Number(match[1]);
   return Number.isFinite(value) ? value : null;
+}
+
+function parsePercent(script: string, code: "M220" | "M221"): number | null {
+  const match = script.match(new RegExp(`\\b${code}\\s+S([0-9.]+)`, "i"));
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function parseFanSpeed(script: string): number | null {
+  const match = script.match(/\bM106\s+S([0-9.]+)/i);
+  if (!match) return null;
+  const value = Number(match[1]);
+  if (!Number.isFinite(value)) return null;
+  return Math.max(0, Math.min(100, Math.round((value / 255) * 100)));
 }
 
 function parseTotalLayers(gcode: string): number | null {
@@ -138,8 +159,14 @@ export async function applyMockMoonrakerScript(
 
   const hotendTarget = parseTarget(script, "M104");
   const bedTarget = parseTarget(script, "M140");
+  const speedFactor = parsePercent(script, "M220");
+  const flowFactor = parsePercent(script, "M221");
+  const fanSpeed = parseFanSpeed(script);
   if (hotendTarget !== null) state.hotendTarget = hotendTarget;
   if (bedTarget !== null) state.bedTarget = bedTarget;
+  if (speedFactor !== null) state.speedFactor = speedFactor;
+  if (flowFactor !== null) state.flowFactor = flowFactor;
+  if (fanSpeed !== null) state.fanSpeed = fanSpeed;
 }
 
 export async function homeMockMoonrakerToolhead(
