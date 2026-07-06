@@ -415,25 +415,6 @@ export function SliceViewer({ gcode, status }: SliceViewerProps) {
                   </div>
                 </>
               )}
-
-              <div className="absolute bottom-5 left-6 right-24 flex items-center gap-3 rounded-lg border border-white/10 bg-black/45 px-4 py-2 backdrop-blur">
-                <span className="font-mono text-xs text-white/70">1</span>
-                <input
-                  aria-label="Timeline layer"
-                  type="range"
-                  min={0}
-                  max={Math.max(0, layers.length - 1)}
-                  value={safeLayerIndex}
-                  disabled={layers.length === 0}
-                  onChange={(event) =>
-                    setLayerIndex(Number(event.target.value))
-                  }
-                  className="w-full accent-[var(--color-teal)]"
-                />
-                <span className="font-mono text-xs text-white/90">
-                  {safeLayerIndex + 1}
-                </span>
-              </div>
             </>
           ) : (
             <div className="flex min-h-[620px] items-center justify-center px-6 text-center text-sm text-[var(--color-muted)]">
