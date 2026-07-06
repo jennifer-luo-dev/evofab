@@ -22,6 +22,10 @@ export function SliceViewer({ file, gcode, status }: SliceViewerProps) {
   );
   const safeLayerIndex = Math.min(layerIndex, Math.max(0, layers.length - 1));
   const activeLayer = layers[safeLayerIndex] ?? null;
+  const visibleLayers = useMemo(
+    () => layers.slice(0, safeLayerIndex + 1),
+    [layers, safeLayerIndex],
+  );
   const hasRenderableSlice =
     file !== null && gcode !== null && layers.length > 0;
 
@@ -77,25 +81,54 @@ export function SliceViewer({ file, gcode, status }: SliceViewerProps) {
       const partMesh = new THREE.Mesh(geometry, partMaterial);
       scene.add(partMesh);
 
-      const positions: number[] = [];
-      for (const segment of activeLayer.segments) {
-        positions.push(
-          segment.from.x - 12,
-          segment.from.z,
-          segment.from.y - 12,
-        );
-        positions.push(segment.to.x - 12, segment.to.z, segment.to.y - 12);
+      function appendSegmentPositions(
+        positions: number[],
+        layer: typeof activeLayer,
+      ) {
+        if (!layer) return;
+        for (const segment of layer.segments) {
+          positions.push(
+            segment.from.x - 12,
+            segment.from.z,
+            segment.from.y - 12,
+          );
+          positions.push(segment.to.x - 12, segment.to.z, segment.to.y - 12);
+        }
       }
-      const layerGeometry = new THREE.BufferGeometry();
-      layerGeometry.setAttribute(
+
+      const previousPositions: number[] = [];
+      for (const layer of visibleLayers.slice(0, -1)) {
+        appendSegmentPositions(previousPositions, layer);
+      }
+      const previousGeometry = new THREE.BufferGeometry();
+      previousGeometry.setAttribute(
         "position",
-        new THREE.Float32BufferAttribute(positions, 3),
+        new THREE.Float32BufferAttribute(previousPositions, 3),
       );
-      const layerLines = new THREE.LineSegments(
-        layerGeometry,
-        new THREE.LineBasicMaterial({ color: 0xffc857 }),
+      const previousLines = new THREE.LineSegments(
+        previousGeometry,
+        new THREE.LineBasicMaterial({
+          color: 0x17bebb,
+          transparent: true,
+          opacity: 0.45,
+        }),
       );
-      scene.add(layerLines);
+      const previousMaterial = previousLines.material;
+      scene.add(previousLines);
+
+      const activePositions: number[] = [];
+      appendSegmentPositions(activePositions, activeLayer);
+      const activeGeometry = new THREE.BufferGeometry();
+      activeGeometry.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(activePositions, 3),
+      );
+      const activeLines = new THREE.LineSegments(
+        activeGeometry,
+        new THREE.LineBasicMaterial({ color: 0xffc857, linewidth: 2 }),
+      );
+      const activeMaterial = activeLines.material;
+      scene.add(activeLines);
 
       scene.add(new THREE.AmbientLight(0xffffff, 0.7));
       const keyLight = new THREE.DirectionalLight(0xffffff, 1.2);
@@ -130,8 +163,11 @@ export function SliceViewer({ file, gcode, status }: SliceViewerProps) {
         window.cancelAnimationFrame(frameId);
         controls.dispose();
         geometry.dispose();
-        layerGeometry.dispose();
+        previousGeometry.dispose();
+        activeGeometry.dispose();
         partMaterial.dispose();
+        previousMaterial.dispose();
+        activeMaterial.dispose();
         renderer.dispose();
       };
     }
@@ -142,7 +178,7 @@ export function SliceViewer({ file, gcode, status }: SliceViewerProps) {
       cancelled = true;
       cleanup();
     };
-  }, [activeLayer, file]);
+  }, [activeLayer, file, visibleLayers]);
 
   return (
     <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
@@ -164,36 +200,39 @@ export function SliceViewer({ file, gcode, status }: SliceViewerProps) {
         </span>
       </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_120px]">
-        <div className="relative min-h-[360px] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]">
+      <div className="mt-4">
+        <div className="relative min-h-[420px] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]">
           {hasRenderableSlice ? (
-            <canvas ref={canvasRef} className="h-full min-h-[360px] w-full" />
+            <>
+              <canvas ref={canvasRef} className="h-full min-h-[420px] w-full" />
+              <div className="absolute bottom-4 right-4 top-4 flex w-14 flex-col items-center justify-between rounded-lg border border-white/15 bg-black/45 px-2 py-3 backdrop-blur">
+                <span className="text-[10px] uppercase tracking-wider text-white/70">
+                  {layers.length ? layers.length : 0}
+                </span>
+                <input
+                  aria-label="Layer"
+                  type="range"
+                  min={0}
+                  max={Math.max(0, layers.length - 1)}
+                  value={safeLayerIndex}
+                  disabled={layers.length === 0}
+                  onChange={(event) =>
+                    setLayerIndex(Number(event.target.value))
+                  }
+                  className="h-72 w-8 accent-[var(--color-teal)] [direction:rtl] [writing-mode:vertical-lr]"
+                />
+                <span className="rounded bg-white/90 px-1.5 py-0.5 font-mono text-xs text-black">
+                  {layers.length ? safeLayerIndex + 1 : 0}
+                </span>
+              </div>
+            </>
           ) : (
-            <div className="flex min-h-[360px] items-center justify-center px-6 text-center text-sm text-[var(--color-muted)]">
+            <div className="flex min-h-[420px] items-center justify-center px-6 text-center text-sm text-[var(--color-muted)]">
               {status === "failed"
                 ? "No preview is available for this failed slice."
                 : "Slice an STL to preview the part and scrub generated toolpaths."}
             </div>
           )}
-        </div>
-
-        <div className="flex min-h-[360px] flex-col items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
-          <span className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-            Layer
-          </span>
-          <input
-            aria-label="Layer"
-            type="range"
-            min={0}
-            max={Math.max(0, layers.length - 1)}
-            value={safeLayerIndex}
-            disabled={layers.length === 0}
-            onChange={(event) => setLayerIndex(Number(event.target.value))}
-            className="h-60 w-8 [writing-mode:vertical-rl]"
-          />
-          <span className="font-mono text-xs text-[var(--color-text)]">
-            {layers.length ? safeLayerIndex + 1 : 0}/{layers.length}
-          </span>
         </div>
       </div>
     </section>

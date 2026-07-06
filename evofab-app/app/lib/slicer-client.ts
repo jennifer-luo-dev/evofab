@@ -88,6 +88,26 @@ function buildMockGcodeFixture(totalLayers = MOCK_TOTAL_LAYERS): string {
     lines.push(
       `G1 X${min.toFixed(2)} Y${min.toFixed(2)} E${e.toFixed(4)} F900`,
     );
+
+    const infillMin = min + 3;
+    const infillMax = max - 3;
+    if (infillMax > infillMin) {
+      for (let offset = infillMin; offset <= infillMax; offset += 4) {
+        if (layer % 2 === 0) {
+          lines.push(`G1 X${infillMin.toFixed(2)} Y${offset.toFixed(2)} F1800`);
+          e += 0.9;
+          lines.push(
+            `G1 X${infillMax.toFixed(2)} Y${offset.toFixed(2)} E${e.toFixed(4)} F900`,
+          );
+        } else {
+          lines.push(`G1 X${offset.toFixed(2)} Y${infillMin.toFixed(2)} F1800`);
+          e += 0.9;
+          lines.push(
+            `G1 X${offset.toFixed(2)} Y${infillMax.toFixed(2)} E${e.toFixed(4)} F900`,
+          );
+        }
+      }
+    }
   }
 
   lines.push("END_PRINT", "");
