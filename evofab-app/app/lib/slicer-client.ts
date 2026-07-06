@@ -58,6 +58,7 @@ const MOCK_JOB_ID_PREFIX = "mock-slicer-job";
 export const MOCK_GCODE_FIXTURE = [
   "; EvoFab mock GingerSlicer fixture",
   "START_PRINT BED_TEMPERATURE=60 EXTRUDER_TEMPERATURE=190 EXTRUDER_ROTATION_VOLUME=210",
+  "SET_PRINT_STATS_INFO TOTAL_LAYER=48",
   "G1 X0 Y0 Z1.2 F3000",
   "G1 X20 Y0 E4.2 F900",
   "G1 X20 Y20 E8.4 F900",
@@ -109,6 +110,17 @@ async function readResponse<T>(response: Response): Promise<T> {
 
 function isMockJobId(jobId: string): boolean {
   return jobId.startsWith(MOCK_JOB_ID_PREFIX);
+}
+
+export function injectPrintStatsInfo(gcode: string, totalLayer = 48): string {
+  if (/^SET_PRINT_STATS_INFO\b/im.test(gcode)) return gcode;
+
+  const lines = gcode.split(/\r?\n/);
+  const startPrintIndex = lines.findIndex((line) => /^START_PRINT\b/i.test(line));
+  const insertAt = startPrintIndex >= 0 ? startPrintIndex + 1 : 0;
+  const nextLines = [...lines];
+  nextLines.splice(insertAt, 0, `SET_PRINT_STATS_INFO TOTAL_LAYER=${totalLayer}`);
+  return nextLines.join("\n");
 }
 
 export class SlicerClient {
@@ -208,7 +220,7 @@ export class SlicerClient {
 
   async fetchGcode(jobId: string): Promise<string> {
     if (this.config.mode === "mock" || isMockJobId(jobId)) {
-      return MOCK_GCODE_FIXTURE;
+      return injectPrintStatsInfo(MOCK_GCODE_FIXTURE);
     }
 
     try {
@@ -236,7 +248,7 @@ export class SlicerClient {
         throw errorFromSlicerResponse(response.status, json, text);
       }
 
-      return response.text();
+      return injectPrintStatsInfo(await response.text());
     } catch (error) {
       throw normalizeSlicerError(error);
     }

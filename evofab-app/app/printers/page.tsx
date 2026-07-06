@@ -69,6 +69,11 @@ export default async function PrintersPage() {
                   <p className="mt-1 font-mono text-sm text-[var(--color-text)]">
                     {status ? `${status.progress.toFixed(1)}%` : "—"}
                   </p>
+                  {status?.progress_source === "estimated" && (
+                    <p className="mt-1 text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                      estimated
+                    </p>
+                  )}
                 </div>
                 <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
                   <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
@@ -79,6 +84,17 @@ export default async function PrintersPage() {
                   </p>
                 </div>
               </div>
+              {status?.fault_message && (
+                <div className="mt-3 rounded-lg border border-[var(--color-red)]/30 bg-[var(--color-red)]/10 p-3">
+                  <p className="text-[10px] uppercase tracking-wider text-[var(--color-red)]">
+                    Klipper fault
+                    {status.fault_mcu ? ` · ${status.fault_mcu}` : ""}
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--color-red)]">
+                    {status.fault_message}
+                  </p>
+                </div>
+              )}
             </section>
           );
         })}

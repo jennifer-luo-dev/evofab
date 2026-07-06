@@ -28,6 +28,8 @@ export function MonitorClient({ initialJob, initialLogs, initialPrinterStatus }:
   const { dispatch } = useJob()
   const [job, setJob] = useState<Job>(initialJob)
   const [printerStatus, setPrinterStatus] = useState<PrinterStatus | null>(initialPrinterStatus)
+  const [controlMessage, setControlMessage] = useState<string | null>(null)
+  const [controlBusy, setControlBusy] = useState(false)
 
   useEffect(() => {
     if (!INACTIVE_STATUSES.has(job.status)) {
@@ -83,6 +85,7 @@ export function MonitorClient({ initialJob, initialLogs, initialPrinterStatus }:
   }, [job.printer_id])
 
   const jobActive = !INACTIVE_STATUSES.has(job.status)
+  const printerFaulted = printerStatus?.status === 'error'
   const isPhotoStep = job.pipeline_step === 'photobooth'
   const mlStatus =
     !job.pipeline_step || PRE_ML_STEPS.has(job.pipeline_step)
@@ -93,9 +96,121 @@ export function MonitorClient({ initialJob, initialLogs, initialPrinterStatus }:
       ? 'done'
       : 'pending'
 
+  async function runJobControl(
+    action: 'pause' | 'resume' | 'cancel' | 'emergency_stop' | 'restart' | 'firmware_restart'
+  ) {
+    if (controlBusy) return
+
+    const body: Record<string, unknown> = { action }
+    if (action === 'cancel') {
+      if (!window.confirm('Cancel this print job?')) return
+      body.confirmed = true
+    }
+
+    if (action === 'restart' || action === 'firmware_restart') {
+      const expected = action === 'restart' ? 'RESTART' : 'FIRMWARE_RESTART'
+      const typed = window.prompt(`Type ${expected} to continue.`)
+      if (typed !== expected) {
+        setControlMessage(`${expected} was not confirmed.`)
+        return
+      }
+      body.confirmation = expected
+    }
+
+    setControlBusy(true)
+    setControlMessage(null)
+
+    try {
+      const response = await fetch(`/api/jobs/${job.id}/control`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const payload = await response.json().catch(() => null)
+      if (!response.ok) {
+        throw new Error(payload?.error?.message ?? 'Printer control failed.')
+      }
+      setControlMessage('Command accepted.')
+    } catch (error) {
+      setControlMessage(error instanceof Error ? error.message : 'Printer control failed.')
+    } finally {
+      setControlBusy(false)
+    }
+  }
+
   return (
     <div className="max-w-5xl mx-auto px-6 py-8 flex flex-col gap-4 animate-fade-up">
       <PipelineTracker currentStep={job.pipeline_step} />
+
+      <section className="rounded-lg border border-border bg-surface p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xs font-semibold uppercase tracking-widest text-muted">
+              Print Controls
+            </h2>
+            <p className="mt-1 text-xs text-muted">
+              {printerStatus?.print_state ?? job.status}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => runJobControl('pause')}
+              disabled={!jobActive || controlBusy || printerStatus?.status !== 'printing'}
+              className="rounded-md border border-border px-3 py-1.5 text-xs font-semibold text-text transition-colors hover:border-teal disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Pause
+            </button>
+            <button
+              onClick={() => runJobControl('resume')}
+              disabled={!jobActive || controlBusy || printerStatus?.status !== 'paused'}
+              className="rounded-md border border-border px-3 py-1.5 text-xs font-semibold text-text transition-colors hover:border-teal disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Resume
+            </button>
+            <button
+              onClick={() => runJobControl('cancel')}
+              disabled={!jobActive || controlBusy}
+              className="rounded-md border border-amber/50 bg-amber/10 px-3 py-1.5 text-xs font-semibold text-amber transition-colors hover:bg-amber/20 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => runJobControl('emergency_stop')}
+              disabled={!jobActive || controlBusy}
+              className="rounded-md border border-red/50 bg-red/10 px-3 py-1.5 text-xs font-semibold text-red transition-colors hover:bg-red/20 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              software e-stop
+            </button>
+            <button
+              onClick={() => runJobControl('restart')}
+              disabled={!printerFaulted || controlBusy}
+              className="rounded-md border border-border px-3 py-1.5 text-xs font-semibold text-text transition-colors hover:border-teal disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              RESTART
+            </button>
+            <button
+              onClick={() => runJobControl('firmware_restart')}
+              disabled={!printerFaulted || controlBusy}
+              className="rounded-md border border-border px-3 py-1.5 text-xs font-semibold text-text transition-colors hover:border-teal disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              FIRMWARE_RESTART
+            </button>
+          </div>
+        </div>
+        {controlMessage && (
+          <p className="mt-3 rounded-md border border-border bg-bg px-3 py-2 text-xs text-muted">
+            {controlMessage}
+          </p>
+        )}
+        {printerStatus?.fault_message && (
+          <div className="mt-3 rounded-md border border-red/30 bg-red/10 px-3 py-2">
+            <p className="text-xs font-semibold uppercase tracking-widest text-red">
+              Klipper fault{printerStatus.fault_mcu ? ` · ${printerStatus.fault_mcu}` : ''}
+            </p>
+            <p className="mt-1 text-sm text-red">{printerStatus.fault_message}</p>
+          </div>
+        )}
+      </section>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <PrinterMetricsCard

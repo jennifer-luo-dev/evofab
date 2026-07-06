@@ -45,6 +45,12 @@ CREATE TABLE IF NOT EXISTS printer_status (
   bed_temp      NUMERIC(6,2),
   bed_target    NUMERIC(6,2),
   eta_seconds   INTEGER,                            -- estimated seconds remaining
+  progress_source TEXT NOT NULL DEFAULT 'unknown'
+                            CHECK (progress_source IN ('exact', 'estimated', 'unknown')),
+  layer_source    TEXT NOT NULL DEFAULT 'unknown'
+                            CHECK (layer_source IN ('exact', 'estimated', 'unknown')),
+  fault_message TEXT,
+  fault_mcu     TEXT,
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

@@ -1,5 +1,6 @@
 export type PrinterStatusType = 'idle' | 'printing' | 'paused' | 'error' | 'offline'
 export type PrinterType = 'FGF' | 'FDM'
+export type PrinterTelemetrySource = 'exact' | 'estimated' | 'unknown'
 
 export interface Printer {
   id: string
@@ -28,6 +29,10 @@ export interface PrinterStatus {
   bed_temp: number | null
   bed_target: number | null
   eta_seconds: number | null
+  progress_source?: PrinterTelemetrySource
+  layer_source?: PrinterTelemetrySource
+  fault_message?: string | null
+  fault_mcu?: string | null
   updated_at: string
 }
 

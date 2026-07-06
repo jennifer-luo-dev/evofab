@@ -38,7 +38,7 @@ compileModule("slicer-client.ts");
 const { getSlicerMode, resolveSlicerConfig } = await import(
   pathToFileURL(path.join(tempDir, "slicer-config.mjs"))
 );
-const { SlicerClient, MOCK_GCODE_FIXTURE } = await import(
+const { SlicerClient, MOCK_GCODE_FIXTURE, injectPrintStatsInfo } = await import(
   pathToFileURL(path.join(tempDir, "slicer-client.mjs"))
 );
 const { SlicerError } = await import(
@@ -62,7 +62,15 @@ test("real mode requires url and token", () => {
 
 test("mock fixture mirrors real Ginger output markers", () => {
   assert.match(MOCK_GCODE_FIXTURE, /START_PRINT/);
+  assert.match(MOCK_GCODE_FIXTURE, /SET_PRINT_STATS_INFO TOTAL_LAYER=/);
   assert.match(MOCK_GCODE_FIXTURE, /^G1\b(?=[^\n]*\bE[-+]?\d*\.?\d+)/m);
+});
+
+test("injectPrintStatsInfo adds layer metadata after START_PRINT", () => {
+  const gcode = injectPrintStatsInfo("START_PRINT\nG1 X1 Y1 E1", 12);
+
+  assert.match(gcode, /START_PRINT\nSET_PRINT_STATS_INFO TOTAL_LAYER=12\nG1/);
+  assert.equal(injectPrintStatsInfo(gcode, 99), gcode);
 });
 
 test("submitSlice sends bearer auth and multipart model/profile fields", async () => {
