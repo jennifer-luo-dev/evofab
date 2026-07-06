@@ -66,6 +66,29 @@ test("mock fixture mirrors real Ginger output markers", () => {
   assert.match(MOCK_GCODE_FIXTURE, /^G1\b(?=[^\n]*\bE[-+]?\d*\.?\d+)/m);
 });
 
+test("mock slicer completes STL submit, poll, and G-code fetch", async () => {
+  const client = new SlicerClient({
+    env: { SLICER_MODE: "mock" },
+    sleep: async () => {},
+  });
+
+  const submit = await client.submitSlice({
+    model: new File(["solid cube\nendsolid cube\n"], "cube.stl", {
+      type: "model/stl",
+    }),
+    profileId: "pla-virgin-3mm",
+  });
+  const job = await client.pollJob(submit.job_id);
+  const gcode = await client.fetchGcode(job.job_id);
+
+  assert.equal(submit.status, "queued");
+  assert.equal(job.status, "done");
+  assert.ok(job.result);
+  assert.match(gcode, /START_PRINT/);
+  assert.match(gcode, /SET_PRINT_STATS_INFO TOTAL_LAYER=/);
+  assert.match(gcode, /^G1\b(?=[^\n]*\bE[-+]?\d*\.?\d+)/m);
+});
+
 test("injectPrintStatsInfo adds layer metadata after START_PRINT", () => {
   const gcode = injectPrintStatsInfo("START_PRINT\nG1 X1 Y1 E1", 12);
 

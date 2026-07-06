@@ -28,6 +28,12 @@ interface SlicerJob {
   error?: { code?: string; message?: string };
 }
 
+interface SliceNotice {
+  tone: "info" | "success" | "error";
+  message: string;
+  code?: string;
+}
+
 interface CloudSlicerClientProps {
   materialProfiles: MaterialProfile[];
   printers: PrinterWithStatus[];
@@ -72,7 +78,8 @@ async function readJsonOrThrow<T>(response: Response): Promise<T> {
       json?.error?.message ??
       json?.error ??
       `Request failed with HTTP ${response.status}.`;
-    throw new Error(message);
+    const code = json?.error?.code;
+    throw new Error(code ? `${code}: ${message}` : message);
   }
 
   return json as T;
@@ -93,7 +100,7 @@ export function CloudSlicerClient({
   const [status, setStatus] = useState<SliceStatus>("idle");
   const [job, setJob] = useState<SlicerJob | null>(null);
   const [gcode, setGcode] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [notice, setNotice] = useState<SliceNotice | null>(null);
 
   const selectedProfile = useMemo(
     () =>
@@ -123,7 +130,7 @@ export function CloudSlicerClient({
   }
 
   function handleFile(file: File | null) {
-    setMessage(null);
+    setNotice(null);
     setJob(null);
     setGcode(null);
     setStatus("idle");
@@ -136,11 +143,19 @@ export function CloudSlicerClient({
     const error = validateFile(file);
     if (error) {
       setSelectedFile(null);
-      setMessage(error);
+      setNotice({
+        tone: "error",
+        message: error,
+        code: "SLICER_INVALID_INPUT",
+      });
       return;
     }
 
     setSelectedFile(file);
+    setNotice({
+      tone: "info",
+      message: `${file.name} accepted. Ready to slice with the selected material profile.`,
+    });
   }
 
   async function pollJob(jobId: string): Promise<SlicerJob> {
@@ -153,6 +168,15 @@ export function CloudSlicerClient({
       const body = await readJsonOrThrow<{ job: SlicerJob }>(response);
       setJob(body.job);
       setStatus(body.job.status);
+      if (body.job.status === "queued" || body.job.status === "slicing") {
+        setNotice({
+          tone: "info",
+          message:
+            body.job.status === "queued"
+              ? "Slice job accepted. Waiting for the slicer queue."
+              : "Slicing in progress. Polling the slicer for updates.",
+        });
+      }
 
       if (body.job.status === "done" || body.job.status === "failed")
         return body.job;
@@ -165,7 +189,10 @@ export function CloudSlicerClient({
   async function handleSlice() {
     if (!selectedFile || !selectedProfile) return;
 
-    setMessage(null);
+    setNotice({
+      tone: "info",
+      message: "Uploading STL to the slicer service.",
+    });
     setGcode(null);
     setStatus("queued");
 
@@ -182,6 +209,11 @@ export function CloudSlicerClient({
         job: { job_id: string; status: "queued" };
       }>(submitResponse);
       setJob({ job_id: submitBody.job.job_id, status: submitBody.job.status });
+      setNotice({
+        tone: "info",
+        message: `Slice job ${submitBody.job.job_id} accepted. Slicing in progress.`,
+      });
+      setStatus("slicing");
 
       const doneJob = await pollJob(submitBody.job.job_id);
       if (doneJob.status === "failed") {
@@ -207,11 +239,18 @@ export function CloudSlicerClient({
 
       setGcode(nextGcode);
       setStatus("done");
+      setNotice({
+        tone: "success",
+        message:
+          "Slice complete. Review the result or send the G-code to a printer.",
+      });
     } catch (error) {
       setStatus("failed");
-      setMessage(
-        error instanceof Error ? error.message : "Unable to slice this STL.",
-      );
+      setNotice({
+        tone: "error",
+        message:
+          error instanceof Error ? error.message : "Unable to slice this STL.",
+      });
     }
   }
 
@@ -219,7 +258,10 @@ export function CloudSlicerClient({
     if (!canPrint || !selectedPrinter || !selectedProfile || !gcode) return;
 
     setStatus("printing");
-    setMessage(null);
+    setNotice({
+      tone: "info",
+      message: "Sending generated G-code to the selected printer.",
+    });
 
     try {
       const file = new File([gcode], `${job?.job_id ?? "cloud-slice"}.gcode`, {
@@ -244,11 +286,13 @@ export function CloudSlicerClient({
       router.push(`/monitor/${body.job.id}`);
     } catch (error) {
       setStatus("done");
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : "Unable to send this G-code to the printer.",
-      );
+      setNotice({
+        tone: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unable to send this G-code to the printer.",
+      });
     }
   }
 
@@ -338,9 +382,23 @@ export function CloudSlicerClient({
             </label>
           </div>
 
-          {message && (
-            <p className="mt-4 rounded-lg border border-[var(--color-red)]/30 bg-[var(--color-red)]/10 px-3 py-2 text-sm text-[var(--color-red)]">
-              {message}
+          {notice && (
+            <p
+              className={cn(
+                "mt-4 rounded-lg border px-3 py-2 text-sm",
+                notice.tone === "error"
+                  ? "border-[var(--color-red)]/30 bg-[var(--color-red)]/10 text-[var(--color-red)]"
+                  : notice.tone === "success"
+                    ? "border-[var(--color-green)]/30 bg-[var(--color-green)]/10 text-[var(--color-green)]"
+                    : "border-[var(--color-teal)]/30 bg-[var(--color-teal)]/10 text-[var(--color-text)]",
+              )}
+            >
+              {notice.code && (
+                <span className="mr-2 font-mono text-xs uppercase">
+                  {notice.code}
+                </span>
+              )}
+              {notice.message}
             </p>
           )}
 
