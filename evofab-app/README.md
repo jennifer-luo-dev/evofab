@@ -54,6 +54,31 @@ The safe status connector normalizes Moonraker `/printer/objects/query`
 responses into the existing `printer_status` shape. Local/demo status
 development should still prefer `npm run status:mock`.
 
+## Cloud Slicer
+
+The dashboard talks to the Phase A slicer service through server-side proxy
+routes, so the browser never receives the bearer token. Local development
+defaults to mock mode:
+
+```bash
+SLICER_MODE=mock
+```
+
+Real mode requires the running slicer service and the shared token in
+`.env.local`:
+
+```bash
+SLICER_MODE=real
+SLICER_URL=http://localhost:8055
+SLICER_TOKEN=<shared bearer token>
+```
+
+Health checks target `/health`; the service root intentionally returns 404.
+The dashboard does not hard-code the engine version or localhost. Moving the
+service to another host should require only a `SLICER_URL` change. Mock mode
+returns fixture G-code with `START_PRINT` and extruding `G1` moves so the UI
+and print handoff match real Ginger output markers.
+
 ## Verification
 
 ```bash
