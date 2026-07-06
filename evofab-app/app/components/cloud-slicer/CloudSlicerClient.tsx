@@ -283,11 +283,14 @@ export function CloudSlicerClient({
             </span>
           </div>
 
-          <label className="mt-5 flex min-h-44 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border-2)] bg-[var(--color-surface-2)] px-4 text-center transition-colors hover:border-[var(--color-teal)]">
+          <label className="relative mt-5 flex min-h-44 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-lg border border-dashed border-[var(--color-border-2)] bg-[var(--color-surface-2)] px-4 text-center transition-colors hover:border-[var(--color-teal)]">
             <input
               type="file"
               accept=".stl,model/stl"
-              className="sr-only"
+              className="absolute inset-0 z-10 cursor-pointer opacity-0"
+              onClick={(event) => {
+                event.currentTarget.value = "";
+              }}
               onChange={(event) => handleFile(event.target.files?.[0] ?? null)}
             />
             <span className="text-2xl">{selectedFile ? "✓" : "+"}</span>
