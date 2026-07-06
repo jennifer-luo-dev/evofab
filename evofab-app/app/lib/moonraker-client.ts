@@ -17,6 +17,7 @@ interface MoonrakerStatusResponse {
         state?: string
         filename?: string
         message?: string
+        print_duration?: number
         info?: {
           current_layer?: number | null
           total_layer?: number | null
@@ -60,6 +61,34 @@ function progressToPercent(progress: number | undefined): number {
   return Math.max(0, Math.min(100, percent))
 }
 
+function estimateLayer(progressPercent: number, totalLayer: number | null): number | null {
+  if (!totalLayer || totalLayer <= 0 || progressPercent <= 0) return null
+  return Math.max(1, Math.min(totalLayer, Math.ceil((progressPercent / 100) * totalLayer)))
+}
+
+function estimateEtaSeconds(
+  progressPercent: number,
+  printDuration: number | undefined
+): number | null {
+  if (
+    typeof printDuration !== 'number' ||
+    !Number.isFinite(printDuration) ||
+    printDuration <= 0 ||
+    progressPercent <= 0 ||
+    progressPercent >= 100
+  ) {
+    return null
+  }
+
+  return Math.max(0, Math.round((printDuration * (100 - progressPercent)) / progressPercent))
+}
+
+function faultMcuFromMessage(message: string | undefined): string | null {
+  if (!message) return null
+  const quoted = message.match(/MCU ['"]([^'"]+)['"]/i)
+  return quoted?.[1] ?? null
+}
+
 export function normalizeMoonrakerStatus(
   printerId: string,
   response: MoonrakerStatusResponse,
@@ -82,6 +111,20 @@ export function normalizeMoonrakerStatus(
   const virtualSd = status.virtual_sdcard ?? {}
   const extruder = status.extruder ?? {}
   const bed = status.heater_bed ?? {}
+  const progress = progressToPercent(virtualSd.progress)
+  const exactCurrentLayer = printStats.info?.current_layer ?? null
+  const exactTotalLayer = printStats.info?.total_layer ?? null
+  const layerCurrent = exactCurrentLayer ?? estimateLayer(progress, exactTotalLayer)
+  const layerSource =
+    exactCurrentLayer !== null && exactTotalLayer !== null
+      ? 'exact'
+      : layerCurrent !== null
+        ? 'estimated'
+        : 'unknown'
+  const faultMessage =
+    webhooks.state === 'shutdown' || rawState === 'error'
+      ? printStats.message ?? webhooks.state_message ?? null
+      : null
 
   return {
     printer_id: printerId,
@@ -89,14 +132,18 @@ export function normalizeMoonrakerStatus(
     status: statusFromRawState(rawState, webhooks.state),
     print_state: rawState,
     filename: printStats.filename || null,
-    progress: progressToPercent(virtualSd.progress),
-    layer_current: printStats.info?.current_layer ?? null,
-    layer_total: printStats.info?.total_layer ?? null,
+    progress,
+    layer_current: layerCurrent,
+    layer_total: exactTotalLayer,
     hotend_temp: extruder.temperature ?? null,
     hotend_target: extruder.target ?? null,
     bed_temp: bed.temperature ?? null,
     bed_target: bed.target ?? null,
-    eta_seconds: null,
+    eta_seconds: estimateEtaSeconds(progress, printStats.print_duration),
+    progress_source: typeof virtualSd.progress === 'number' ? 'estimated' : 'unknown',
+    layer_source: layerSource,
+    fault_message: faultMessage,
+    fault_mcu: faultMcuFromMessage(faultMessage ?? undefined),
     updated_at: now.toISOString(),
   }
 }

@@ -8,7 +8,9 @@ import ts from "typescript";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(__dirname, "..");
-const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "evofab-moonraker-tests-"));
+const tempDir = fs.mkdtempSync(
+  path.join(os.tmpdir(), "evofab-moonraker-tests-"),
+);
 
 function compileModule(sourceName) {
   const sourcePath = path.join(appRoot, "app", "lib", sourceName);
@@ -27,7 +29,7 @@ function compileModule(sourceName) {
     outputPath,
     compiled
       .replaceAll("./moonraker-config", "./moonraker-config.mjs")
-      .replaceAll("./moonraker-errors", "./moonraker-errors.mjs")
+      .replaceAll("./moonraker-errors", "./moonraker-errors.mjs"),
   );
 }
 
@@ -35,15 +37,14 @@ compileModule("moonraker-errors.ts");
 compileModule("moonraker-config.ts");
 compileModule("moonraker-client.ts");
 
-const {
-  HARDWARE_CONFIRMATION,
-  getMoonrakerMode,
-  resolveMoonrakerBaseUrl,
-} = await import(pathToFileURL(path.join(tempDir, "moonraker-config.mjs")));
+const { HARDWARE_CONFIRMATION, getMoonrakerMode, resolveMoonrakerBaseUrl } =
+  await import(pathToFileURL(path.join(tempDir, "moonraker-config.mjs")));
 const { MoonrakerStatusConnector, normalizeMoonrakerStatus } = await import(
   pathToFileURL(path.join(tempDir, "moonraker-client.mjs"))
 );
-const { MoonrakerError } = await import(pathToFileURL(path.join(tempDir, "moonraker-errors.mjs")));
+const { MoonrakerError } = await import(
+  pathToFileURL(path.join(tempDir, "moonraker-errors.mjs"))
+);
 
 const printer = {
   id: "printer-1",
@@ -73,7 +74,8 @@ test("mock mode rejects non-loopback mock URLs", () => {
         mockBaseUrl: "http://10.0.0.12:7125",
         env: { MOONRAKER_MODE: "mock" },
       }),
-    (error) => error instanceof MoonrakerError && error.code === "UNSAFE_MOCK_URL"
+    (error) =>
+      error instanceof MoonrakerError && error.code === "UNSAFE_MOCK_URL",
   );
 });
 
@@ -86,7 +88,8 @@ test("local mode disables Moonraker calls", () => {
         port: 7125,
         env: { MOONRAKER_MODE: "local" },
       }),
-    (error) => error instanceof MoonrakerError && error.code === "MOONRAKER_DISABLED"
+    (error) =>
+      error instanceof MoonrakerError && error.code === "MOONRAKER_DISABLED",
   );
 });
 
@@ -100,7 +103,8 @@ test("hardware mode requires explicit confirmation", () => {
         env: { MOONRAKER_MODE: "hardware" },
       }),
     (error) =>
-      error instanceof MoonrakerError && error.code === "HARDWARE_CONFIRMATION_REQUIRED"
+      error instanceof MoonrakerError &&
+      error.code === "HARDWARE_CONFIRMATION_REQUIRED",
   );
 
   assert.equal(
@@ -113,7 +117,7 @@ test("hardware mode requires explicit confirmation", () => {
         HARDWARE_CONFIRMATION,
       },
     }),
-    "http://10.0.0.12:7125"
+    "http://10.0.0.12:7125",
   );
 });
 
@@ -135,7 +139,7 @@ test("normalizes Moonraker object query responses into printer_status rows", () 
         },
       },
     },
-    new Date("2026-07-01T00:00:00.000Z")
+    new Date("2026-07-01T00:00:00.000Z"),
   );
 
   assert.deepEqual(status, {
@@ -152,6 +156,10 @@ test("normalizes Moonraker object query responses into printer_status rows", () 
     bed_temp: 59.2,
     bed_target: 60,
     eta_seconds: null,
+    progress_source: "estimated",
+    layer_source: "exact",
+    fault_message: null,
+    fault_mcu: null,
     updated_at: "2026-07-01T00:00:00.000Z",
   });
 });
@@ -165,7 +173,7 @@ test("connector reads status only through a safe mock loopback URL", async (t) =
   globalThis.fetch = async (url) => {
     assert.equal(
       String(url),
-      "http://127.0.0.1:7125/printer/objects/query?webhooks&print_stats&extruder&heater_bed&virtual_sdcard"
+      "http://127.0.0.1:7125/printer/objects/query?webhooks&print_stats&extruder&heater_bed&virtual_sdcard",
     );
     return new Response(
       JSON.stringify({
@@ -177,7 +185,7 @@ test("connector reads status only through a safe mock loopback URL", async (t) =
           },
         },
       }),
-      { status: 200 }
+      { status: 200 },
     );
   };
 
@@ -200,12 +208,14 @@ test("connector reports malformed and offline responses predictably", async (t) 
   await assert.rejects(
     () => new MoonrakerStatusConnector().readStatus(printer),
     (error) =>
-      error instanceof MoonrakerError && error.code === "MOONRAKER_MALFORMED_RESPONSE"
+      error instanceof MoonrakerError &&
+      error.code === "MOONRAKER_MALFORMED_RESPONSE",
   );
 
   globalThis.fetch = async () => new Response("offline", { status: 503 });
   await assert.rejects(
     () => new MoonrakerStatusConnector().readStatus(printer),
-    (error) => error instanceof MoonrakerError && error.code === "MOONRAKER_OFFLINE"
+    (error) =>
+      error instanceof MoonrakerError && error.code === "MOONRAKER_OFFLINE",
   );
 });

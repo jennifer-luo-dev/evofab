@@ -18,6 +18,10 @@ export function createOfflinePrinterStatus(printerId: string): PrinterStatus {
     bed_temp: null,
     bed_target: null,
     eta_seconds: null,
+    progress_source: 'unknown',
+    layer_source: 'unknown',
+    fault_message: null,
+    fault_mcu: null,
     updated_at: new Date().toISOString(),
   }
 }

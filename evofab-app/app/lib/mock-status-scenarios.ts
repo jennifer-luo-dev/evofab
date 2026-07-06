@@ -1,6 +1,11 @@
 // File purpose: Generates deterministic mock printer telemetry scenarios.
 
 import { normalizeMoonrakerStatus } from "@/app/lib/moonraker-client";
+import {
+  getMockMoonrakerState,
+  mockPrinterKey,
+  tickMockMoonrakerPrint,
+} from "@/app/lib/mock-moonraker";
 import { createOfflinePrinterStatus } from "@/app/lib/printer-status-source";
 import type { Printer, PrinterStatus } from "@/app/types/printer";
 
@@ -16,10 +21,13 @@ interface MockMoonrakerStatusResponse {
     status?: {
       webhooks?: {
         state?: string;
+        state_message?: string;
       };
       print_stats?: {
         state?: string;
         filename?: string;
+        message?: string;
+        print_duration?: number;
         info?: {
           current_layer?: number | null;
           total_layer?: number | null;
@@ -37,6 +45,67 @@ interface MockMoonrakerStatusResponse {
         target?: number;
       };
     };
+  };
+}
+
+function moonrakerPayloadForMockState(input: {
+  printer: Printer;
+  tick: number;
+}): MockMoonrakerStatusResponse | null {
+  const printerKey = mockPrinterKey(input.printer);
+  const state = tickMockMoonrakerPrint(printerKey, input.tick);
+
+  if (
+    state.files.size === 0 &&
+    state.state === "standby" &&
+    !state.faultMessage
+  ) {
+    return null;
+  }
+
+  const isFaulted = state.state === "error";
+  const info =
+    state.layerInfoExact &&
+    state.currentLayer !== null &&
+    state.totalLayer !== null
+      ? {
+          current_layer: state.currentLayer,
+          total_layer: state.totalLayer,
+        }
+      : state.totalLayer !== null
+        ? {
+            current_layer: null,
+            total_layer: state.totalLayer,
+          }
+        : undefined;
+
+  return {
+    result: {
+      status: {
+        webhooks: {
+          state: isFaulted ? "shutdown" : "ready",
+          state_message: state.faultMessage ?? undefined,
+        },
+        print_stats: {
+          state: state.state,
+          filename: state.filename ?? undefined,
+          message: state.faultMessage ?? undefined,
+          print_duration: Math.max(1, input.tick * 2),
+          info,
+        },
+        virtual_sdcard: {
+          progress: state.progress / 100,
+        },
+        extruder: {
+          temperature: state.hotendTemp,
+          target: state.hotendTarget,
+        },
+        heater_bed: {
+          temperature: state.bedTemp,
+          target: state.bedTarget,
+        },
+      },
+    },
   };
 }
 
@@ -129,6 +198,23 @@ export function buildMockPrinterStatus(input: {
   const offset = scenarioIndexForPrinter(input.printer.id, seed);
   const kind = SCENARIO_ORDER[(input.tick + offset) % SCENARIO_ORDER.length];
   const now = input.now ?? new Date();
+  const mockStatePayload = moonrakerPayloadForMockState({
+    printer: input.printer,
+    tick: input.tick,
+  });
+
+  if (mockStatePayload) {
+    const state = getMockMoonrakerState(mockPrinterKey(input.printer));
+    return {
+      kind:
+        state.state === "error"
+          ? "error"
+          : state.state === "printing"
+            ? "printing"
+            : "idle",
+      status: normalizeMoonrakerStatus(input.printer.id, mockStatePayload, now),
+    };
+  }
 
   if (kind === "offline") {
     return {
