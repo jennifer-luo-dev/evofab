@@ -2,12 +2,17 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import type { MaterialProfile, PrintSettings } from "@/app/types/job";
 import type { PrinterWithStatus } from "@/app/types/printer";
 import { cn } from "@/app/lib/utils";
 
 const MAX_STL_BYTES = 100 * 1024 * 1024;
 const EXTRUDING_G1_RE = /^G1\b(?=[^\n]*\bE[-+]?\d*\.?\d+)/m;
+const SliceViewer = dynamic(
+  () => import("./SliceViewer").then((module) => module.SliceViewer),
+  { ssr: false },
+);
 
 type SliceStatus =
   "idle" | "queued" | "slicing" | "done" | "failed" | "printing";
@@ -464,6 +469,7 @@ export function CloudSlicerClient({
           </div>
         </section>
       </div>
+      <SliceViewer file={selectedFile} gcode={gcode} status={status} />
     </div>
   );
 }
