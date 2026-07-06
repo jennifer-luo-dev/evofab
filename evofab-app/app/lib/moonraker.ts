@@ -3,7 +3,7 @@ import { getMoonrakerMode, resolveMoonrakerBaseUrl } from "./moonraker-config";
 import {
   applyMockMoonrakerScript,
   controlMockMoonrakerPrint,
-  extrudeMockMoonrakerFilament,
+  extrudeMockMoonrakerPellet,
   homeMockMoonrakerToolhead,
   listMockMoonrakerFiles,
   jogMockMoonrakerToolhead,
@@ -162,14 +162,14 @@ export async function adjustZOffset(
   await runGcodeScript(ip, port, `SET_GCODE_OFFSET Z_ADJUST=${deltaMm} MOVE=1`);
 }
 
-export async function extrudeFilament(
+export async function extrudePellet(
   ip: string,
   port: number,
   lengthMm: number,
   feedrateMmMin: number,
 ): Promise<void> {
   if (getMoonrakerMode() === "mock") {
-    await extrudeMockMoonrakerFilament(
+    await extrudeMockMoonrakerPellet(
       mockPrinterKey({ ip, port }),
       lengthMm,
       feedrateMmMin,

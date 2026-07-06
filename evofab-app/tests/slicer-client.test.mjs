@@ -60,7 +60,7 @@ test("real mode requires url and token", () => {
   );
 });
 
-test("mock fixture mirrors real Ginger output markers", () => {
+test("mock fixture mirrors real slicer output markers", () => {
   assert.match(MOCK_GCODE_FIXTURE, /START_PRINT/);
   assert.match(MOCK_GCODE_FIXTURE, /SET_PRINT_STATS_INFO TOTAL_LAYER=/);
   assert.match(MOCK_GCODE_FIXTURE, /^G1\b(?=[^\n]*\bE[-+]?\d*\.?\d+)/m);

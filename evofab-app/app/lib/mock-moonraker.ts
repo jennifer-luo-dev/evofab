@@ -181,7 +181,7 @@ export async function offsetMockMoonrakerToolhead(
   return state;
 }
 
-export async function extrudeMockMoonrakerFilament(
+export async function extrudeMockMoonrakerPellet(
   printerKey: string,
   lengthMm: number,
   feedrateMmMin: number,

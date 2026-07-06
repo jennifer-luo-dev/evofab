@@ -311,7 +311,7 @@ export function CloudSlicerClient({
                 Cloud Slicer
               </h1>
               <p className="text-sm text-[var(--color-muted)] mt-1">
-                STL to Ginger G-code
+                STL to pellet G-code
               </p>
             </div>
             <span

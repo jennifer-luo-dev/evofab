@@ -1,6 +1,6 @@
 import {
   adjustZOffset,
-  extrudeFilament,
+  extrudePellet,
   getMoonrakerMode,
   homeToolhead,
   jogToolhead,
@@ -219,12 +219,7 @@ export async function runPrinterMotion(
         ? -Math.min(length, MAX_EXTRUDE_MM)
         : Math.min(length, MAX_EXTRUDE_MM);
     const feedrateMmMin = Math.max(1, finiteNumber(request.feedrateMmMin, 300));
-    await extrudeFilament(
-      printer.ip,
-      printer.port,
-      signedLength,
-      feedrateMmMin,
-    );
+    await extrudePellet(printer.ip, printer.port, signedLength, feedrateMmMin);
     return {
       action: request.action,
       script: `M83\nG1 E${signedLength} F${feedrateMmMin}`,

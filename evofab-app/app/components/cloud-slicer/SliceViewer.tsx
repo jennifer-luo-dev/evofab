@@ -113,6 +113,7 @@ function modelBounds(layers: GcodeLayer[]) {
 export function SliceViewer({ gcode, status }: SliceViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [layerIndex, setLayerIndex] = useState(0);
+  const [showInfo, setShowInfo] = useState(true);
   const layers = useMemo(() => (gcode ? parseGcodeLayers(gcode) : []), [gcode]);
   const reportedTotal = useMemo(
     () => (gcode ? layerTotalFromGcode(gcode) : null),
@@ -319,6 +320,14 @@ export function SliceViewer({ gcode, status }: SliceViewerProps) {
             <>
               <canvas ref={canvasRef} className="h-full min-h-[620px] w-full" />
 
+              <button
+                type="button"
+                onClick={() => setShowInfo((current) => !current)}
+                className="absolute right-24 top-5 rounded-lg border border-white/15 bg-black/60 px-3 py-2 text-xs font-semibold text-white shadow-xl backdrop-blur transition-colors hover:border-[var(--color-teal)]"
+              >
+                {showInfo ? "Hide Info" : "Show Info"}
+              </button>
+
               <div className="absolute bottom-5 right-5 top-5 flex w-14 flex-col items-center justify-between rounded-lg border border-white/15 bg-black/55 px-2 py-3 backdrop-blur">
                 <span className="text-[10px] uppercase tracking-wider text-white/70">
                   {layers.length}
@@ -340,66 +349,72 @@ export function SliceViewer({ gcode, status }: SliceViewerProps) {
                 </span>
               </div>
 
-              <div className="absolute right-24 top-5 w-[300px] rounded-lg border border-white/10 bg-black/55 p-4 text-sm text-white shadow-xl backdrop-blur">
-                <div className="grid grid-cols-[1fr_52px_42px_58px] gap-2 border-b border-white/20 pb-2 text-xs font-semibold text-white/80">
-                  <span>Line Type</span>
-                  <span>Time</span>
-                  <span>%</span>
-                  <span>Usage</span>
-                </div>
-                <div className="mt-2 flex flex-col gap-1.5">
-                  {stats.map((stat) => (
-                    <div
-                      key={stat.id}
-                      className="grid grid-cols-[1fr_52px_42px_58px] gap-2 text-xs text-white/85"
-                    >
-                      <span className="flex items-center gap-2">
-                        <span
-                          className="h-2.5 w-2.5 rounded-sm"
-                          style={{ backgroundColor: stat.swatch }}
-                        />
-                        {stat.label}
-                      </span>
-                      <span>{formatDuration(stat.seconds)}</span>
-                      <span>{stat.pct.toFixed(1)}</span>
-                      <span>{(stat.lengthMm / 1000).toFixed(2)}m</span>
+              {showInfo && (
+                <>
+                  <div className="absolute right-24 top-16 w-[300px] rounded-lg border border-white/10 bg-black/55 p-4 text-sm text-white shadow-xl backdrop-blur">
+                    <div className="grid grid-cols-[1fr_52px_42px_58px] gap-2 border-b border-white/20 pb-2 text-xs font-semibold text-white/80">
+                      <span>Line Type</span>
+                      <span>Time</span>
+                      <span>%</span>
+                      <span>Usage</span>
                     </div>
-                  ))}
-                </div>
+                    <div className="mt-2 flex flex-col gap-1.5">
+                      {stats.map((stat) => (
+                        <div
+                          key={stat.id}
+                          className="grid grid-cols-[1fr_52px_42px_58px] gap-2 text-xs text-white/85"
+                        >
+                          <span className="flex items-center gap-2">
+                            <span
+                              className="h-2.5 w-2.5 rounded-sm"
+                              style={{ backgroundColor: stat.swatch }}
+                            />
+                            {stat.label}
+                          </span>
+                          <span>{formatDuration(stat.seconds)}</span>
+                          <span>{stat.pct.toFixed(1)}</span>
+                          <span>{(stat.lengthMm / 1000).toFixed(2)}m</span>
+                        </div>
+                      ))}
+                    </div>
 
-                <div className="mt-4 border-t border-white/20 pt-3 text-xs text-white/80">
-                  <p className="font-semibold text-white">Total estimation</p>
-                  <div className="mt-2 grid grid-cols-[1fr_auto] gap-x-3 gap-y-1">
-                    <span>Total filament</span>
-                    <span>{(totalPathMm / 1000).toFixed(2)} m</span>
-                    <span>Model printing time</span>
-                    <span>
-                      {formatDuration(
-                        stats.reduce((sum, stat) => sum + stat.seconds, 0),
-                      )}
-                    </span>
-                    <span>Current layer</span>
-                    <span>{activeLayer?.index ?? 0}</span>
+                    <div className="mt-4 border-t border-white/20 pt-3 text-xs text-white/80">
+                      <p className="font-semibold text-white">
+                        Total estimation
+                      </p>
+                      <div className="mt-2 grid grid-cols-[1fr_auto] gap-x-3 gap-y-1">
+                        <span>Total pellet path</span>
+                        <span>{(totalPathMm / 1000).toFixed(2)} m</span>
+                        <span>Model printing time</span>
+                        <span>
+                          {formatDuration(
+                            stats.reduce((sum, stat) => sum + stat.seconds, 0),
+                          )}
+                        </span>
+                        <span>Current layer</span>
+                        <span>{activeLayer?.index ?? 0}</span>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
 
-              <div className="absolute bottom-20 right-24 w-[300px] rounded-lg border border-white/10 bg-black/55 p-3 font-mono text-xs text-white/80 shadow-xl backdrop-blur">
-                {codePreview.map((line) => (
-                  <div
-                    key={line}
-                    className={
-                      line.includes(";LAYER") || line.includes(";TYPE")
-                        ? "text-[var(--color-teal)]"
-                        : line.includes("G1")
-                          ? "text-[#ffde59]"
-                          : "text-white/60"
-                    }
-                  >
-                    {line}
+                  <div className="absolute bottom-20 right-24 w-[300px] rounded-lg border border-white/10 bg-black/55 p-3 font-mono text-xs text-white/80 shadow-xl backdrop-blur">
+                    {codePreview.map((line) => (
+                      <div
+                        key={line}
+                        className={
+                          line.includes(";LAYER") || line.includes(";TYPE")
+                            ? "text-[var(--color-teal)]"
+                            : line.includes("G1")
+                              ? "text-[#ffde59]"
+                              : "text-white/60"
+                        }
+                      >
+                        {line}
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </>
+              )}
 
               <div className="absolute bottom-5 left-6 right-24 flex items-center gap-3 rounded-lg border border-white/10 bg-black/45 px-4 py-2 backdrop-blur">
                 <span className="font-mono text-xs text-white/70">1</span>

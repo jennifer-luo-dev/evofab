@@ -58,7 +58,7 @@ const MOCK_TOTAL_LAYERS = 48;
 
 function buildMockGcodeFixture(totalLayers = MOCK_TOTAL_LAYERS): string {
   const lines = [
-    "; EvoFab mock GingerSlicer fixture",
+    "; EvoFab mock pellet slicer fixture",
     "START_PRINT BED_TEMPERATURE=60 EXTRUDER_TEMPERATURE=190 EXTRUDER_ROTATION_VOLUME=210",
     `SET_PRINT_STATS_INFO TOTAL_LAYER=${totalLayers}`,
   ];
