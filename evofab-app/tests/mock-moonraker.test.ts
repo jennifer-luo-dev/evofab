@@ -43,7 +43,11 @@ test("mock Moonraker injects an MCU fault and firmware restart clears it", async
   resetMockMoonrakerState();
   const printerKey = mockPrinterKey({ ip: "127.0.0.1", port: 7125 });
 
-  injectMockMoonrakerFault(printerKey, "MCU 'toolhead' shutdown: ADC out of range", "toolhead");
+  injectMockMoonrakerFault(
+    printerKey,
+    "MCU 'toolhead' shutdown: ADC out of range",
+    "toolhead",
+  );
 
   assert.equal(getMockMoonrakerState(printerKey).state, "error");
   assert.equal(

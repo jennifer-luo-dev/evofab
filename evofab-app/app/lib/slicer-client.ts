@@ -54,19 +54,71 @@ export interface SlicerClientOptions {
 }
 
 const MOCK_JOB_ID_PREFIX = "mock-slicer-job";
+const MOCK_TOTAL_LAYERS = 48;
 
-export const MOCK_GCODE_FIXTURE = [
-  "; EvoFab mock GingerSlicer fixture",
-  "START_PRINT BED_TEMPERATURE=60 EXTRUDER_TEMPERATURE=190 EXTRUDER_ROTATION_VOLUME=210",
-  "SET_PRINT_STATS_INFO TOTAL_LAYER=48",
-  "G1 X0 Y0 Z1.2 F3000",
-  "G1 X20 Y0 E4.2 F900",
-  "G1 X20 Y20 E8.4 F900",
-  "G1 X0 Y20 E12.6 F900",
-  "G1 X0 Y0 E16.8 F900",
-  "END_PRINT",
-  "",
-].join("\n");
+function buildMockGcodeFixture(totalLayers = MOCK_TOTAL_LAYERS): string {
+  const lines = [
+    "; EvoFab mock pellet slicer fixture",
+    "START_PRINT BED_TEMPERATURE=60 EXTRUDER_TEMPERATURE=190 EXTRUDER_ROTATION_VOLUME=210",
+    `SET_PRINT_STATS_INFO TOTAL_LAYER=${totalLayers}`,
+  ];
+  let e = 0;
+
+  for (let layer = 0; layer < totalLayers; layer += 1) {
+    const z = 1.2 + layer * 0.8;
+    const inset = layer % 6;
+    const min = inset;
+    const max = 24 - inset;
+    lines.push(`;LAYER:${layer}`);
+    lines.push(`G1 Z${z.toFixed(2)} F3000`);
+    lines.push(
+      layer >= totalLayers - 4 ? ";TYPE:Top surface" : ";TYPE:Outer wall",
+    );
+    lines.push(`G1 X${min.toFixed(2)} Y${min.toFixed(2)} F1800`);
+    e += 1.2;
+    lines.push(
+      `G1 X${max.toFixed(2)} Y${min.toFixed(2)} E${e.toFixed(4)} F900`,
+    );
+    e += 1.2;
+    lines.push(
+      `G1 X${max.toFixed(2)} Y${max.toFixed(2)} E${e.toFixed(4)} F900`,
+    );
+    e += 1.2;
+    lines.push(
+      `G1 X${min.toFixed(2)} Y${max.toFixed(2)} E${e.toFixed(4)} F900`,
+    );
+    e += 1.2;
+    lines.push(
+      `G1 X${min.toFixed(2)} Y${min.toFixed(2)} E${e.toFixed(4)} F900`,
+    );
+
+    const infillMin = min + 3;
+    const infillMax = max - 3;
+    if (infillMax > infillMin) {
+      lines.push(";TYPE:Sparse infill");
+      for (let offset = infillMin; offset <= infillMax; offset += 4) {
+        if (layer % 2 === 0) {
+          lines.push(`G1 X${infillMin.toFixed(2)} Y${offset.toFixed(2)} F1800`);
+          e += 0.9;
+          lines.push(
+            `G1 X${infillMax.toFixed(2)} Y${offset.toFixed(2)} E${e.toFixed(4)} F900`,
+          );
+        } else {
+          lines.push(`G1 X${offset.toFixed(2)} Y${infillMin.toFixed(2)} F1800`);
+          e += 0.9;
+          lines.push(
+            `G1 X${offset.toFixed(2)} Y${infillMax.toFixed(2)} E${e.toFixed(4)} F900`,
+          );
+        }
+      }
+    }
+  }
+
+  lines.push("END_PRINT", "");
+  return lines.join("\n");
+}
+
+export const MOCK_GCODE_FIXTURE = buildMockGcodeFixture();
 
 const MOCK_RESULT: SlicerJobResult = {
   gcode_url: "/mock/gcode",
@@ -116,10 +168,16 @@ export function injectPrintStatsInfo(gcode: string, totalLayer = 48): string {
   if (/^SET_PRINT_STATS_INFO\b/im.test(gcode)) return gcode;
 
   const lines = gcode.split(/\r?\n/);
-  const startPrintIndex = lines.findIndex((line) => /^START_PRINT\b/i.test(line));
+  const startPrintIndex = lines.findIndex((line) =>
+    /^START_PRINT\b/i.test(line),
+  );
   const insertAt = startPrintIndex >= 0 ? startPrintIndex + 1 : 0;
   const nextLines = [...lines];
-  nextLines.splice(insertAt, 0, `SET_PRINT_STATS_INFO TOTAL_LAYER=${totalLayer}`);
+  nextLines.splice(
+    insertAt,
+    0,
+    `SET_PRINT_STATS_INFO TOTAL_LAYER=${totalLayer}`,
+  );
   return nextLines.join("\n");
 }
 

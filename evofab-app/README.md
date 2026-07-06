@@ -77,7 +77,7 @@ Health checks target `/health`; the service root intentionally returns 404.
 The dashboard does not hard-code the engine version or localhost. Moving the
 service to another host should require only a `SLICER_URL` change. Mock mode
 returns fixture G-code with `START_PRINT` and extruding `G1` moves so the UI
-and print handoff match real Ginger output markers.
+and print handoff match real slicer output markers.
 
 ## Verification
 
