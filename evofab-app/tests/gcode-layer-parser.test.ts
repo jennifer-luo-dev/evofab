@@ -17,6 +17,13 @@ test("parses deterministic mock slicer layers and Z heights", () => {
   assert.equal(layers[47].index, 47);
   assert.ok(layers.every((layer) => layer.segments.length > 0));
   assert.ok(layers[0].segments.length > 4);
+  assert.ok(
+    layers[0].segments.some((segment) => segment.type === "outer_wall"),
+  );
+  assert.ok(
+    layers[0].segments.some((segment) => segment.type === "sparse_infill"),
+  );
+  assert.ok(layers[0].segments.every((segment) => segment.lineNumber > 0));
 });
 
 test("returns no layers for empty or travel-only G-code", () => {

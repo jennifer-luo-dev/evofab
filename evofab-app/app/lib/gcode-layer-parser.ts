@@ -4,9 +4,20 @@ export interface GcodePoint {
   z: number;
 }
 
+export type GcodeLineType =
+  | "outer_wall"
+  | "inner_wall"
+  | "sparse_infill"
+  | "top_surface"
+  | "travel"
+  | "unknown";
+
 export interface GcodeSegment {
   from: GcodePoint;
   to: GcodePoint;
+  type: GcodeLineType;
+  sourceLine: string;
+  lineNumber: number;
 }
 
 export interface GcodeLayer {
@@ -16,6 +27,7 @@ export interface GcodeLayer {
 }
 
 const LAYER_RE = /^;\s*LAYER[:_]\s*(\d+)/i;
+const TYPE_RE = /^;\s*TYPE[:_]\s*(.+)$/i;
 const COMMAND_RE = /^(G0|G1)\b/i;
 const AXIS_RE = /([XYZE])([-+]?\d*\.?\d+)/gi;
 
@@ -35,12 +47,24 @@ function makeLayer(index: number, z: number): GcodeLayer {
   return { index, z, segments: [] };
 }
 
+function normalizeLineType(value: string): GcodeLineType {
+  const normalized = value.trim().toLowerCase().replaceAll(" ", "_");
+  if (normalized.includes("outer")) return "outer_wall";
+  if (normalized.includes("inner") || normalized.includes("wall"))
+    return "inner_wall";
+  if (normalized.includes("infill")) return "sparse_infill";
+  if (normalized.includes("top")) return "top_surface";
+  if (normalized.includes("travel")) return "travel";
+  return "unknown";
+}
+
 export function parseGcodeLayers(gcode: string): GcodeLayer[] {
   const layers: GcodeLayer[] = [];
   let current = makeLayer(0, 0);
   let hasLayerContent = false;
   let position: GcodePoint = { x: 0, y: 0, z: 0 };
   let lastE = 0;
+  let currentType: GcodeLineType = "unknown";
 
   function commitLayer() {
     if (hasLayerContent || current.segments.length > 0) {
@@ -48,9 +72,16 @@ export function parseGcodeLayers(gcode: string): GcodeLayer[] {
     }
   }
 
-  for (const rawLine of gcode.split(/\r?\n/)) {
+  const lines = gcode.split(/\r?\n/);
+  for (const [lineIndex, rawLine] of lines.entries()) {
     const line = rawLine.trim();
     if (!line) continue;
+
+    const typeMatch = line.match(TYPE_RE);
+    if (typeMatch) {
+      currentType = normalizeLineType(typeMatch[1]);
+      continue;
+    }
 
     const layerMatch = line.match(LAYER_RE);
     if (layerMatch) {
@@ -80,6 +111,9 @@ export function parseGcodeLayers(gcode: string): GcodeLayer[] {
       current.segments.push({
         from: position,
         to: nextPosition,
+        type: currentType,
+        sourceLine: line,
+        lineNumber: lineIndex + 1,
       });
       hasLayerContent = true;
     }

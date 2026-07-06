@@ -71,6 +71,9 @@ function buildMockGcodeFixture(totalLayers = MOCK_TOTAL_LAYERS): string {
     const max = 24 - inset;
     lines.push(`;LAYER:${layer}`);
     lines.push(`G1 Z${z.toFixed(2)} F3000`);
+    lines.push(
+      layer >= totalLayers - 4 ? ";TYPE:Top surface" : ";TYPE:Outer wall",
+    );
     lines.push(`G1 X${min.toFixed(2)} Y${min.toFixed(2)} F1800`);
     e += 1.2;
     lines.push(
@@ -92,6 +95,7 @@ function buildMockGcodeFixture(totalLayers = MOCK_TOTAL_LAYERS): string {
     const infillMin = min + 3;
     const infillMax = max - 3;
     if (infillMax > infillMin) {
+      lines.push(";TYPE:Sparse infill");
       for (let offset = infillMin; offset <= infillMax; offset += 4) {
         if (layer % 2 === 0) {
           lines.push(`G1 X${infillMin.toFixed(2)} Y${offset.toFixed(2)} F1800`);
