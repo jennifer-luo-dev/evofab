@@ -259,7 +259,10 @@ ON CONFLICT (name) DO NOTHING;
 
 -- Printers (update IPs to match your actual lab network before running)
 INSERT INTO printers (name, model, ip, port, type, material, build_volume) VALUES
-  ('EvoFab Sovol Zero', 'SOVOL ZERO', '10.247.137.89', 80, 'FDM', 'Shore 20A TPE', '152.4×152.4×152.4mm')
+  ('EvoFab Sovol Zero', 'SOVOL ZERO', '10.247.137.89', 80, 'FDM', 'Shore 20A TPE', '152.4×152.4×152.4mm'),
+  ('EvoFab Mock Alpha', 'Mock FDM', '127.0.0.1', 7125, 'FDM', 'PLA Standard', '220x220x250mm'),
+  ('EvoFab Mock Beta', 'Mock FGF', '127.0.0.2', 7125, 'FGF', 'Shore 40A TPE', '300x300x400mm'),
+  ('EvoFab Mock Gamma', 'Mock FDM', '127.0.0.3', 7125, 'FDM', 'PETG Standard', '250x250x300mm')
 ON CONFLICT (name) DO NOTHING;
 
 -- Initialize printer_status rows for each seeded printer
