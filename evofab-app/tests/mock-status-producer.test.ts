@@ -14,6 +14,7 @@ function createMockSupabase() {
       type: "FDM",
       material: "PLA Standard",
       build_volume: "220x220x250mm",
+      webcam_url: null,
       is_active: true,
       created_at: "2026-07-01T00:00:00.000Z",
     },
@@ -26,6 +27,7 @@ function createMockSupabase() {
       type: "FGF",
       material: "Shore 40A TPE",
       build_volume: "300x300x400mm",
+      webcam_url: null,
       is_active: true,
       created_at: "2026-07-01T00:00:00.000Z",
     },
@@ -42,6 +44,9 @@ function createMockSupabase() {
               return {
                 eq() {
                   return {
+                    async single() {
+                      return { data: activePrinters[0], error: null };
+                    },
                     async order() {
                       return { data: activePrinters, error: null };
                     },
@@ -57,6 +62,37 @@ function createMockSupabase() {
             async upsert(rows: PrinterStatus[]) {
               upserts.push(rows);
               return { data: rows, error: null };
+            },
+          };
+        }
+
+        if (table === "jobs") {
+          return {
+            select() {
+              return {
+                eq() {
+                  return {
+                    eq() {
+                      return {
+                        order() {
+                          return {
+                            async limit() {
+                              return { data: [], error: null };
+                            },
+                          };
+                        },
+                      };
+                    },
+                    in() {
+                      return {
+                        async limit() {
+                          return { data: [], error: null };
+                        },
+                      };
+                    },
+                  };
+                },
+              };
             },
           };
         }

@@ -12,6 +12,7 @@ import {
   profileSupportsPrinterType,
   settingsFromMaterialProfile,
 } from "@/app/lib/material-profiles";
+import { startNextQueuedJob } from "@/app/lib/print-queue";
 import type { MaterialProfile, PrintSettings } from "@/app/types/job";
 
 export async function GET() {
@@ -45,12 +46,15 @@ export async function POST(req: NextRequest) {
     (form.get("experiment_params") as string) || "{}",
   );
 
-  // Look up printer IP/port
-  const { data: printer, error: printerError } = await supabase
-    .from("printers")
-    .select("ip, port, type")
-    .eq("id", printer_id)
-    .single();
+  const [{ data: printer, error: printerError }, { data: printerStatus }] =
+    await Promise.all([
+      supabase.from("printers").select("ip, port, type").eq("id", printer_id).single(),
+      supabase
+        .from("printer_status")
+        .select("status")
+        .eq("printer_id", printer_id)
+        .maybeSingle(),
+    ]);
 
   if (printerError || !printer) {
     return NextResponse.json({ error: "Printer not found" }, { status: 404 });
@@ -89,12 +93,16 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Upload file to Moonraker, apply settings, start print
+  const shouldStartNow = printerStatus?.status === "idle";
+
+  // Upload file to Moonraker; busy printers keep the job queued until idle.
   let fileKey: string;
   try {
     fileKey = await uploadGcode(printer.ip, printer.port, file);
-    await applyPrintSettings(printer.ip, printer.port, settings);
-    await startPrint(printer.ip, printer.port, fileKey);
+    if (shouldStartNow) {
+      await applyPrintSettings(printer.ip, printer.port, settings);
+      await startPrint(printer.ip, printer.port, fileKey);
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: message }, { status: 502 });
@@ -110,14 +118,17 @@ export async function POST(req: NextRequest) {
       file_key: fileKey,
       print_settings: { ...settings, prepare: prepareSettings },
       experiment_params,
-      status: "printing",
-      pipeline_step: "printing",
-      started_at: new Date().toISOString(),
+      status: shouldStartNow ? "printing" : "queued",
+      pipeline_step: shouldStartNow ? "printing" : "upload",
+      started_at: shouldStartNow ? new Date().toISOString() : null,
     })
     .select()
     .single();
 
   if (error)
     return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!shouldStartNow && printerStatus?.status === "idle") {
+    await startNextQueuedJob(supabase, printer_id);
+  }
   return NextResponse.json({ job }, { status: 201 });
 }

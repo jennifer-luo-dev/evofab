@@ -25,8 +25,21 @@ test("printer onboarding normalizes existing registry columns", () => {
     type: "FGF",
     material: "PLA pellets",
     build_volume: "300x300x400mm",
+    webcam_url: null,
     is_active: true,
   });
+});
+
+test("printer onboarding keeps optional webcam URL", () => {
+  const input = normalizePrinterOnboardingInput({
+    name: "EvoFab Camera",
+    model: "Mock FDM",
+    ip: "127.0.0.5",
+    type: "FDM",
+    webcam_url: " http://127.0.0.1:8080/?action=stream ",
+  });
+
+  assert.equal(input.webcam_url, "http://127.0.0.1:8080/?action=stream");
 });
 
 test("printer onboarding rejects invalid port and type", () => {
@@ -83,5 +96,6 @@ test("printer connection test reuses onboarding normalization", () => {
   assert.equal(printer.ip, "10.247.137.21");
   assert.equal(printer.port, 7125);
   assert.equal(printer.type, "FGF");
+  assert.equal(printer.webcam_url, null);
   assert.equal(printer.is_active, true);
 });

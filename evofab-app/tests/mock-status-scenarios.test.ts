@@ -12,6 +12,7 @@ const printer: Printer = {
   type: "FDM",
   material: "PLA Standard",
   build_volume: "220x220x250mm",
+  webcam_url: null,
   is_active: true,
   created_at: "2026-07-01T00:00:00.000Z",
 };

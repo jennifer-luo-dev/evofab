@@ -9,6 +9,7 @@ export interface PrinterOnboardingInput {
   type?: unknown;
   material?: unknown;
   build_volume?: unknown;
+  webcam_url?: unknown;
 }
 
 export interface PrinterInsert {
@@ -19,6 +20,7 @@ export interface PrinterInsert {
   type: PrinterType;
   material: string | null;
   build_volume: string | null;
+  webcam_url: string | null;
   is_active: true;
 }
 
@@ -90,6 +92,7 @@ export function normalizePrinterOnboardingInput(
     type: normalizeType(input.type),
     material: optionalText(input.material),
     build_volume: optionalText(input.build_volume),
+    webcam_url: optionalText(input.webcam_url),
     is_active: true,
   };
 }

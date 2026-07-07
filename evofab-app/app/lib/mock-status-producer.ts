@@ -3,6 +3,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getMoonrakerMode } from "@/app/lib/moonraker-config";
 import { buildMockPrinterStatus } from "@/app/lib/mock-status-scenarios";
+import { startNextQueuedJob } from "@/app/lib/print-queue";
 import type { Printer, PrinterStatus } from "@/app/types/printer";
 
 export const DEFAULT_MOCK_STATUS_INTERVAL_MS = 2_000;
@@ -103,6 +104,17 @@ export async function writeMockStatusTick(
     if (upsertError) {
       throw new Error(`Unable to write printer status: ${upsertError.message}`);
     }
+
+    await Promise.all(
+      statuses
+        .filter((status) => status.status === "idle")
+        .map((status) =>
+          startNextQueuedJob(
+            options.supabase as SupabaseClient,
+            status.printer_id,
+          ),
+        ),
+    );
   }
 
   return {

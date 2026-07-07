@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS printers (
   type         TEXT        NOT NULL CHECK (type IN ('FGF', 'FDM')),
   material     TEXT,                                 -- default material for this printer
   build_volume TEXT,                                 -- "300x300x400mm"
+  webcam_url   TEXT,                                 -- optional browser-rendered MJPEG stream URL
   is_active    BOOLEAN     NOT NULL DEFAULT TRUE,    -- soft-delete / disable without losing history
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -275,11 +276,11 @@ INSERT INTO experiments (name, display_name, description, script_path, default_p
 ON CONFLICT (name) DO NOTHING;
 
 -- Printers (update IPs to match your actual lab network before running)
-INSERT INTO printers (name, model, ip, port, type, material, build_volume) VALUES
-  ('EvoFab Sovol Zero', 'SOVOL ZERO', '10.247.137.89', 80, 'FDM', 'Shore 20A TPE', '152.4×152.4×152.4mm'),
-  ('EvoFab Mock Alpha', 'Mock FDM', '127.0.0.1', 7125, 'FDM', 'PLA Standard', '220x220x250mm'),
-  ('EvoFab Mock Beta', 'Mock FGF', '127.0.0.2', 7125, 'FGF', 'Shore 40A TPE', '300x300x400mm'),
-  ('EvoFab Mock Gamma', 'Mock FDM', '127.0.0.3', 7125, 'FDM', 'PETG Standard', '250x250x300mm')
+INSERT INTO printers (name, model, ip, port, type, material, build_volume, webcam_url) VALUES
+  ('EvoFab Sovol Zero', 'SOVOL ZERO', '10.247.137.89', 80, 'FDM', 'Shore 20A TPE', '152.4×152.4×152.4mm', NULL),
+  ('EvoFab Mock Alpha', 'Mock FDM', '127.0.0.1', 7125, 'FDM', 'PLA Standard', '220x220x250mm', NULL),
+  ('EvoFab Mock Beta', 'Mock FGF', '127.0.0.2', 7125, 'FGF', 'Shore 40A TPE', '300x300x400mm', NULL),
+  ('EvoFab Mock Gamma', 'Mock FDM', '127.0.0.3', 7125, 'FDM', 'PETG Standard', '250x250x300mm', NULL)
 ON CONFLICT (name) DO NOTHING;
 
 -- Initialize printer_status rows for each seeded printer

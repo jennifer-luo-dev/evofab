@@ -11,6 +11,7 @@ export interface Printer {
   type: PrinterType
   material: string | null
   build_volume: string | null
+  webcam_url: string | null
   is_active: boolean
   created_at: string
 }

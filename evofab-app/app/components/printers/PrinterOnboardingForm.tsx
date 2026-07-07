@@ -12,6 +12,7 @@ interface FormState {
   type: PrinterType;
   material: string;
   build_volume: string;
+  webcam_url: string;
 }
 
 const EMPTY_FORM: FormState = {
@@ -22,6 +23,7 @@ const EMPTY_FORM: FormState = {
   type: "FDM",
   material: "",
   build_volume: "",
+  webcam_url: "",
 };
 
 export function PrinterOnboardingForm() {
@@ -185,6 +187,12 @@ export function PrinterOnboardingForm() {
             placeholder="Material"
             value={form.material}
             onChange={(event) => update("material", event.target.value)}
+          />
+          <input
+            className={inputClass}
+            placeholder="Webcam URL"
+            value={form.webcam_url}
+            onChange={(event) => update("webcam_url", event.target.value)}
           />
           <div className="grid gap-2 md:col-span-2 md:grid-cols-2">
             <button

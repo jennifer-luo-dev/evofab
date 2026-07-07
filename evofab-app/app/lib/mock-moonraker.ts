@@ -23,6 +23,9 @@ export interface MockMoonrakerPrinterState {
   bedTemp: number;
   speedFactor: number;
   flowFactor: number;
+  pressureAdvance: number;
+  pressureAdvanceSmoothTime: number;
+  bedMesh: MockBedMesh | null;
   fanSpeed: number;
   lastScript: string | null;
   lastMotionScript: string | null;
@@ -31,6 +34,12 @@ export interface MockMoonrakerPrinterState {
   faultMcu: string | null;
   startedAtTick: number | null;
   updatedAtTick: number;
+}
+
+export interface MockBedMesh {
+  min: [number, number];
+  max: [number, number];
+  matrix: number[][];
 }
 
 interface MockMoonrakerUploadInput {
@@ -61,6 +70,9 @@ function createState(printerKey: string): MockMoonrakerPrinterState {
     bedTemp: 26,
     speedFactor: 100,
     flowFactor: 100,
+    pressureAdvance: 0,
+    pressureAdvanceSmoothTime: 0,
+    bedMesh: null,
     fanSpeed: 0,
     lastScript: null,
     lastMotionScript: null,
@@ -69,6 +81,18 @@ function createState(printerKey: string): MockMoonrakerPrinterState {
     faultMcu: null,
     startedAtTick: null,
     updatedAtTick: 0,
+  };
+}
+
+function deterministicBedMesh(): MockBedMesh {
+  return {
+    min: [0, 0],
+    max: [220, 220],
+    matrix: [
+      [-0.04, -0.01, 0.02],
+      [-0.02, 0, 0.03],
+      [0.01, 0.04, 0.06],
+    ],
   };
 }
 
@@ -101,6 +125,23 @@ function parseFanSpeed(script: string): number | null {
   const value = Number(match[1]);
   if (!Number.isFinite(value)) return null;
   return Math.max(0, Math.min(100, Math.round((value / 255) * 100)));
+}
+
+function parsePressureAdvance(script: string): {
+  advance: number;
+  smoothTime: number;
+} | null {
+  const command = script.match(/\bSET_PRESSURE_ADVANCE\b[^\n]*/i)?.[0];
+  if (!command) return null;
+  const advance = command.match(/\bADVANCE=([0-9.]+)/i);
+  if (!advance) return null;
+  const smooth = command.match(/\bSMOOTH_TIME=([0-9.]+)/i);
+  const advanceValue = Number(advance[1]);
+  const smoothValue = smooth ? Number(smooth[1]) : 0;
+  if (!Number.isFinite(advanceValue) || !Number.isFinite(smoothValue)) {
+    return null;
+  }
+  return { advance: advanceValue, smoothTime: smoothValue };
 }
 
 function parseTotalLayers(gcode: string): number | null {
@@ -157,16 +198,29 @@ export async function applyMockMoonrakerScript(
   const state = stateFor(printerKey);
   state.lastScript = script;
 
+  if (/^\s*G28\b/im.test(script)) {
+    state.homedAxes = { x: true, y: true, z: true };
+    state.position = { ...state.position, x: 0, y: 0, z: 0 };
+  }
+
   const hotendTarget = parseTarget(script, "M104");
   const bedTarget = parseTarget(script, "M140");
   const speedFactor = parsePercent(script, "M220");
   const flowFactor = parsePercent(script, "M221");
   const fanSpeed = parseFanSpeed(script);
+  const pressureAdvance = parsePressureAdvance(script);
   if (hotendTarget !== null) state.hotendTarget = hotendTarget;
   if (bedTarget !== null) state.bedTarget = bedTarget;
   if (speedFactor !== null) state.speedFactor = speedFactor;
   if (flowFactor !== null) state.flowFactor = flowFactor;
   if (fanSpeed !== null) state.fanSpeed = fanSpeed;
+  if (pressureAdvance !== null) {
+    state.pressureAdvance = pressureAdvance.advance;
+    state.pressureAdvanceSmoothTime = pressureAdvance.smoothTime;
+  }
+  if (/\bBED_MESH_CALIBRATE\b/i.test(script)) {
+    state.bedMesh = deterministicBedMesh();
+  }
 }
 
 export async function homeMockMoonrakerToolhead(
@@ -230,6 +284,12 @@ export function setMockMoonrakerHotendTemp(
   const state = stateFor(printerKey);
   state.hotendTemp = temperature;
   return state;
+}
+
+export function readMockMoonrakerBedMesh(
+  printerKey: string,
+): MockBedMesh | null {
+  return stateFor(printerKey).bedMesh;
 }
 
 export async function startMockMoonrakerPrint(

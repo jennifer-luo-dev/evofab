@@ -17,6 +17,7 @@ function printer(input: Partial<Printer> & Pick<Printer, "id" | "name">): Printe
     type: input.type ?? "FDM",
     material: input.material ?? null,
     build_volume: input.build_volume ?? null,
+    webcam_url: input.webcam_url ?? null,
     is_active: input.is_active ?? true,
     created_at: input.created_at ?? "2026-07-01T00:00:00.000Z",
   };

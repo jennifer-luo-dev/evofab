@@ -5,6 +5,7 @@ import { JobProvider } from "@/app/contexts/JobContext";
 import { PrinterProvider } from "@/app/contexts/PrinterContext";
 import { Topbar } from "@/app/components/layout/Topbar";
 import { NavTabs } from "@/app/components/layout/NavTabs";
+import { NotificationProvider } from "@/app/components/notifications/NotificationProvider";
 
 const dmSans = DM_Sans({
   variable: "--font-dm-sans",
@@ -35,13 +36,15 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col bg-bg text-text antialiased">
         <JobProvider>
           <PrinterProvider>
-            <Topbar />
-            <div className="flex flex-col flex-1 pt-13">
-              <NavTabs />
-              <main className="flex-1 overflow-auto">
-                {children}
-              </main>
-            </div>
+            <NotificationProvider>
+              <Topbar />
+              <div className="flex flex-col flex-1 pt-13">
+                <NavTabs />
+                <main className="flex-1 overflow-auto">
+                  {children}
+                </main>
+              </div>
+            </NotificationProvider>
           </PrinterProvider>
         </JobProvider>
       </body>

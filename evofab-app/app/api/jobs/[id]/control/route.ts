@@ -95,7 +95,7 @@ export async function POST(
   const supabase = await createClient();
   const { data: job, error: jobError } = await supabase
     .from("jobs")
-    .select("id, printer_id")
+    .select("id, printer_id, status")
     .eq("id", id)
     .single();
 
@@ -107,6 +107,18 @@ export async function POST(
       false,
       jobError?.message,
     );
+  }
+
+  if (action === "cancel" && job.status === "queued") {
+    await supabase
+      .from("jobs")
+      .update({
+        status: "aborted",
+        pipeline_step: "upload",
+        completed_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+    return NextResponse.json({ ok: true });
   }
 
   const { data: printer, error: printerError } = await supabase
