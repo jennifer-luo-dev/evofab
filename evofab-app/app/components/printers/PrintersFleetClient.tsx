@@ -82,6 +82,9 @@ export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
   const visibleMessage = message ?? draftState.loadMessage;
   const preparedFilename = draft?.filename ?? null;
   const preparedDisplayName = draft?.displayName ?? preparedFilename;
+  const printButtonLabel = preparedDisplayName
+    ? `Print: ${preparedDisplayName}`
+    : "Start a print";
 
   function detailHref(printerId: string): string {
     const query = draftId ? `?preparedJob=${encodeURIComponent(draftId)}` : "";
@@ -291,12 +294,10 @@ export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
                 <button
                   disabled={!draft || busyPrinterId !== null}
                   onClick={() => startPreparedPrint(printer)}
-                  title={preparedDisplayName ?? "Start a print"}
+                  title={printButtonLabel}
                   className="w-full truncate rounded-md bg-[var(--color-teal)] px-2 py-1.5 text-xs font-semibold text-[var(--color-bg)] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {busyPrinterId === printer.id
-                    ? "Starting"
-                    : (preparedDisplayName ?? "Start a print")}
+                  {busyPrinterId === printer.id ? "Starting" : printButtonLabel}
                 </button>
               </div>
             </section>
