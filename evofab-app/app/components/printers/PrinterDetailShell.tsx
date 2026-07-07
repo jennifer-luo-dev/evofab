@@ -45,7 +45,8 @@ export function PrinterDetailShell({
   const status = printer.printer_status;
 
   const close = useCallback(() => {
-    router.push("/printers");
+    router.replace("/printers");
+    window.history.replaceState(null, "", "/printers");
   }, [router]);
 
   useEffect(() => {
@@ -58,8 +59,11 @@ export function PrinterDetailShell({
   }, [close, overlay]);
 
   const content = (
-    <section className="flex max-h-[calc(100vh-5rem)] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-border bg-bg shadow-2xl">
-      <header className="flex items-start justify-between gap-4 border-b border-border bg-surface px-5 py-4">
+    <section
+      onClick={(event) => event.stopPropagation()}
+      className="flex max-h-[calc(100dvh-7rem)] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-border bg-bg shadow-2xl"
+    >
+      <header className="flex items-start justify-between gap-4 border-b border-border bg-surface px-4 py-3">
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-lg font-semibold text-text">{printer.name}</h1>
@@ -77,8 +81,8 @@ export function PrinterDetailShell({
         </button>
       </header>
 
-      <div className="overflow-auto p-5">
-        <div className="grid gap-4 lg:grid-cols-[1fr_0.9fr]">
+      <div className="overflow-auto p-4">
+        <div className="grid gap-4 xl:grid-cols-[1fr_0.85fr]">
           <div className="grid gap-4">
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
               <div className="rounded-lg bg-surface p-3">
@@ -161,7 +165,10 @@ export function PrinterDetailShell({
           </div>
 
           <div className="grid content-start gap-4">
-            <PrinterCameraPanel webcamUrl={printer.webcam_url} />
+            <PrinterCameraPanel
+              webcamUrl={printer.webcam_url}
+              printerIp={printer.ip}
+            />
             <section className="rounded-lg border border-border bg-surface p-4">
               <h2 className="text-xs font-semibold uppercase tracking-widest text-muted">
                 Operator Tabs
@@ -181,11 +188,21 @@ export function PrinterDetailShell({
   );
 
   if (!overlay) {
-    return <div className="mx-auto max-w-6xl px-6 py-8">{content}</div>;
+    return (
+      <div
+        onClick={close}
+        className="fixed inset-0 z-40 flex items-start justify-center overflow-auto bg-black/70 px-6 py-10"
+      >
+        {content}
+      </div>
+    );
   }
 
   return (
-    <div className="fixed inset-0 z-40 flex items-start justify-center overflow-auto bg-black/70 px-4 py-8">
+    <div
+      onClick={close}
+      className="fixed inset-0 z-40 flex items-start justify-center overflow-auto bg-black/70 px-6 py-10"
+    >
       {content}
     </div>
   );
