@@ -3,9 +3,13 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import type { MaterialProfile, PrintSettings } from "@/app/types/job";
+import type { MaterialProfile } from "@/app/types/job";
 import type { PrinterWithStatus } from "@/app/types/printer";
 import { cn } from "@/app/lib/utils";
+import {
+  filterMaterialProfilesForPrinterType,
+  settingsFromMaterialProfile,
+} from "@/app/lib/material-profiles";
 
 const MAX_STL_BYTES = 100 * 1024 * 1024;
 const EXTRUDING_G1_RE = /^G1\b(?=[^\n]*\bE[-+]?\d*\.?\d+)/m;
@@ -56,25 +60,6 @@ function formatDuration(seconds: number): string {
   return `${mins}m ${secs.toString().padStart(2, "0")}s`;
 }
 
-function settingsFromProfile(profile: MaterialProfile): PrintSettings {
-  const lineWidth = Number(profile.line_width_mm) || 1;
-  const layerHeight = Number(profile.layer_height_mm) || 1;
-  const maxVolumetricSpeed = Number(profile.max_volumetric_speed_mm3_s) || 40;
-
-  return {
-    nozzle_temp: Number(
-      profile.temps_json.nozzle ?? profile.temps_json.melting ?? 190,
-    ),
-    bed_temp: Number(profile.temps_json.bed ?? 60),
-    speed: Math.max(
-      1,
-      Math.round(maxVolumetricSpeed / Math.max(lineWidth * layerHeight, 1)),
-    ),
-    flow_rate: Number(profile.pellet_flow_coefficient) || 1,
-    fan_speed: Number(profile.cooling_json.fan_max_pct ?? 0),
-  };
-}
-
 async function readJsonOrThrow<T>(response: Response): Promise<T> {
   const json = await response.json().catch(() => null);
 
@@ -107,15 +92,28 @@ export function CloudSlicerClient({
   const [gcode, setGcode] = useState<string | null>(null);
   const [notice, setNotice] = useState<SliceNotice | null>(null);
 
-  const selectedProfile = useMemo(
-    () =>
-      materialProfiles.find((profile) => profile.id === selectedProfileId) ??
-      null,
-    [materialProfiles, selectedProfileId],
-  );
   const selectedPrinter = useMemo(
     () => printers.find((printer) => printer.id === selectedPrinterId) ?? null,
     [printers, selectedPrinterId],
+  );
+  const filteredProfiles = useMemo(
+    () =>
+      filterMaterialProfilesForPrinterType(
+        materialProfiles,
+        selectedPrinter?.type,
+      ),
+    [materialProfiles, selectedPrinter?.type],
+  );
+  const effectiveProfileId = filteredProfiles.some(
+    (profile) => profile.id === selectedProfileId,
+  )
+    ? selectedProfileId
+    : (filteredProfiles[0]?.id ?? "");
+  const selectedProfile = useMemo(
+    () =>
+      filteredProfiles.find((profile) => profile.id === effectiveProfileId) ??
+      null,
+    [effectiveProfileId, filteredProfiles],
   );
   const canSlice =
     selectedFile !== null &&
@@ -279,7 +277,7 @@ export function CloudSlicerClient({
       form.append("material_profile_id", selectedProfile.id);
       form.append(
         "settings",
-        JSON.stringify(settingsFromProfile(selectedProfile)),
+        JSON.stringify(settingsFromMaterialProfile(selectedProfile)),
       );
       form.append("experiment_params", "{}");
 
@@ -357,11 +355,11 @@ export function CloudSlicerClient({
                 Material
               </span>
               <select
-                value={selectedProfileId}
+                value={effectiveProfileId}
                 onChange={(event) => setSelectedProfileId(event.target.value)}
                 className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-teal)]"
               >
-                {materialProfiles.map((profile) => (
+                {filteredProfiles.map((profile) => (
                   <option key={profile.id} value={profile.id}>
                     {profile.name}
                   </option>

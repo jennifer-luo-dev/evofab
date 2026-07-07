@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/app/lib/utils";
 import { usePrinter } from "@/app/contexts/PrinterContext";
+import { filterMaterialProfilesForPrinterType } from "@/app/lib/material-profiles";
 import type { MaterialProfile, PrintSettings } from "@/app/types/job";
 
 const FIELDS: {
@@ -29,9 +30,29 @@ export function PrintSettingsPanel({
   const {
     settings,
     updateSetting,
+    selectedPrinter,
     selectedMaterialProfile,
     setSelectedMaterialProfile,
   } = usePrinter();
+  const filteredProfiles = useMemo(
+    () =>
+      filterMaterialProfilesForPrinterType(
+        materialProfiles,
+        selectedPrinter?.type,
+      ),
+    [materialProfiles, selectedPrinter?.type],
+  );
+
+  useEffect(() => {
+    if (
+      selectedMaterialProfile &&
+      !filteredProfiles.some(
+        (profile) => profile.id === selectedMaterialProfile.id,
+      )
+    ) {
+      setSelectedMaterialProfile(null);
+    }
+  }, [filteredProfiles, selectedMaterialProfile, setSelectedMaterialProfile]);
 
   return (
     <section>
@@ -59,13 +80,13 @@ export function PrintSettingsPanel({
 
       {open && (
         <div className="mt-3 flex flex-col gap-4 p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] animate-fade-up">
-          {materialProfiles.length > 0 && (
+          {filteredProfiles.length > 0 && (
             <div>
               <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)] mb-2">
                 Material Profile
               </p>
               <div className="flex flex-wrap gap-2">
-                {materialProfiles.map((p) => (
+                {filteredProfiles.map((p) => (
                   <button
                     key={p.id}
                     onClick={() => setSelectedMaterialProfile(p)}
@@ -77,7 +98,7 @@ export function PrintSettingsPanel({
                     )}
                   >
                     {p.name}
-                    <span className="ml-1.5 opacity-50">{p.polymer}</span>
+                    <span className="ml-1.5 opacity-50">{p.printer_type}</span>
                   </button>
                 ))}
               </div>

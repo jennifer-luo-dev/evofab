@@ -2,10 +2,17 @@ import { StatusDot } from "@/app/components/ui/StatusDot";
 import { PrinterMacroPanel } from "@/app/components/printers/PrinterMacroPanel";
 import { PrinterMotionPanel } from "@/app/components/printers/PrinterMotionPanel";
 import { PrinterOnboardingForm } from "@/app/components/printers/PrinterOnboardingForm";
+import { PrinterPreheatPanel } from "@/app/components/printers/PrinterPreheatPanel";
 import { getActivePrintersWithStatus } from "@/app/lib/printer-status-source";
+import { createClient } from "@/app/lib/supabase-server";
+import type { MaterialProfile } from "@/app/types/job";
 
 export default async function PrintersPage() {
-  const printers = await getActivePrintersWithStatus();
+  const supabase = await createClient();
+  const [printers, { data: materialProfiles }] = await Promise.all([
+    getActivePrintersWithStatus(),
+    supabase.from("material_profiles").select("*").order("name"),
+  ]);
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8 animate-fade-up">
@@ -102,6 +109,12 @@ export default async function PrintersPage() {
                   </p>
                 </div>
               )}
+              <PrinterPreheatPanel
+                printer={printer}
+                materialProfiles={
+                  (materialProfiles as MaterialProfile[] | null) ?? []
+                }
+              />
               <PrinterMotionPanel printer={printer} />
               <PrinterMacroPanel printer={printer} />
             </section>

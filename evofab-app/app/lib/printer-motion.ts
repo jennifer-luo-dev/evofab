@@ -132,6 +132,30 @@ function clampMagnitude(value: number, max: number): number {
   return Math.max(-max, Math.min(max, value));
 }
 
+export function resolveClampedZOffsetDelta(
+  printer: MotionPrinter,
+  requestedDelta: number,
+): number {
+  const deltaMm = clampMagnitude(requestedDelta, MAX_OFFSET_STEP_MM);
+  if (getMoonrakerMode() === "mock") {
+    const current = getMockMoonrakerState(motionMockKey(printer)).zOffset;
+    const next = current + deltaMm;
+    if (Math.abs(next) > MAX_CUMULATIVE_OFFSET_MM + FLOAT_EPSILON) {
+      throw new MotionError({
+        code: "MOTION_OFFSET_LIMIT",
+        message: "Z offset limit reached.",
+        status: 409,
+        details: {
+          current_offset_mm: current,
+          requested_delta_mm: requestedDelta,
+          max_cumulative_mm: MAX_CUMULATIVE_OFFSET_MM,
+        },
+      });
+    }
+  }
+  return deltaMm;
+}
+
 export async function runPrinterMotion(
   printer: MotionPrinter,
   status: MotionStatus,
@@ -177,23 +201,7 @@ export async function runPrinterMotion(
 
   if (request.action === "babystep" || request.action === "z_offset") {
     const requestedDelta = finiteNumber(request.deltaMm);
-    const deltaMm = clampMagnitude(requestedDelta, MAX_OFFSET_STEP_MM);
-    if (getMoonrakerMode() === "mock") {
-      const current = getMockMoonrakerState(motionMockKey(printer)).zOffset;
-      const next = current + deltaMm;
-      if (Math.abs(next) > MAX_CUMULATIVE_OFFSET_MM + FLOAT_EPSILON) {
-        throw new MotionError({
-          code: "MOTION_OFFSET_LIMIT",
-          message: "Z offset limit reached.",
-          status: 409,
-          details: {
-            current_offset_mm: current,
-            requested_delta_mm: requestedDelta,
-            max_cumulative_mm: MAX_CUMULATIVE_OFFSET_MM,
-          },
-        });
-      }
-    }
+    const deltaMm = resolveClampedZOffsetDelta(printer, requestedDelta);
     await adjustZOffset(printer.ip, printer.port, deltaMm);
     return {
       action: request.action,
