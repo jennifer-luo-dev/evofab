@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import type { MaterialProfile } from "@/app/types/job";
@@ -10,6 +10,8 @@ import {
   filterMaterialProfilesForPrinterType,
   settingsFromMaterialProfile,
 } from "@/app/lib/material-profiles";
+import { buildVolumeBlock, parseBuildVolume } from "@/app/lib/printability";
+import { layerTotalFromGcode } from "@/app/lib/gcode-layer-parser";
 
 const MAX_STL_BYTES = 100 * 1024 * 1024;
 const EXTRUDING_G1_RE = /^G1\b(?=[^\n]*\bE[-+]?\d*\.?\d+)/m;
@@ -28,6 +30,8 @@ interface SlicerJobResult {
   material_used_g: number;
   engine: string;
   profile_id: string;
+  rotation?: number[] | null;
+  supports?: boolean | null;
 }
 
 interface SlicerJob {
@@ -41,6 +45,13 @@ interface SliceNotice {
   tone: "info" | "success" | "error";
   message: string;
   code?: string;
+}
+
+interface InspectResult {
+  bounding_box_mm: { x: number; y: number; z: number };
+  is_watertight: boolean;
+  overhang_ratio: number;
+  triangle_count: number;
 }
 
 interface CloudSlicerClientProps {
@@ -91,6 +102,12 @@ export function CloudSlicerClient({
   const [job, setJob] = useState<SlicerJob | null>(null);
   const [gcode, setGcode] = useState<string | null>(null);
   const [notice, setNotice] = useState<SliceNotice | null>(null);
+  const [rotation, setRotation] = useState<number[] | null>(null);
+  const [supports, setSupports] = useState(false);
+  const [inspectResult, setInspectResult] = useState<InspectResult | null>(
+    null,
+  );
+  const [inspectPending, setInspectPending] = useState(false);
 
   const selectedPrinter = useMemo(
     () => printers.find((printer) => printer.id === selectedPrinterId) ?? null,
@@ -120,11 +137,26 @@ export function CloudSlicerClient({
     selectedProfile !== null &&
     status !== "queued" &&
     status !== "slicing";
+  const layerCount = useMemo(
+    () => (gcode ? layerTotalFromGcode(gcode) : null),
+    [gcode],
+  );
+  const buildVolume = useMemo(
+    () => parseBuildVolume(selectedPrinter?.build_volume),
+    [selectedPrinter?.build_volume],
+  );
+  const buildBlock = useMemo(
+    () => buildVolumeBlock(inspectResult?.bounding_box_mm ?? null, buildVolume),
+    [buildVolume, inspectResult?.bounding_box_mm],
+  );
+  const supportsRecommended =
+    inspectResult !== null && inspectResult.overhang_ratio > 0.45 && !supports;
   const canPrint =
     status === "done" &&
     gcode !== null &&
     selectedProfile !== null &&
-    selectedPrinter !== null;
+    selectedPrinter !== null &&
+    !buildBlock;
 
   function validateFile(file: File): string | null {
     if (!file.name.toLowerCase().endsWith(".stl")) return "Upload an STL file.";
@@ -137,6 +169,8 @@ export function CloudSlicerClient({
     setJob(null);
     setGcode(null);
     setStatus("idle");
+    setRotation(null);
+    setInspectResult(null);
 
     if (!file) {
       setSelectedFile(null);
@@ -160,6 +194,44 @@ export function CloudSlicerClient({
       message: `${file.name} accepted. Ready to slice with the selected material profile.`,
     });
   }
+
+  useEffect(() => {
+    if (!selectedFile) return;
+    let cancelled = false;
+
+    async function inspect() {
+      setInspectPending(true);
+      try {
+        const form = new FormData();
+        form.append("model", selectedFile as File);
+        if (rotation) form.append("rotation", JSON.stringify(rotation));
+        const response = await fetch("/api/slicer/inspect", {
+          method: "POST",
+          body: form,
+        });
+        const body = await readJsonOrThrow<{ result: InspectResult }>(response);
+        if (!cancelled) setInspectResult(body.result);
+      } catch (error) {
+        if (!cancelled) {
+          setInspectResult(null);
+          setNotice({
+            tone: "error",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Unable to inspect this STL.",
+          });
+        }
+      } finally {
+        if (!cancelled) setInspectPending(false);
+      }
+    }
+
+    inspect();
+    return () => {
+      cancelled = true;
+    };
+  }, [rotation, selectedFile]);
 
   async function pollJob(jobId: string): Promise<SlicerJob> {
     const startedAt = Date.now();
@@ -203,6 +275,8 @@ export function CloudSlicerClient({
       const form = new FormData();
       form.append("model", selectedFile);
       form.append("profile_id", selectedProfile.id);
+      if (rotation) form.append("rotation", JSON.stringify(rotation));
+      form.append("supports", String(supports));
 
       const submitResponse = await fetch("/api/slicer/slice", {
         method: "POST",
@@ -278,6 +352,14 @@ export function CloudSlicerClient({
       form.append(
         "settings",
         JSON.stringify(settingsFromMaterialProfile(selectedProfile)),
+      );
+      form.append(
+        "prepare_settings",
+        JSON.stringify({
+          supports,
+          rotation,
+          orientation: rotation ? "custom" : "uploaded",
+        }),
       );
       form.append("experiment_params", "{}");
 
@@ -385,6 +467,56 @@ export function CloudSlicerClient({
             </label>
           </div>
 
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
+            <label className="flex items-center gap-3 text-sm font-medium text-[var(--color-text)]">
+              <input
+                type="checkbox"
+                checked={supports}
+                onChange={(event) => setSupports(event.target.checked)}
+                className="h-4 w-4 accent-[var(--color-teal)]"
+              />
+              Add supports
+            </label>
+            {supportsRecommended && (
+              <button
+                type="button"
+                onClick={() => setSupports(true)}
+                className="rounded-md border border-[var(--color-amber)]/40 px-3 py-1.5 text-xs font-semibold text-[var(--color-amber)]"
+              >
+                This part has overhangs — supports recommended
+              </button>
+            )}
+          </div>
+
+          {(inspectPending || inspectResult || buildBlock) && (
+            <div className="mt-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 text-sm text-[var(--color-text)]">
+              <div className="flex flex-wrap gap-3 font-mono text-xs text-[var(--color-muted)]">
+                <span>{inspectPending ? "Inspecting STL" : "Inspect ready"}</span>
+                {inspectResult && (
+                  <>
+                    <span>
+                      {inspectResult.bounding_box_mm.x.toFixed(1)} x{" "}
+                      {inspectResult.bounding_box_mm.y.toFixed(1)} x{" "}
+                      {inspectResult.bounding_box_mm.z.toFixed(1)} mm
+                    </span>
+                    <span>{inspectResult.triangle_count} triangles</span>
+                  </>
+                )}
+              </div>
+              {buildBlock && (
+                <p className="mt-2 text-[var(--color-red)]">
+                  Part exceeds printer build volume on {buildBlock.axis.toUpperCase()} by{" "}
+                  {buildBlock.overageMm.toFixed(1)} mm.
+                </p>
+              )}
+              {inspectResult && !inspectResult.is_watertight && (
+                <p className="mt-2 text-[var(--color-amber)]">
+                  Mesh is not watertight; slicing can continue, but inspect the first layer carefully.
+                </p>
+              )}
+            </div>
+          )}
+
           {notice && (
             <p
               className={cn(
@@ -464,10 +596,33 @@ export function CloudSlicerClient({
                 {gcode ? formatBytes(new Blob([gcode]).size) : "—"}
               </p>
             </div>
+            <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
+              <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                Layers
+              </p>
+              <p className="mt-2 font-mono text-lg text-[var(--color-text)]">
+                {layerCount ?? "—"}
+              </p>
+            </div>
+            <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
+              <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                Prepare
+              </p>
+              <p className="mt-2 font-mono text-xs text-[var(--color-text)]">
+                {rotation ? "custom side down" : "uploaded orientation"} ·{" "}
+                {supports ? "supports on" : "supports off"}
+              </p>
+            </div>
           </div>
         </section>
       </div>
-      <SliceViewer file={selectedFile} gcode={gcode} status={status} />
+      <SliceViewer
+        file={selectedFile}
+        gcode={gcode}
+        status={status}
+        rotation={rotation}
+        onOrientationChange={setRotation}
+      />
     </div>
   );
 }

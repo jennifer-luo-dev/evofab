@@ -77,6 +77,8 @@ test("mock slicer completes STL submit, poll, and G-code fetch", async () => {
       type: "model/stl",
     }),
     profileId: "pla-fgf",
+    rotation: [0, 0, 0, 1],
+    supports: true,
   });
   const job = await client.pollJob(submit.job_id);
   const gcode = await client.fetchGcode(job.job_id);
@@ -84,6 +86,8 @@ test("mock slicer completes STL submit, poll, and G-code fetch", async () => {
   assert.equal(submit.status, "queued");
   assert.equal(job.status, "done");
   assert.ok(job.result);
+  assert.deepEqual(job.result.rotation, [0, 0, 0, 1]);
+  assert.equal(job.result.supports, true);
   assert.match(gcode, /START_PRINT/);
   assert.match(gcode, /SET_PRINT_STATS_INFO TOTAL_LAYER=/);
   assert.match(gcode, /^G1\b(?=[^\n]*\bE[-+]?\d*\.?\d+)/m);
@@ -118,6 +122,8 @@ test("submitSlice sends bearer auth and multipart model/profile fields", async (
       type: "model/stl",
     }),
     profileId: "pla-fgf",
+    rotation: [0, 0, 0, 1],
+    supports: true,
   });
 
   assert.deepEqual(response, { job_id: "job-1", status: "queued" });
@@ -125,6 +131,44 @@ test("submitSlice sends bearer auth and multipart model/profile fields", async (
   assert.equal(seenRequest.init.headers.Authorization, "Bearer secret");
   assert.equal(seenRequest.init.body.get("profile_id"), "pla-fgf");
   assert.equal(seenRequest.init.body.get("model").name, "cube.stl");
+  assert.equal(seenRequest.init.body.get("rotation"), "[0,0,0,1]");
+  assert.equal(seenRequest.init.body.get("supports"), "true");
+});
+
+test("inspectModel posts STL and optional rotation in real mode", async () => {
+  let seenRequest;
+  const fetchImpl = async (url, init) => {
+    seenRequest = { url, init };
+    return new Response(
+      JSON.stringify({
+        bounding_box_mm: { x: 10, y: 20, z: 30 },
+        is_watertight: true,
+        overhang_ratio: 0.2,
+        triangle_count: 12,
+      }),
+      { status: 200 },
+    );
+  };
+  const client = new SlicerClient({
+    env: {
+      SLICER_MODE: "real",
+      SLICER_URL: "http://slicer.test/",
+      SLICER_TOKEN: "secret",
+    },
+    fetchImpl,
+  });
+
+  const result = await client.inspectModel({
+    model: new File(["solid cube\nendsolid cube\n"], "cube.stl", {
+      type: "model/stl",
+    }),
+    rotation: [0, 0, 0, 1],
+  });
+
+  assert.equal(seenRequest.url, "http://slicer.test/inspect");
+  assert.equal(seenRequest.init.headers.Authorization, "Bearer secret");
+  assert.equal(seenRequest.init.body.get("rotation"), "[0,0,0,1]");
+  assert.deepEqual(result.bounding_box_mm, { x: 10, y: 20, z: 30 });
 });
 
 test("pollJob follows queued to slicing to done", async () => {

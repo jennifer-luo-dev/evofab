@@ -100,6 +100,16 @@ service to another host should require only a `SLICER_URL` change. Mock mode
 returns fixture G-code with `START_PRINT` and extruding `G1` moves so the UI
 and print handoff match real slicer output markers.
 
+Prepare-stage mock mode also echoes the additive `rotation` quaternion and
+`supports` boolean returned by `POST /slice`. The Cloud Slicer form exposes one
+`Add supports` switch; the `/inspect` proxy drives the overhang nudge and can
+enable that switch without adding support-type controls.
+
+Upload, printer changes, and orientation changes call `/api/slicer/inspect`.
+The client blocks Print when the inspected bounding box exceeds the selected
+printer `build_volume`, warns on non-watertight meshes, and shows the
+pre-print summary with time, material, layer count, orientation, and supports.
+
 ## Verification
 
 ```bash
