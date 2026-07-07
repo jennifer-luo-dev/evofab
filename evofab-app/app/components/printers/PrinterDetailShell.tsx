@@ -9,6 +9,7 @@ import { PrinterLevelingPanel } from "@/app/components/printers/PrinterLevelingP
 import { PrinterMacroPanel } from "@/app/components/printers/PrinterMacroPanel";
 import { PrinterMotionPanel } from "@/app/components/printers/PrinterMotionPanel";
 import { PrinterPreheatPanel } from "@/app/components/printers/PrinterPreheatPanel";
+import { PrinterQueuePanel } from "@/app/components/printers/PrinterQueuePanel";
 import { StatusDot } from "@/app/components/ui/StatusDot";
 import type { Job, MaterialProfile } from "@/app/types/job";
 import type { PrinterWithStatus } from "@/app/types/printer";
@@ -142,6 +143,9 @@ export function PrinterDetailShell({
               </div>
               <div className="md:col-span-2">
                 <PrinterHistoryPanel jobs={historyJobs} />
+              </div>
+              <div className="md:col-span-2">
+                <PrinterQueuePanel jobs={historyJobs} />
               </div>
               <PrinterPreheatPanel
                 printer={printer}

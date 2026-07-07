@@ -44,6 +44,9 @@ function createMockSupabase() {
               return {
                 eq() {
                   return {
+                    async single() {
+                      return { data: activePrinters[0], error: null };
+                    },
                     async order() {
                       return { data: activePrinters, error: null };
                     },
@@ -59,6 +62,37 @@ function createMockSupabase() {
             async upsert(rows: PrinterStatus[]) {
               upserts.push(rows);
               return { data: rows, error: null };
+            },
+          };
+        }
+
+        if (table === "jobs") {
+          return {
+            select() {
+              return {
+                eq() {
+                  return {
+                    eq() {
+                      return {
+                        order() {
+                          return {
+                            async limit() {
+                              return { data: [], error: null };
+                            },
+                          };
+                        },
+                      };
+                    },
+                    in() {
+                      return {
+                        async limit() {
+                          return { data: [], error: null };
+                        },
+                      };
+                    },
+                  };
+                },
+              };
             },
           };
         }
