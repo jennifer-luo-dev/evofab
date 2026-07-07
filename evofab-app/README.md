@@ -105,6 +105,11 @@ Prepare-stage mock mode also echoes the additive `rotation` quaternion and
 `Add supports` switch; the `/inspect` proxy drives the overhang nudge and can
 enable that switch without adding support-type controls.
 
+Upload, printer changes, and orientation changes call `/api/slicer/inspect`.
+The client blocks Print when the inspected bounding box exceeds the selected
+printer `build_volume`, warns on non-watertight meshes, and shows the
+pre-print summary with time, material, layer count, orientation, and supports.
+
 ## Verification
 
 ```bash
