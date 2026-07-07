@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { PrinterCameraPanel } from "@/app/components/printers/PrinterCameraPanel";
 import { PrinterConsolePanel } from "@/app/components/printers/PrinterConsolePanel";
 import { PrinterExtruderPanel } from "@/app/components/printers/PrinterExtruderPanel";
@@ -41,13 +40,11 @@ export function PrinterDetailShell({
   materialProfiles,
   overlay = false,
 }: PrinterDetailShellProps) {
-  const router = useRouter();
   const status = printer.printer_status;
 
   const close = useCallback(() => {
-    router.replace("/printers");
-    window.history.replaceState(null, "", "/printers");
-  }, [router]);
+    window.location.assign("/printers");
+  }, []);
 
   useEffect(() => {
     if (!overlay) return;
@@ -190,7 +187,9 @@ export function PrinterDetailShell({
   if (!overlay) {
     return (
       <div
-        onClick={close}
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) close();
+        }}
         className="fixed inset-0 z-40 flex items-start justify-center overflow-auto bg-black/70 px-6 py-10"
       >
         {content}
@@ -200,7 +199,9 @@ export function PrinterDetailShell({
 
   return (
     <div
-      onClick={close}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) close();
+      }}
       className="fixed inset-0 z-40 flex items-start justify-center overflow-auto bg-black/70 px-6 py-10"
     >
       {content}

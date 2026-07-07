@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 interface PrinterCameraPanelProps {
   webcamUrl?: string | null;
@@ -27,12 +27,6 @@ export function PrinterCameraPanel({
   const [state, setState] = useState<"loading" | "ready" | "error">(
     streamUrl ? "loading" : "error",
   );
-
-  useEffect(() => {
-    if (!streamUrl) return;
-    const timeout = window.setTimeout(() => setState("error"), 8_000);
-    return () => window.clearTimeout(timeout);
-  }, [streamUrl]);
 
   if (!streamUrl) {
     return (
@@ -86,7 +80,7 @@ export function PrinterCameraPanel({
         <img
           src={streamUrl}
           alt="Printer camera stream"
-          className="h-full w-full object-cover"
+          className="h-full w-full scale-y-[-1] object-cover"
           onLoad={() => setState("ready")}
           onError={() => setState("error")}
         />
