@@ -16,6 +16,7 @@ import {
 } from "@/app/lib/material-profiles";
 import { buildVolumeBlock, parseBuildVolume } from "@/app/lib/printability";
 import { layerTotalFromGcode } from "@/app/lib/gcode-layer-parser";
+import type { SlicerFace } from "@/app/lib/slicer-client";
 
 const MAX_STL_BYTES = 100 * 1024 * 1024;
 const EXTRUDING_G1_RE = /^G1\b(?=[^\n]*\bE[-+]?\d*\.?\d+)/m;
@@ -70,6 +71,7 @@ interface InspectResult {
   is_watertight: boolean;
   overhang_ratio: number;
   triangle_count: number;
+  faces?: SlicerFace[];
 }
 
 interface CloudSlicerClientProps {
@@ -117,6 +119,7 @@ export function CloudSlicerClient({
   const [rotation, setRotation] = useState<number[] | null>(null);
   const [orientationState, setOrientationState] =
     useState<OrientationState>(null);
+  const [autoOrientEnabled, setAutoOrientEnabled] = useState(false);
   const [supports, setSupports] = useState(false);
   const [inspectResult, setInspectResult] = useState<InspectResult | null>(
     null,
@@ -192,6 +195,7 @@ export function CloudSlicerClient({
     setStatus("idle");
     setRotation(null);
     setOrientationState(null);
+    setAutoOrientEnabled(false);
     setInspectResult(null);
 
     if (!file) {
@@ -212,6 +216,7 @@ export function CloudSlicerClient({
 
     setSelectedFile(file);
     setOrientationState("uploaded");
+    setAutoOrientEnabled(true);
     setActiveStep("material");
     setNotice({
       tone: "info",
@@ -219,9 +224,20 @@ export function CloudSlicerClient({
     });
   }
 
-  function handleOrientationChange(nextRotation: number[] | null) {
+  function handleOrientationChange(
+    nextRotation: number[] | null,
+    nextState: Exclude<OrientationState, null> = nextRotation
+      ? "user-picked"
+      : "uploaded",
+  ) {
     setRotation(nextRotation);
-    setOrientationState(nextRotation ? "user-picked" : "uploaded");
+    setOrientationState(nextState);
+    if (nextState !== "auto") setAutoOrientEnabled(false);
+  }
+
+  function handleFacePick(face: SlicerFace) {
+    handleOrientationChange(face.quaternion_xyzw, "user-picked");
+    setActiveStep("supports");
   }
 
   useEffect(() => {
@@ -234,12 +250,20 @@ export function CloudSlicerClient({
         const form = new FormData();
         form.append("model", selectedFile as File);
         if (rotation) form.append("rotation", JSON.stringify(rotation));
+        form.append("include_faces", "true");
         const response = await fetch("/api/slicer/inspect", {
           method: "POST",
           body: form,
         });
         const body = await readJsonOrThrow<{ result: InspectResult }>(response);
-        if (!cancelled) setInspectResult(body.result);
+        if (!cancelled) {
+          setInspectResult(body.result);
+          const autoFace = body.result.faces?.[0];
+          if (autoFace && autoOrientEnabled && !rotation) {
+            setRotation(autoFace.quaternion_xyzw);
+            setOrientationState("auto");
+          }
+        }
       } catch (error) {
         if (!cancelled) {
           setInspectResult(null);
@@ -260,7 +284,7 @@ export function CloudSlicerClient({
     return () => {
       cancelled = true;
     };
-  }, [rotation, selectedFile]);
+  }, [autoOrientEnabled, rotation, selectedFile]);
 
   async function pollJob(jobId: string): Promise<SlicerJob> {
     const startedAt = Date.now();
@@ -485,6 +509,8 @@ export function CloudSlicerClient({
                     rotation={rotation}
                     buildVolume={buildVolume}
                     bounds={inspectResult?.bounding_box_mm ?? null}
+                    faces={inspectResult?.faces ?? []}
+                    onFacePick={handleFacePick}
                   />
                 </div>
               ) : (
@@ -548,14 +574,16 @@ export function CloudSlicerClient({
                 <div>
                   <p className="text-sm font-semibold text-[var(--color-text)]">
                     {orientationState
-                      ? rotation
-                        ? "User-picked orientation"
-                        : "Uploaded orientation"
+                      ? orientationState === "auto"
+                        ? "Auto-oriented — largest flat face down"
+                        : orientationState === "user-picked"
+                          ? "User-picked orientation"
+                          : "Uploaded orientation"
                       : "Orientation required"}
                   </p>
                   <p className="mt-1 text-xs text-[var(--color-muted)]">
                     {selectedFile
-                      ? "Use the preview controls to choose a side down, or keep the uploaded pose."
+                      ? "Pick a highlighted planar face in the scene, or keep the uploaded pose."
                       : "Upload an STL before choosing orientation."}
                   </p>
                 </div>
@@ -568,6 +596,23 @@ export function CloudSlicerClient({
                   Use uploaded pose
                 </button>
               </div>
+              {inspectResult?.faces && inspectResult.faces.length > 0 && (
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {inspectResult.faces.slice(0, 6).map((face) => (
+                    <button
+                      key={face.id}
+                      type="button"
+                      onClick={() => handleFacePick(face)}
+                      className="rounded-md border border-[var(--color-border-2)] px-3 py-2 text-left text-xs text-[var(--color-text)] transition-colors hover:border-[var(--color-teal)]"
+                    >
+                      <span className="font-semibold">Face {face.rank}</span>
+                      <span className="ml-2 font-mono text-[var(--color-muted)]">
+                        {face.area_mm2.toFixed(1)} mm²
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
               <button
                 type="button"
                 disabled={!orientationState}
@@ -766,7 +811,6 @@ export function CloudSlicerClient({
         gcode={gcode}
         status={status}
         rotation={rotation}
-        onOrientationChange={handleOrientationChange}
       />
     </div>
   );

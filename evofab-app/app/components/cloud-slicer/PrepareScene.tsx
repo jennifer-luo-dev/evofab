@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import type { BoundingBoxMm } from "@/app/lib/slicer-client";
+import type { SlicerFace } from "@/app/lib/slicer-client";
 import type { BuildVolumeMm } from "@/app/lib/printability";
 
 interface PrepareSceneProps {
@@ -9,6 +10,8 @@ interface PrepareSceneProps {
   rotation: number[] | null;
   buildVolume: BuildVolumeMm | null;
   bounds: BoundingBoxMm | null;
+  faces: SlicerFace[];
+  onFacePick: (face: SlicerFace) => void;
 }
 
 export function PrepareScene({
@@ -16,6 +19,8 @@ export function PrepareScene({
   rotation,
   buildVolume,
   bounds,
+  faces,
+  onFacePick,
 }: PrepareSceneProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -95,8 +100,9 @@ export function PrepareScene({
         roughness: 0.68,
       });
       const mesh = new THREE.Mesh(geometry, material);
+      mesh.rotation.x = -Math.PI / 2;
       if (rotation) {
-        mesh.quaternion.copy(
+        mesh.quaternion.multiply(
           new THREE.Quaternion(
             rotation[0],
             rotation[1],
@@ -113,6 +119,48 @@ export function PrepareScene({
       mesh.position.y -= modelBox.min.y;
       scene.add(mesh);
       disposables.push(geometry, material);
+
+      const faceMeshes: Array<{
+        face: SlicerFace;
+        mesh: import("three").Mesh;
+        material: import("three").MeshBasicMaterial;
+      }> = [];
+      const positions = geometry.getAttribute("position");
+      for (const face of faces) {
+        const facePositions: number[] = [];
+        for (const triangleIndex of face.triangle_indices) {
+          for (let vertexOffset = 0; vertexOffset < 3; vertexOffset += 1) {
+            const sourceIndex = triangleIndex * 3 + vertexOffset;
+            if (sourceIndex >= positions.count) continue;
+            facePositions.push(
+              positions.getX(sourceIndex),
+              positions.getY(sourceIndex),
+              positions.getZ(sourceIndex),
+            );
+          }
+        }
+        if (facePositions.length < 9) continue;
+        const faceGeometry = new THREE.BufferGeometry();
+        faceGeometry.setAttribute(
+          "position",
+          new THREE.Float32BufferAttribute(facePositions, 3),
+        );
+        faceGeometry.computeVertexNormals();
+        const faceMaterial = new THREE.MeshBasicMaterial({
+          color: face.rank === 1 ? 0x22c55e : 0x38bdf8,
+          transparent: true,
+          opacity: face.rank === 1 ? 0.32 : 0.18,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        });
+        const faceMesh = new THREE.Mesh(faceGeometry, faceMaterial);
+        faceMesh.quaternion.copy(mesh.quaternion);
+        faceMesh.position.copy(mesh.position);
+        faceMesh.renderOrder = 2;
+        scene.add(faceMesh);
+        faceMeshes.push({ face, mesh: faceMesh, material: faceMaterial });
+        disposables.push(faceGeometry, faceMaterial);
+      }
 
       scene.add(new THREE.AmbientLight(0xffffff, 0.72));
       const keyLight = new THREE.DirectionalLight(0xffffff, 0.9);
@@ -142,9 +190,54 @@ export function PrepareScene({
         frameId = window.requestAnimationFrame(animate);
       }
 
+      const pointer = new THREE.Vector2();
+      const raycaster = new THREE.Raycaster();
+      let hovered: (typeof faceMeshes)[number] | null = null;
+
+      function pickFace(event: PointerEvent, commit: boolean) {
+        if (faceMeshes.length === 0) return;
+        const rect = renderer.domElement.getBoundingClientRect();
+        pointer.set(
+          ((event.clientX - rect.left) / rect.width) * 2 - 1,
+          -((event.clientY - rect.top) / rect.height) * 2 + 1,
+        );
+        raycaster.setFromCamera(pointer, camera);
+        const hit = raycaster.intersectObjects(
+          faceMeshes.map((item) => item.mesh),
+          false,
+        )[0];
+        const nextHovered =
+          faceMeshes.find((item) => item.mesh === hit?.object) ?? null;
+        if (hovered !== nextHovered) {
+          if (hovered)
+            hovered.material.opacity = hovered.face.rank === 1 ? 0.32 : 0.18;
+          hovered = nextHovered;
+          if (hovered) hovered.material.opacity = 0.55;
+        }
+        if (commit && nextHovered) onFacePick(nextHovered.face);
+      }
+
+      function handlePointerMove(event: PointerEvent) {
+        pickFace(event, false);
+      }
+
+      function handlePointerDown(event: PointerEvent) {
+        pickFace(event, true);
+      }
+
       animate();
+      renderer.domElement.addEventListener("pointermove", handlePointerMove);
+      renderer.domElement.addEventListener("pointerdown", handlePointerDown);
       cleanup = () => {
         window.cancelAnimationFrame(frameId);
+        renderer.domElement.removeEventListener(
+          "pointermove",
+          handlePointerMove,
+        );
+        renderer.domElement.removeEventListener(
+          "pointerdown",
+          handlePointerDown,
+        );
         controls.dispose();
         for (const disposable of disposables) disposable.dispose();
         renderer.dispose();
@@ -156,7 +249,7 @@ export function PrepareScene({
       cancelled = true;
       cleanup();
     };
-  }, [bounds, buildVolume, file, rotation]);
+  }, [bounds, buildVolume, faces, file, onFacePick, rotation]);
 
   return (
     <canvas

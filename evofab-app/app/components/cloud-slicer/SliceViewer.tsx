@@ -14,7 +14,6 @@ interface SliceViewerProps {
   gcode: string | null;
   status: string;
   rotation: number[] | null;
-  onOrientationChange: (rotation: number[] | null) => void;
 }
 
 const LINE_TYPES: Array<{
@@ -117,12 +116,10 @@ export function SliceViewer({
   gcode,
   status,
   rotation,
-  onOrientationChange,
 }: SliceViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [layerIndex, setLayerIndex] = useState(0);
   const [showInfo, setShowInfo] = useState(true);
-  const [orientationMode, setOrientationMode] = useState(false);
   const layers = useMemo(() => (gcode ? parseGcodeLayers(gcode) : []), [gcode]);
   const reportedTotal = useMemo(
     () => (gcode ? layerTotalFromGcode(gcode) : null),
@@ -155,7 +152,8 @@ export function SliceViewer({
       const THREE = await import("three");
       const { OrbitControls } =
         await import("three/examples/jsm/controls/OrbitControls.js");
-      const { STLLoader } = await import("three/examples/jsm/loaders/STLLoader.js");
+      const { STLLoader } =
+        await import("three/examples/jsm/loaders/STLLoader.js");
       if (cancelled) return;
 
       const renderer = new THREE.WebGLRenderer({
@@ -195,7 +193,6 @@ export function SliceViewer({
       scene.add(grid);
       disposables.push(grid.geometry, grid.material);
 
-      let modelMesh: import("three").Mesh | null = null;
       if (file) {
         const stlBuffer = await file.arrayBuffer();
         if (cancelled) return;
@@ -215,11 +212,16 @@ export function SliceViewer({
           transparent: true,
           opacity: hasRenderableSlice ? 0.24 : 0.82,
         });
-        modelMesh = new THREE.Mesh(geometry, material);
+        const modelMesh = new THREE.Mesh(geometry, material);
         modelMesh.rotation.x = -Math.PI / 2;
         if (rotation) {
           modelMesh.quaternion.multiply(
-            new THREE.Quaternion(rotation[0], rotation[1], rotation[2], rotation[3]),
+            new THREE.Quaternion(
+              rotation[0],
+              rotation[1],
+              rotation[2],
+              rotation[3],
+            ),
           );
         }
         scene.add(modelMesh);
@@ -288,7 +290,10 @@ export function SliceViewer({
           opacity: 0.045,
           side: THREE.DoubleSide,
         });
-        const layerPlane = new THREE.Mesh(layerPlaneGeometry, layerPlaneMaterial);
+        const layerPlane = new THREE.Mesh(
+          layerPlaneGeometry,
+          layerPlaneMaterial,
+        );
         layerPlane.rotation.x = -Math.PI / 2;
         layerPlane.position.y = activeLayer.z;
         scene.add(layerPlane);
@@ -323,30 +328,8 @@ export function SliceViewer({
         frameId = window.requestAnimationFrame(animate);
       }
 
-      function chooseFace(event: PointerEvent) {
-        if (!orientationMode || !modelMesh) return;
-        const rect = renderer.domElement.getBoundingClientRect();
-        const pointer = new THREE.Vector2(
-          ((event.clientX - rect.left) / rect.width) * 2 - 1,
-          -((event.clientY - rect.top) / rect.height) * 2 + 1,
-        );
-        const raycaster = new THREE.Raycaster();
-        raycaster.setFromCamera(pointer, camera);
-        const hit = raycaster.intersectObject(modelMesh, false)[0];
-        if (!hit?.face) return;
-        const normal = hit.face.normal.clone().normalize();
-        const quaternion = new THREE.Quaternion().setFromUnitVectors(
-          normal,
-          new THREE.Vector3(0, 0, -1),
-        );
-        onOrientationChange([quaternion.x, quaternion.y, quaternion.z, quaternion.w]);
-        setOrientationMode(false);
-      }
-
       animate();
-      renderer.domElement.addEventListener("pointerdown", chooseFace);
       cleanup = () => {
-        renderer.domElement.removeEventListener("pointerdown", chooseFace);
         window.cancelAnimationFrame(frameId);
         controls.dispose();
         for (const disposable of disposables) disposable.dispose();
@@ -366,8 +349,6 @@ export function SliceViewer({
     hasRenderableScene,
     hasRenderableSlice,
     layers,
-    onOrientationChange,
-    orientationMode,
     rotation,
     visibleLayers,
   ]);
@@ -391,28 +372,6 @@ export function SliceViewer({
           {reportedTotal ? `${reportedTotal} reported` : "no layers"}
         </span>
       </div>
-      {file && (
-        <div className="mt-4 flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => setOrientationMode((current) => !current)}
-            className="rounded-lg border border-[var(--color-border-2)] px-3 py-2 text-xs font-semibold text-[var(--color-text)] transition-colors hover:border-[var(--color-teal)]"
-          >
-            This side down
-          </button>
-          <button
-            type="button"
-            onClick={() => onOrientationChange(null)}
-            className="rounded-lg border border-[var(--color-border-2)] px-3 py-2 text-xs font-semibold text-[var(--color-text)] transition-colors hover:border-[var(--color-teal)]"
-          >
-            Reset
-          </button>
-          <span className="self-center font-mono text-xs text-[var(--color-muted)]">
-            {rotation ? "custom orientation" : "uploaded orientation"}
-          </span>
-        </div>
-      )}
-
       <div className="mt-4">
         <div className="relative min-h-[620px] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[#111927]">
           {hasRenderableScene ? (
@@ -431,24 +390,24 @@ export function SliceViewer({
 
               {hasRenderableSlice && (
                 <div className="absolute bottom-5 right-5 top-5 flex w-14 flex-col items-center justify-between rounded-lg border border-white/15 bg-black/55 px-2 py-3 backdrop-blur">
-                <span className="text-[10px] uppercase tracking-wider text-white/70">
-                  {layers.length}
-                </span>
-                <input
-                  aria-label="Layer"
-                  type="range"
-                  min={0}
-                  max={Math.max(0, layers.length - 1)}
-                  value={safeLayerIndex}
-                  disabled={layers.length === 0}
-                  onChange={(event) =>
-                    setLayerIndex(Number(event.target.value))
-                  }
-                  className="h-80 w-8 accent-[var(--color-teal)] [direction:rtl] [writing-mode:vertical-lr]"
-                />
-                <span className="rounded bg-white/90 px-1.5 py-0.5 font-mono text-xs text-black">
-                  {safeLayerIndex + 1}
-                </span>
+                  <span className="text-[10px] uppercase tracking-wider text-white/70">
+                    {layers.length}
+                  </span>
+                  <input
+                    aria-label="Layer"
+                    type="range"
+                    min={0}
+                    max={Math.max(0, layers.length - 1)}
+                    value={safeLayerIndex}
+                    disabled={layers.length === 0}
+                    onChange={(event) =>
+                      setLayerIndex(Number(event.target.value))
+                    }
+                    className="h-80 w-8 accent-[var(--color-teal)] [direction:rtl] [writing-mode:vertical-lr]"
+                  />
+                  <span className="rounded bg-white/90 px-1.5 py-0.5 font-mono text-xs text-black">
+                    {safeLayerIndex + 1}
+                  </span>
                 </div>
               )}
 
