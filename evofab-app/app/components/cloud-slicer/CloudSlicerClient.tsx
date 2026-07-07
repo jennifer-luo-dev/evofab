@@ -31,13 +31,12 @@ const PrepareScene = dynamic(
 
 type SliceStatus =
   "idle" | "queued" | "slicing" | "done" | "failed" | "printing";
-type PrepareStep = "upload" | "material" | "orientation" | "supports" | "slice";
+type PrepareStep = "upload" | "material" | "supports" | "slice";
 type OrientationState = "uploaded" | "user-picked" | "auto" | null;
 
 const PREPARE_STEPS: Array<{ id: PrepareStep; label: string }> = [
   { id: "upload", label: "Upload" },
   { id: "material", label: "Material" },
-  { id: "orientation", label: "Orientation" },
   { id: "supports", label: "Supports" },
   { id: "slice", label: "Slice" },
 ];
@@ -123,7 +122,6 @@ export function CloudSlicerClient({
   const [rotation, setRotation] = useState<number[] | null>(null);
   const [orientationState, setOrientationState] =
     useState<OrientationState>(null);
-  const [autoOrientEnabled, setAutoOrientEnabled] = useState(false);
   const [supports, setSupports] = useState(false);
   const [inspectResult, setInspectResult] = useState<InspectResult | null>(
     null,
@@ -203,7 +201,6 @@ export function CloudSlicerClient({
     setStatus("idle");
     setRotation(null);
     setOrientationState(null);
-    setAutoOrientEnabled(false);
     setInspectResult(null);
     setHighestStepIndex(0);
 
@@ -225,10 +222,9 @@ export function CloudSlicerClient({
 
     setSelectedFile(file);
     setOrientationState("uploaded");
-    setAutoOrientEnabled(true);
     setNotice({
       tone: "info",
-      message: `${file.name} accepted. Inspect the placement, then continue to material.`,
+      message: `${file.name} accepted. Choose auto-orient or keep the uploaded pose, then continue.`,
     });
   }
 
@@ -251,11 +247,16 @@ export function CloudSlicerClient({
   ) {
     setRotation(nextRotation);
     setOrientationState(nextState);
-    if (nextState !== "auto") setAutoOrientEnabled(false);
   }
 
   function handleFacePick(face: SlicerFace) {
     handleOrientationChange(face.quaternion_xyzw, "user-picked");
+  }
+
+  function handleAutoOrient() {
+    const face = inspectResult?.faces?.[0];
+    if (!face) return;
+    handleOrientationChange(face.quaternion_xyzw, "auto");
   }
 
   useEffect(() => {
@@ -276,11 +277,6 @@ export function CloudSlicerClient({
         const body = await readJsonOrThrow<{ result: InspectResult }>(response);
         if (!cancelled) {
           setInspectResult(body.result);
-          const autoFace = body.result.faces?.[0];
-          if (autoFace && autoOrientEnabled && !rotation) {
-            setRotation(autoFace.quaternion_xyzw);
-            setOrientationState("auto");
-          }
         }
       } catch (error) {
         if (!cancelled) {
@@ -302,7 +298,7 @@ export function CloudSlicerClient({
     return () => {
       cancelled = true;
     };
-  }, [autoOrientEnabled, rotation, selectedFile]);
+  }, [rotation, selectedFile]);
 
   async function pollJob(jobId: string): Promise<SlicerJob> {
     const startedAt = Date.now();
@@ -482,7 +478,7 @@ export function CloudSlicerClient({
             </span>
           </div>
 
-          <div className="mt-5 grid grid-cols-5 gap-2">
+          <div className="mt-5 grid grid-cols-4 gap-2">
             {PREPARE_STEPS.map((step, index) => (
               <button
                 key={step.id}
@@ -535,10 +531,45 @@ export function CloudSlicerClient({
                     rotation={rotation}
                     buildVolume={buildVolume}
                     bounds={inspectResult?.bounding_box_mm ?? null}
-                    faces={[]}
+                    faces={inspectResult?.faces ?? []}
                     onFacePick={handleFacePick}
                   />
                   <div className="border-t border-white/10 px-4 py-3">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-white/10 bg-black/25 p-3">
+                      <div>
+                        <p className="text-sm font-semibold text-white">
+                          {orientationState === "auto"
+                            ? "Auto-oriented — largest flat face down"
+                            : orientationState === "user-picked"
+                              ? "User-picked face down"
+                              : "Uploaded pose"}
+                        </p>
+                        <p className="mt-1 text-xs text-white/60">
+                          {inspectPending
+                            ? "Inspecting planar faces."
+                            : "Use auto-orient, keep the uploaded pose, or click a highlighted face on the model."}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={!inspectResult?.faces?.length}
+                          onClick={handleAutoOrient}
+                          className="rounded-md border border-[var(--color-green)]/50 px-3 py-2 text-xs font-semibold text-[var(--color-green)] transition-colors hover:bg-[var(--color-green)]/10 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Auto-orient
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleOrientationChange(null, "uploaded")
+                          }
+                          className="rounded-md border border-white/15 px-3 py-2 text-xs font-semibold text-white transition-colors hover:border-[var(--color-teal)]"
+                        >
+                          Keep uploaded
+                        </button>
+                      </div>
+                    </div>
                     <button
                       type="button"
                       onClick={goNext}
@@ -595,6 +626,59 @@ export function CloudSlicerClient({
                   ))}
                 </select>
               </label>
+              {selectedProfile && (
+                <div className="grid gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 sm:grid-cols-3">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                      Printer
+                    </p>
+                    <p className="mt-1 font-mono text-sm text-[var(--color-text)]">
+                      {selectedProfile.printer_type}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                      Nozzle / Bed
+                    </p>
+                    <p className="mt-1 font-mono text-sm text-[var(--color-text)]">
+                      {selectedProfile.nozzle_temp}°C /{" "}
+                      {selectedProfile.bed_temp}°C
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                      Speed
+                    </p>
+                    <p className="mt-1 font-mono text-sm text-[var(--color-text)]">
+                      {selectedProfile.speed} mm/s
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                      Flow
+                    </p>
+                    <p className="mt-1 font-mono text-sm text-[var(--color-text)]">
+                      {selectedProfile.flow_rate}%
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                      Fan
+                    </p>
+                    <p className="mt-1 font-mono text-sm text-[var(--color-text)]">
+                      {selectedProfile.fan_speed}%
+                    </p>
+                  </div>
+                  <div className="sm:col-span-3">
+                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                      Notes
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--color-text)]">
+                      {selectedProfile.notes || "No notes recorded."}
+                    </p>
+                  </div>
+                </div>
+              )}
               <button
                 type="button"
                 disabled={!selectedProfile}
@@ -602,54 +686,6 @@ export function CloudSlicerClient({
                 className={cn(
                   "w-fit rounded-lg border px-4 py-2 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40",
                   selectedProfile
-                    ? NEXT_READY_CLASS
-                    : "border-[var(--color-border-2)] text-[var(--color-text)]",
-                )}
-              >
-                Next
-              </button>
-            </div>
-          )}
-
-          {activeStep === "orientation" && (
-            <div className="mt-5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-[var(--color-text)]">
-                    {orientationState
-                      ? orientationState === "auto"
-                        ? "Auto-oriented — largest flat face down"
-                        : orientationState === "user-picked"
-                          ? "User-picked orientation"
-                          : "Uploaded orientation"
-                      : "Orientation required"}
-                  </p>
-                  <p className="mt-1 text-xs text-[var(--color-muted)]">
-                    {selectedFile
-                      ? "Pick a highlighted planar face in the scene, or keep the uploaded pose."
-                      : "Upload an STL before choosing orientation."}
-                  </p>
-                </div>
-              </div>
-              {selectedFile && (
-                <div className="mt-3 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[#111927]">
-                  <PrepareScene
-                    file={selectedFile}
-                    rotation={rotation}
-                    buildVolume={buildVolume}
-                    bounds={inspectResult?.bounding_box_mm ?? null}
-                    faces={inspectResult?.faces ?? []}
-                    onFacePick={handleFacePick}
-                  />
-                </div>
-              )}
-              <button
-                type="button"
-                disabled={!orientationState}
-                onClick={goNext}
-                className={cn(
-                  "mt-3 rounded-lg border px-4 py-2 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40",
-                  orientationState
                     ? NEXT_READY_CLASS
                     : "border-[var(--color-border-2)] text-[var(--color-text)]",
                 )}
