@@ -41,6 +41,8 @@ const PREPARE_STEPS: Array<{ id: PrepareStep; label: string }> = [
   { id: "supports", label: "Supports" },
   { id: "slice", label: "Slice" },
 ];
+const NEXT_READY_CLASS =
+  "border-[var(--color-green)]/70 bg-[var(--color-green)]/10 text-[var(--color-green)] shadow-[0_0_18px_rgba(34,197,94,0.28)]";
 
 interface SlicerJobResult {
   gcode_url: string;
@@ -113,6 +115,7 @@ export function CloudSlicerClient({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [activeStep, setActiveStep] = useState<PrepareStep>("upload");
+  const [highestStepIndex, setHighestStepIndex] = useState(0);
   const [status, setStatus] = useState<SliceStatus>("idle");
   const [job, setJob] = useState<SlicerJob | null>(null);
   const [gcode, setGcode] = useState<string | null>(null);
@@ -165,6 +168,9 @@ export function CloudSlicerClient({
     gcode !== null &&
     selectedProfile !== null &&
     !buildBlock;
+  const activeStepIndex = PREPARE_STEPS.findIndex(
+    (step) => step.id === activeStep,
+  );
   const sliceDisabledReason = useMemo(() => {
     if (!selectedFile) return "Upload an STL before slicing.";
     if (!selectedProfile) return "Select a material profile before slicing.";
@@ -199,6 +205,7 @@ export function CloudSlicerClient({
     setOrientationState(null);
     setAutoOrientEnabled(false);
     setInspectResult(null);
+    setHighestStepIndex(0);
 
     if (!file) {
       setSelectedFile(null);
@@ -219,11 +226,21 @@ export function CloudSlicerClient({
     setSelectedFile(file);
     setOrientationState("uploaded");
     setAutoOrientEnabled(true);
-    setActiveStep("material");
     setNotice({
       tone: "info",
-      message: `${file.name} accepted. Ready to slice with the selected material profile.`,
+      message: `${file.name} accepted. Inspect the placement, then continue to material.`,
     });
+  }
+
+  function goToStep(step: PrepareStep) {
+    const nextIndex = PREPARE_STEPS.findIndex((item) => item.id === step);
+    setActiveStep(step);
+    setHighestStepIndex((current) => Math.max(current, nextIndex));
+  }
+
+  function goNext() {
+    const nextStep = PREPARE_STEPS[activeStepIndex + 1];
+    if (nextStep) goToStep(nextStep.id);
   }
 
   function handleOrientationChange(
@@ -239,7 +256,6 @@ export function CloudSlicerClient({
 
   function handleFacePick(face: SlicerFace) {
     handleOrientationChange(face.quaternion_xyzw, "user-picked");
-    setActiveStep("supports");
   }
 
   useEffect(() => {
@@ -430,7 +446,14 @@ export function CloudSlicerClient({
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col gap-6 animate-fade-up">
-      <div className="grid lg:grid-cols-[1.2fr_0.8fr] gap-6">
+      <div
+        className={cn(
+          "grid gap-6",
+          activeStep === "slice"
+            ? "lg:grid-cols-[1.2fr_0.8fr]"
+            : "lg:grid-cols-1",
+        )}
+      >
         <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
           <div className="flex items-center justify-between gap-4">
             <div>
@@ -464,9 +487,10 @@ export function CloudSlicerClient({
               <button
                 key={step.id}
                 type="button"
+                disabled={index > highestStepIndex}
                 onClick={() => setActiveStep(step.id)}
                 className={cn(
-                  "min-h-12 rounded-md border px-2 py-2 text-xs font-semibold transition-colors",
+                  "min-h-12 rounded-md border px-2 py-2 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40",
                   activeStep === step.id
                     ? "border-[var(--color-teal)] bg-[var(--color-teal)]/10 text-[var(--color-text)]"
                     : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-muted)] hover:border-[var(--color-border-2)]",
@@ -511,9 +535,21 @@ export function CloudSlicerClient({
                     rotation={rotation}
                     buildVolume={buildVolume}
                     bounds={inspectResult?.bounding_box_mm ?? null}
-                    faces={inspectResult?.faces ?? []}
+                    faces={[]}
                     onFacePick={handleFacePick}
                   />
+                  <div className="border-t border-white/10 px-4 py-3">
+                    <button
+                      type="button"
+                      onClick={goNext}
+                      className={cn(
+                        "rounded-lg border px-4 py-2 text-sm font-semibold transition-all",
+                        NEXT_READY_CLASS,
+                      )}
+                    >
+                      Next
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <label className="relative flex min-h-44 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-lg border border-dashed border-[var(--color-border-2)] bg-[var(--color-surface-2)] px-4 text-center transition-colors hover:border-[var(--color-teal)]">
@@ -562,10 +598,15 @@ export function CloudSlicerClient({
               <button
                 type="button"
                 disabled={!selectedProfile}
-                onClick={() => setActiveStep("orientation")}
-                className="w-fit rounded-lg border border-[var(--color-border-2)] px-4 py-2 text-sm font-semibold text-[var(--color-text)] transition-colors hover:border-[var(--color-teal)] disabled:cursor-not-allowed disabled:opacity-40"
+                onClick={goNext}
+                className={cn(
+                  "w-fit rounded-lg border px-4 py-2 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40",
+                  selectedProfile
+                    ? NEXT_READY_CLASS
+                    : "border-[var(--color-border-2)] text-[var(--color-text)]",
+                )}
               >
-                Continue
+                Next
               </button>
             </div>
           )}
@@ -589,105 +630,119 @@ export function CloudSlicerClient({
                       : "Upload an STL before choosing orientation."}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  disabled={!selectedFile}
-                  onClick={() => handleOrientationChange(null)}
-                  className="rounded-md border border-[var(--color-border-2)] px-3 py-2 text-xs font-semibold text-[var(--color-text)] transition-colors hover:border-[var(--color-teal)] disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  Use uploaded pose
-                </button>
               </div>
-              {inspectResult?.faces && inspectResult.faces.length > 0 && (
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                  {inspectResult.faces.slice(0, 6).map((face) => (
-                    <button
-                      key={face.id}
-                      type="button"
-                      onClick={() => handleFacePick(face)}
-                      className="rounded-md border border-[var(--color-border-2)] px-3 py-2 text-left text-xs text-[var(--color-text)] transition-colors hover:border-[var(--color-teal)]"
-                    >
-                      <span className="font-semibold">Face {face.rank}</span>
-                      <span className="ml-2 font-mono text-[var(--color-muted)]">
-                        {face.area_mm2.toFixed(1)} mm²
-                      </span>
-                    </button>
-                  ))}
+              {selectedFile && (
+                <div className="mt-3 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[#111927]">
+                  <PrepareScene
+                    file={selectedFile}
+                    rotation={rotation}
+                    buildVolume={buildVolume}
+                    bounds={inspectResult?.bounding_box_mm ?? null}
+                    faces={inspectResult?.faces ?? []}
+                    onFacePick={handleFacePick}
+                  />
                 </div>
               )}
               <button
                 type="button"
                 disabled={!orientationState}
-                onClick={() => setActiveStep("supports")}
-                className="mt-3 rounded-lg border border-[var(--color-border-2)] px-4 py-2 text-sm font-semibold text-[var(--color-text)] transition-colors hover:border-[var(--color-teal)] disabled:cursor-not-allowed disabled:opacity-40"
+                onClick={goNext}
+                className={cn(
+                  "mt-3 rounded-lg border px-4 py-2 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40",
+                  orientationState
+                    ? NEXT_READY_CLASS
+                    : "border-[var(--color-border-2)] text-[var(--color-text)]",
+                )}
               >
-                Continue
+                Next
               </button>
             </div>
           )}
 
           {activeStep === "supports" && (
-            <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
-              <label className="flex items-center gap-3 text-sm font-medium text-[var(--color-text)]">
-                <input
-                  type="checkbox"
-                  checked={supports}
-                  onChange={(event) => setSupports(event.target.checked)}
-                  className="h-4 w-4 accent-[var(--color-teal)]"
-                />
-                Add supports
-              </label>
-              {supportsRecommended && (
-                <button
-                  type="button"
-                  onClick={() => setSupports(true)}
-                  className="rounded-md border border-[var(--color-amber)]/40 px-3 py-1.5 text-xs font-semibold text-[var(--color-amber)]"
-                >
-                  This part has overhangs — supports recommended
-                </button>
-              )}
+            <div className="mt-5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <label className="flex items-center gap-3 text-sm font-medium text-[var(--color-text)]">
+                  <input
+                    type="checkbox"
+                    checked={supports}
+                    onChange={(event) => setSupports(event.target.checked)}
+                    className="h-4 w-4 accent-[var(--color-teal)]"
+                  />
+                  Add supports
+                </label>
+                {supportsRecommended && (
+                  <button
+                    type="button"
+                    onClick={() => setSupports(true)}
+                    className="rounded-md border border-[var(--color-amber)]/40 px-3 py-1.5 text-xs font-semibold text-[var(--color-amber)]"
+                  >
+                    Supports recommended
+                  </button>
+                )}
+              </div>
+              <div className="mt-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm text-[var(--color-text)]">
+                <p className="font-semibold">
+                  {supports
+                    ? "Support generation is on"
+                    : "Support generation is off"}
+                </p>
+                <p className="mt-1 text-xs text-[var(--color-muted)]">
+                  {inspectResult
+                    ? `${(inspectResult.overhang_ratio * 100).toFixed(1)}% overhang area detected. ${
+                        supports
+                          ? "The slicer will include support toolpaths in the G-code preview."
+                          : "Turn supports on if this part needs temporary structure under overhangs."
+                      }`
+                    : "Inspect data is still loading for this model."}
+                </p>
+              </div>
               <button
                 type="button"
-                onClick={() => setActiveStep("slice")}
-                className="rounded-md border border-[var(--color-border-2)] px-3 py-2 text-xs font-semibold text-[var(--color-text)] transition-colors hover:border-[var(--color-teal)]"
+                onClick={goNext}
+                className={cn(
+                  "mt-3 rounded-md border px-3 py-2 text-xs font-semibold transition-all",
+                  NEXT_READY_CLASS,
+                )}
               >
-                Continue
+                Next
               </button>
             </div>
           )}
 
-          {(inspectPending || inspectResult || buildBlock) && (
-            <div className="mt-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 text-sm text-[var(--color-text)]">
-              <div className="flex flex-wrap gap-3 font-mono text-xs text-[var(--color-muted)]">
-                <span>
-                  {inspectPending ? "Inspecting STL" : "Inspect ready"}
-                </span>
-                {inspectResult && (
-                  <>
-                    <span>
-                      {inspectResult.bounding_box_mm.x.toFixed(1)} x{" "}
-                      {inspectResult.bounding_box_mm.y.toFixed(1)} x{" "}
-                      {inspectResult.bounding_box_mm.z.toFixed(1)} mm
-                    </span>
-                    <span>{inspectResult.triangle_count} triangles</span>
-                  </>
+          {activeStep === "slice" &&
+            (inspectPending || inspectResult || buildBlock) && (
+              <div className="mt-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 text-sm text-[var(--color-text)]">
+                <div className="flex flex-wrap gap-3 font-mono text-xs text-[var(--color-muted)]">
+                  <span>
+                    {inspectPending ? "Inspecting STL" : "Inspect ready"}
+                  </span>
+                  {inspectResult && (
+                    <>
+                      <span>
+                        {inspectResult.bounding_box_mm.x.toFixed(1)} x{" "}
+                        {inspectResult.bounding_box_mm.y.toFixed(1)} x{" "}
+                        {inspectResult.bounding_box_mm.z.toFixed(1)} mm
+                      </span>
+                      <span>{inspectResult.triangle_count} triangles</span>
+                    </>
+                  )}
+                </div>
+                {buildBlock && (
+                  <p className="mt-2 text-[var(--color-red)]">
+                    Part exceeds printer build volume on{" "}
+                    {buildBlock.axis.toUpperCase()} by{" "}
+                    {buildBlock.overageMm.toFixed(1)} mm.
+                  </p>
+                )}
+                {inspectResult && !inspectResult.is_watertight && (
+                  <p className="mt-2 text-[var(--color-amber)]">
+                    Mesh is not watertight; slicing can continue, but inspect
+                    the first layer carefully.
+                  </p>
                 )}
               </div>
-              {buildBlock && (
-                <p className="mt-2 text-[var(--color-red)]">
-                  Part exceeds printer build volume on{" "}
-                  {buildBlock.axis.toUpperCase()} by{" "}
-                  {buildBlock.overageMm.toFixed(1)} mm.
-                </p>
-              )}
-              {inspectResult && !inspectResult.is_watertight && (
-                <p className="mt-2 text-[var(--color-amber)]">
-                  Mesh is not watertight; slicing can continue, but inspect the
-                  first layer carefully.
-                </p>
-              )}
-            </div>
-          )}
+            )}
 
           {notice && (
             <p
@@ -715,7 +770,12 @@ export function CloudSlicerClient({
                 <button
                   onClick={handleSlice}
                   disabled={!canSlice}
-                  className="rounded-lg bg-[var(--color-teal)] px-5 py-2.5 text-sm font-semibold text-[var(--color-bg)] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+                  className={cn(
+                    "rounded-lg px-5 py-2.5 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40",
+                    canSlice
+                      ? "bg-[var(--color-green)] text-[var(--color-bg)] shadow-[0_0_20px_rgba(34,197,94,0.3)] hover:brightness-110"
+                      : "bg-[var(--color-teal)] text-[var(--color-bg)]",
+                  )}
                 >
                   Slice
                 </button>
@@ -743,78 +803,82 @@ export function CloudSlicerClient({
           )}
         </section>
 
-        <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-          <h2 className="text-sm font-semibold text-[var(--color-text)]">
-            Slice Result
-          </h2>
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
-              <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                Print Time
-              </p>
-              <p className="mt-2 font-mono text-lg text-[var(--color-text)]">
-                {job?.result?.print_time_s
-                  ? formatDuration(job.result.print_time_s)
-                  : "—"}
-              </p>
+        {activeStep === "slice" && (
+          <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+            <h2 className="text-sm font-semibold text-[var(--color-text)]">
+              Slice Result
+            </h2>
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
+                <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                  Print Time
+                </p>
+                <p className="mt-2 font-mono text-lg text-[var(--color-text)]">
+                  {job?.result?.print_time_s
+                    ? formatDuration(job.result.print_time_s)
+                    : "—"}
+                </p>
+              </div>
+              <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
+                <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                  Material
+                </p>
+                <p className="mt-2 font-mono text-lg text-[var(--color-text)]">
+                  {job?.result?.material_used_g
+                    ? `${job.result.material_used_g.toFixed(2)} g`
+                    : "—"}
+                </p>
+              </div>
+              <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
+                <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                  Engine
+                </p>
+                <p className="mt-2 truncate font-mono text-sm text-[var(--color-text)]">
+                  {job?.result?.engine ?? "—"}
+                </p>
+              </div>
+              <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
+                <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                  G-code
+                </p>
+                <p className="mt-2 font-mono text-sm text-[var(--color-text)]">
+                  {gcode ? formatBytes(new Blob([gcode]).size) : "—"}
+                </p>
+              </div>
+              <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
+                <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                  Layers
+                </p>
+                <p className="mt-2 font-mono text-lg text-[var(--color-text)]">
+                  {layerCount ?? "—"}
+                </p>
+              </div>
+              <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
+                <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                  Prepare
+                </p>
+                <p className="mt-2 font-mono text-xs text-[var(--color-text)]">
+                  {orientationState === "user-picked"
+                    ? "user-picked side down"
+                    : orientationState === "auto"
+                      ? "auto-oriented"
+                      : "uploaded orientation"}{" "}
+                  · {supports ? "supports on" : "supports off"}
+                </p>
+              </div>
             </div>
-            <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
-              <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                Material
-              </p>
-              <p className="mt-2 font-mono text-lg text-[var(--color-text)]">
-                {job?.result?.material_used_g
-                  ? `${job.result.material_used_g.toFixed(2)} g`
-                  : "—"}
-              </p>
-            </div>
-            <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
-              <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                Engine
-              </p>
-              <p className="mt-2 truncate font-mono text-sm text-[var(--color-text)]">
-                {job?.result?.engine ?? "—"}
-              </p>
-            </div>
-            <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
-              <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                G-code
-              </p>
-              <p className="mt-2 font-mono text-sm text-[var(--color-text)]">
-                {gcode ? formatBytes(new Blob([gcode]).size) : "—"}
-              </p>
-            </div>
-            <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
-              <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                Layers
-              </p>
-              <p className="mt-2 font-mono text-lg text-[var(--color-text)]">
-                {layerCount ?? "—"}
-              </p>
-            </div>
-            <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
-              <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                Prepare
-              </p>
-              <p className="mt-2 font-mono text-xs text-[var(--color-text)]">
-                {orientationState === "user-picked"
-                  ? "user-picked side down"
-                  : orientationState === "auto"
-                    ? "auto-oriented"
-                    : "uploaded orientation"}{" "}
-                · {supports ? "supports on" : "supports off"}
-              </p>
-            </div>
-          </div>
-        </section>
+          </section>
+        )}
       </div>
-      <SliceViewer
-        file={selectedFile}
-        gcode={gcode}
-        status={status}
-        rotation={rotation}
-        reportedLayerCount={job?.result?.layer_count ?? null}
-      />
+      {activeStep === "slice" && (
+        <SliceViewer
+          file={selectedFile}
+          gcode={gcode}
+          status={status}
+          rotation={rotation}
+          reportedLayerCount={job?.result?.layer_count ?? null}
+        />
+      )}
     </div>
   );
 }

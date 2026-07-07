@@ -5,6 +5,8 @@ import type { BoundingBoxMm } from "@/app/lib/slicer-client";
 import type { SlicerFace } from "@/app/lib/slicer-client";
 import type { BuildVolumeMm } from "@/app/lib/printability";
 
+const BED_CLEARANCE_MM = 0.08;
+
 interface PrepareSceneProps {
   file: File;
   rotation: number[] | null;
@@ -64,6 +66,7 @@ export function PrepareScene({
       });
       const plate = new THREE.Mesh(plateGeometry, plateMaterial);
       plate.rotation.x = -Math.PI / 2;
+      plate.position.y = -0.01;
       scene.add(plate);
       disposables.push(plateGeometry, plateMaterial);
 
@@ -116,7 +119,7 @@ export function PrepareScene({
       const modelCenter = modelBox.getCenter(new THREE.Vector3());
       mesh.position.x -= modelCenter.x;
       mesh.position.z -= modelCenter.z;
-      mesh.position.y -= modelBox.min.y;
+      mesh.position.y -= modelBox.min.y - BED_CLEARANCE_MM;
       scene.add(mesh);
       disposables.push(geometry, material);
 
