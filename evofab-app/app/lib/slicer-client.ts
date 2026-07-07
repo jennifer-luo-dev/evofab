@@ -20,6 +20,7 @@ export interface SlicerJobResult {
   print_time_s: number;
   material_used_mm3: number;
   material_used_g: number;
+  layer_count?: number | null;
   engine: string;
   profile_id: string;
   rotation?: number[] | null;
@@ -162,6 +163,7 @@ const MOCK_RESULT: SlicerJobResult = {
   print_time_s: 1039,
   material_used_mm3: 14032.26,
   material_used_g: 17.42,
+  layer_count: MOCK_TOTAL_LAYERS,
   engine: "mock",
   profile_id: "pla-fgf",
   rotation: null,

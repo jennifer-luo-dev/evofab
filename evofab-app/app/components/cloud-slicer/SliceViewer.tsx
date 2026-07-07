@@ -15,6 +15,7 @@ interface SliceViewerProps {
   gcode: string | null;
   status: string;
   rotation: number[] | null;
+  reportedLayerCount: number | null;
 }
 
 const LINE_TYPES: Array<{
@@ -126,6 +127,7 @@ export function SliceViewer({
   gcode,
   status,
   rotation,
+  reportedLayerCount,
 }: SliceViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [layerIndex, setLayerIndex] = useState(0);
@@ -134,8 +136,8 @@ export function SliceViewer({
   const [showTravel, setShowTravel] = useState(false);
   const layers = useMemo(() => (gcode ? parseGcodeLayers(gcode) : []), [gcode]);
   const reportedTotal = useMemo(
-    () => (gcode ? layerTotalFromGcode(gcode) : null),
-    [gcode],
+    () => reportedLayerCount ?? (gcode ? layerTotalFromGcode(gcode) : null),
+    [gcode, reportedLayerCount],
   );
   const safeLayerIndex = Math.min(layerIndex, Math.max(0, layers.length - 1));
   const activeLayer = layers[safeLayerIndex] ?? null;

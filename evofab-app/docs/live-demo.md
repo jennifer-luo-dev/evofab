@@ -198,6 +198,49 @@ Abort criteria:
 - Runtime override violates a clamp or produces unsafe printer behavior.
 - William chooses to stop the print for any physical safety reason.
 
+### Step 6: Phase J Real-Slicer Prepare Flow
+
+Run this ladder on the M4 Mac with the real slicer service started before the
+dashboard:
+
+```bash
+cd /Users/xliu16/Documents/evofab-slicer
+SLICER_TOKEN=<shared bearer token> SLICER_MODE=real uvicorn app.main:app --host localhost --port 8055
+```
+
+Keep the dashboard environment pointed at the local slicer:
+
+```bash
+SLICER_MODE=real
+SLICER_URL=http://localhost:8055
+SLICER_TOKEN=<shared bearer token>
+```
+
+1. Upload the asymmetric fixture in `/cloud-slicer`, open Orientation, pick a
+   non-default ranked face, then slice.
+   - Expected evidence: the scene animates/rests the picked face on the bed,
+     the prepare summary labels the state as user-picked, and layer 1 in the
+     G-code preview lies on the selected face.
+   - Abort if: any code path silently reorients the part, the selected face does
+     not become the first layer, or the error message lacks a remedy.
+2. Upload the T fixture twice: once with supports off and once with supports on.
+   - Expected evidence: supports-off G-code has no support feature paths;
+     supports-on G-code shows support toolpaths in the support legend color.
+   - Abort if: supports appear when disabled, disappear when enabled, or the
+     preview crashes on either result.
+3. Confirm real result metadata.
+   - Expected evidence: print time, material usage, layer count, preview header,
+     and pre-print summary all match the completed slicer job result, not a UI
+     placeholder.
+   - Abort if: any displayed result value is hardcoded, missing while present in
+     the job result, or inconsistent with the downloaded G-code.
+4. Confirm the uploaded-STL canvas visual check.
+   - Expected evidence: after upload, the select-STL surface is replaced by the
+     build-plate scene; orbit, zoom, and pan work; Reset restores uploaded pose;
+     a replacement upload swaps the part without returning to stale geometry.
+   - Abort if: the model is visibly wrong scale, below the bed, floating above
+     the bed after drop-to-bed, or overlapping unrelated UI.
+
 ## 5. Read-Only Probe Policy
 
 Codex may run these read-only probes only after William gives explicit

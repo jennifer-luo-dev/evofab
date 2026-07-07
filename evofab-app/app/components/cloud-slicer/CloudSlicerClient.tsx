@@ -47,6 +47,7 @@ interface SlicerJobResult {
   print_time_s: number;
   material_used_mm3: number;
   material_used_g: number;
+  layer_count?: number | null;
   engine: string;
   profile_id: string;
   rotation?: number[] | null;
@@ -148,8 +149,9 @@ export function CloudSlicerClient({
     status !== "queued" &&
     status !== "slicing";
   const layerCount = useMemo(
-    () => (gcode ? layerTotalFromGcode(gcode) : null),
-    [gcode],
+    () =>
+      job?.result?.layer_count ?? (gcode ? layerTotalFromGcode(gcode) : null),
+    [gcode, job?.result?.layer_count],
   );
   const buildVolume = useMemo(() => parseBuildVolume(null), []);
   const buildBlock = useMemo(
@@ -811,6 +813,7 @@ export function CloudSlicerClient({
         gcode={gcode}
         status={status}
         rotation={rotation}
+        reportedLayerCount={job?.result?.layer_count ?? null}
       />
     </div>
   );
