@@ -4,6 +4,7 @@ import {
   getMoonrakerMode,
   homeToolhead,
   jogToolhead,
+  runGcodeScript,
 } from "@/app/lib/moonraker";
 import {
   getMockMoonrakerState,
@@ -12,7 +13,14 @@ import {
 import type { PrinterStatusType } from "@/app/types/printer";
 
 export type MotionAction =
-  "home" | "jog" | "babystep" | "z_offset" | "extrude" | "retract";
+  | "home"
+  | "jog"
+  | "babystep"
+  | "z_offset"
+  | "extrude"
+  | "retract"
+  | "extrusion_factor"
+  | "pressure_advance";
 
 export type MotionAxis = "x" | "y" | "z";
 
@@ -34,6 +42,9 @@ export interface MotionRequest {
   feedrateMmMin?: number;
   deltaMm?: number;
   lengthMm?: number;
+  factorPercent?: number;
+  pressureAdvance?: number;
+  smoothTime?: number;
 }
 
 export interface MotionResult {
@@ -69,6 +80,9 @@ const MAX_JOG_MM = 10;
 const MAX_EXTRUDE_MM = 20;
 const MAX_OFFSET_STEP_MM = 0.05;
 const MAX_CUMULATIVE_OFFSET_MM = 1;
+const MAX_EXTRUSION_FACTOR_PCT = 300;
+const MAX_PRESSURE_ADVANCE = 2;
+const MAX_PRESSURE_SMOOTH_TIME = 1;
 const FLOAT_EPSILON = 0.000001;
 
 function motionMockKey(printer: MotionPrinter): string {
@@ -232,6 +246,35 @@ export async function runPrinterMotion(
       action: request.action,
       script: `M83\nG1 E${signedLength} F${feedrateMmMin}`,
     };
+  }
+
+  if (request.action === "extrusion_factor") {
+    assertIdleOrPaused(status);
+    const factorPercent = Math.max(
+      1,
+      Math.min(
+        MAX_EXTRUSION_FACTOR_PCT,
+        finiteNumber(request.factorPercent, 100),
+      ),
+    );
+    const script = `M221 S${factorPercent}`;
+    await runGcodeScript(printer.ip, printer.port, script);
+    return { action: request.action, script };
+  }
+
+  if (request.action === "pressure_advance") {
+    assertIdleOrPaused(status);
+    const pressureAdvance = Math.max(
+      0,
+      Math.min(MAX_PRESSURE_ADVANCE, finiteNumber(request.pressureAdvance, 0)),
+    );
+    const smoothTime = Math.max(
+      0,
+      Math.min(MAX_PRESSURE_SMOOTH_TIME, finiteNumber(request.smoothTime, 0)),
+    );
+    const script = `SET_PRESSURE_ADVANCE ADVANCE=${pressureAdvance} SMOOTH_TIME=${smoothTime}`;
+    await runGcodeScript(printer.ip, printer.port, script);
+    return { action: request.action, script };
   }
 
   throw new MotionError({

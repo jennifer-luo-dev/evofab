@@ -23,6 +23,8 @@ export interface MockMoonrakerPrinterState {
   bedTemp: number;
   speedFactor: number;
   flowFactor: number;
+  pressureAdvance: number;
+  pressureAdvanceSmoothTime: number;
   fanSpeed: number;
   lastScript: string | null;
   lastMotionScript: string | null;
@@ -61,6 +63,8 @@ function createState(printerKey: string): MockMoonrakerPrinterState {
     bedTemp: 26,
     speedFactor: 100,
     flowFactor: 100,
+    pressureAdvance: 0,
+    pressureAdvanceSmoothTime: 0,
     fanSpeed: 0,
     lastScript: null,
     lastMotionScript: null,
@@ -101,6 +105,23 @@ function parseFanSpeed(script: string): number | null {
   const value = Number(match[1]);
   if (!Number.isFinite(value)) return null;
   return Math.max(0, Math.min(100, Math.round((value / 255) * 100)));
+}
+
+function parsePressureAdvance(script: string): {
+  advance: number;
+  smoothTime: number;
+} | null {
+  const command = script.match(/\bSET_PRESSURE_ADVANCE\b[^\n]*/i)?.[0];
+  if (!command) return null;
+  const advance = command.match(/\bADVANCE=([0-9.]+)/i);
+  if (!advance) return null;
+  const smooth = command.match(/\bSMOOTH_TIME=([0-9.]+)/i);
+  const advanceValue = Number(advance[1]);
+  const smoothValue = smooth ? Number(smooth[1]) : 0;
+  if (!Number.isFinite(advanceValue) || !Number.isFinite(smoothValue)) {
+    return null;
+  }
+  return { advance: advanceValue, smoothTime: smoothValue };
 }
 
 function parseTotalLayers(gcode: string): number | null {
@@ -162,11 +183,16 @@ export async function applyMockMoonrakerScript(
   const speedFactor = parsePercent(script, "M220");
   const flowFactor = parsePercent(script, "M221");
   const fanSpeed = parseFanSpeed(script);
+  const pressureAdvance = parsePressureAdvance(script);
   if (hotendTarget !== null) state.hotendTarget = hotendTarget;
   if (bedTarget !== null) state.bedTarget = bedTarget;
   if (speedFactor !== null) state.speedFactor = speedFactor;
   if (flowFactor !== null) state.flowFactor = flowFactor;
   if (fanSpeed !== null) state.fanSpeed = fanSpeed;
+  if (pressureAdvance !== null) {
+    state.pressureAdvance = pressureAdvance.advance;
+    state.pressureAdvanceSmoothTime = pressureAdvance.smoothTime;
+  }
 }
 
 export async function homeMockMoonrakerToolhead(

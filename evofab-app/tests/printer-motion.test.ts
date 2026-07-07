@@ -93,6 +93,39 @@ test("manual extrusion enforces cold-extrude guard and allows hot extrusion", as
   assert.match(state.lastMotionScript ?? "", /M83\nG1 E5 F300/);
 });
 
+test("extruder panel commands send extrusion factor and pressure advance", async () => {
+  resetMockMoonrakerState();
+
+  await runPrinterMotion(
+    printer,
+    { status: "paused", hotend_temp: 180 },
+    {
+      action: "extrusion_factor",
+      factorPercent: 140,
+    },
+  );
+  await runPrinterMotion(
+    printer,
+    { status: "paused", hotend_temp: 180 },
+    {
+      action: "pressure_advance",
+      pressureAdvance: 0.08,
+      smoothTime: 0.03,
+    },
+  );
+
+  const state = getMockMoonrakerState(
+    mockPrinterKey({ ip: printer.ip, port: printer.port }),
+  );
+  assert.equal(state.flowFactor, 140);
+  assert.equal(state.pressureAdvance, 0.08);
+  assert.equal(state.pressureAdvanceSmoothTime, 0.03);
+  assert.match(
+    state.lastScript ?? "",
+    /SET_PRESSURE_ADVANCE ADVANCE=0.08 SMOOTH_TIME=0.03/,
+  );
+});
+
 test("manual Z offset clamps per step and cumulative range", async () => {
   resetMockMoonrakerState();
 
