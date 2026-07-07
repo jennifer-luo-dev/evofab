@@ -5,9 +5,13 @@ export interface GcodePoint {
 }
 
 export type GcodeLineType =
+  | "external_perimeter"
+  | "perimeter"
   | "outer_wall"
   | "inner_wall"
+  | "infill"
   | "sparse_infill"
+  | "support"
   | "top_surface"
   | "travel"
   | "unknown";
@@ -49,9 +53,14 @@ function makeLayer(index: number, z: number): GcodeLayer {
 
 function normalizeLineType(value: string): GcodeLineType {
   const normalized = value.trim().toLowerCase().replaceAll(" ", "_");
+  if (normalized.includes("external")) return "external_perimeter";
+  if (normalized === "perimeter" || normalized.includes("perimeter"))
+    return "perimeter";
+  if (normalized.includes("support")) return "support";
   if (normalized.includes("outer")) return "outer_wall";
   if (normalized.includes("inner") || normalized.includes("wall"))
     return "inner_wall";
+  if (normalized === "infill") return "infill";
   if (normalized.includes("infill")) return "sparse_infill";
   if (normalized.includes("top")) return "top_surface";
   if (normalized.includes("travel")) return "travel";
@@ -116,6 +125,17 @@ export function parseGcodeLayers(gcode: string): GcodeLayer[] {
         lineNumber: lineIndex + 1,
       });
       hasLayerContent = true;
+    } else if (
+      (axes.X !== undefined || axes.Y !== undefined) &&
+      (nextPosition.x !== position.x || nextPosition.y !== position.y)
+    ) {
+      current.segments.push({
+        from: position,
+        to: nextPosition,
+        type: "travel",
+        sourceLine: line,
+        lineNumber: lineIndex + 1,
+      });
     }
 
     position = nextPosition;

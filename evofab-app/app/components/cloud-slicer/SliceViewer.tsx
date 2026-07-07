@@ -8,6 +8,7 @@ import {
   type GcodeLineType,
   type GcodeSegment,
 } from "@/app/lib/gcode-layer-parser";
+import { GCODE_PREVIEW_TUBE_OPTIONS } from "@/app/lib/gcode-preview-adapter";
 
 interface SliceViewerProps {
   file: File | null;
@@ -22,14 +23,23 @@ const LINE_TYPES: Array<{
   color: number;
   swatch: string;
 }> = [
+  {
+    id: "external_perimeter",
+    label: "External perimeter",
+    color: 0xff8a3d,
+    swatch: "#ff8a3d",
+  },
+  { id: "perimeter", label: "Perimeter", color: 0xffb347, swatch: "#ffb347" },
   { id: "outer_wall", label: "Outer wall", color: 0xff8a3d, swatch: "#ff8a3d" },
   { id: "inner_wall", label: "Inner wall", color: 0xffde59, swatch: "#ffde59" },
+  { id: "infill", label: "Infill", color: 0xc53030, swatch: "#c53030" },
   {
     id: "sparse_infill",
     label: "Sparse infill",
     color: 0xc53030,
     swatch: "#c53030",
   },
+  { id: "support", label: "Support", color: 0x22c55e, swatch: "#22c55e" },
   {
     id: "top_surface",
     label: "Top surface",
@@ -119,7 +129,9 @@ export function SliceViewer({
 }: SliceViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [layerIndex, setLayerIndex] = useState(0);
+  const [layerProgress, setLayerProgress] = useState(100);
   const [showInfo, setShowInfo] = useState(true);
+  const [showTravel, setShowTravel] = useState(false);
   const layers = useMemo(() => (gcode ? parseGcodeLayers(gcode) : []), [gcode]);
   const reportedTotal = useMemo(
     () => (gcode ? layerTotalFromGcode(gcode) : null),
@@ -130,6 +142,16 @@ export function SliceViewer({
   const visibleLayers = useMemo(
     () => layers.slice(0, safeLayerIndex + 1),
     [layers, safeLayerIndex],
+  );
+  const activeLayerSegments = useMemo(
+    () =>
+      activeLayer
+        ? activeLayer.segments.slice(
+            0,
+            Math.ceil(activeLayer.segments.length * (layerProgress / 100)),
+          )
+        : [],
+    [activeLayer, layerProgress],
   );
   const stats = useMemo(() => lineStats(layers), [layers]);
   const codePreview = useMemo(
@@ -228,54 +250,73 @@ export function SliceViewer({
         disposables.push(geometry, material);
       }
 
-      function appendPositions(positions: number[], segments: GcodeSegment[]) {
-        for (const segment of segments) {
-          positions.push(
-            segment.from.x - bounds.centerX,
-            segment.from.z + 0.04,
-            segment.from.y - bounds.centerY,
-          );
-          positions.push(
-            segment.to.x - bounds.centerX,
-            segment.to.z + 0.04,
-            segment.to.y - bounds.centerY,
-          );
-        }
+      function pointFromGcode(point: GcodeSegment["from"]) {
+        return new THREE.Vector3(
+          point.x - bounds.centerX,
+          point.z + 0.04,
+          point.y - bounds.centerY,
+        );
       }
 
-      function addLines(
+      function addTubeSegment(
+        segment: GcodeSegment,
+        material: import("three").Material,
+        radius: number,
+      ) {
+        const from = pointFromGcode(segment.from);
+        const to = pointFromGcode(segment.to);
+        const delta = new THREE.Vector3().subVectors(to, from);
+        const length = delta.length();
+        if (length <= 0.001) return;
+        const geometry = new THREE.CylinderGeometry(radius, radius, length, 8);
+        const tube = new THREE.Mesh(geometry, material);
+        tube.position.copy(from).addScaledVector(delta, 0.5);
+        tube.quaternion.setFromUnitVectors(
+          new THREE.Vector3(0, 1, 0),
+          delta.normalize(),
+        );
+        scene.add(tube);
+        disposables.push(geometry);
+      }
+
+      function addTubes(
         selectedLayers: GcodeLayer[],
         type: GcodeLineType,
         color: number,
         opacity: number,
       ) {
-        const positions: number[] = [];
-        for (const layer of selectedLayers) {
-          appendPositions(
-            positions,
-            layer.segments.filter((segment) => segment.type === type),
-          );
-        }
-        if (positions.length === 0) return;
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute(
-          "position",
-          new THREE.Float32BufferAttribute(positions, 3),
-        );
-        const material = new THREE.LineBasicMaterial({
+        if (type === "travel" && !showTravel) return;
+        const material = new THREE.MeshBasicMaterial({
           color,
           transparent: opacity < 1,
           opacity,
         });
-        scene.add(new THREE.LineSegments(geometry, material));
-        disposables.push(geometry, material);
+        disposables.push(material);
+        const radius =
+          type === "travel"
+            ? 0.08
+            : GCODE_PREVIEW_TUBE_OPTIONS.renderTubes
+              ? 0.22
+              : 0.12;
+        for (const layer of selectedLayers) {
+          for (const segment of layer.segments.filter(
+            (item) => item.type === type,
+          )) {
+            addTubeSegment(segment, material, radius);
+          }
+        }
       }
 
       const previousLayers = visibleLayers.slice(0, -1);
       if (activeLayer) {
         for (const type of LINE_TYPES) {
-          addLines(previousLayers, type.id, type.color, 0.22);
-          addLines([activeLayer], type.id, type.color, 1);
+          addTubes(previousLayers, type.id, type.color, 0.22);
+          addTubes(
+            [{ ...activeLayer, segments: activeLayerSegments }],
+            type.id,
+            type.color,
+            1,
+          );
         }
       }
 
@@ -350,6 +391,8 @@ export function SliceViewer({
     hasRenderableSlice,
     layers,
     rotation,
+    showTravel,
+    activeLayerSegments,
     visibleLayers,
   ]);
 
@@ -372,6 +415,32 @@ export function SliceViewer({
           {reportedTotal ? `${reportedTotal} reported` : "no layers"}
         </span>
       </div>
+      {hasRenderableSlice && (
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-xs font-semibold text-[var(--color-text)]">
+            <input
+              type="checkbox"
+              checked={showTravel}
+              onChange={(event) => setShowTravel(event.target.checked)}
+              className="h-4 w-4 accent-[var(--color-teal)]"
+            />
+            Travel
+          </label>
+          <label className="flex min-w-56 flex-1 items-center gap-2 text-xs text-[var(--color-muted)]">
+            <span>Layer progress</span>
+            <input
+              aria-label="Within-layer progress"
+              type="range"
+              min={1}
+              max={100}
+              value={layerProgress}
+              onChange={(event) => setLayerProgress(Number(event.target.value))}
+              className="flex-1 accent-[var(--color-teal)]"
+            />
+            <span className="font-mono">{layerProgress}%</span>
+          </label>
+        </div>
+      )}
       <div className="mt-4">
         <div className="relative min-h-[620px] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[#111927]">
           {hasRenderableScene ? (
