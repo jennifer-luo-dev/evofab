@@ -1,4 +1,5 @@
 import type { PrinterType } from "@/app/types/printer";
+import type { Printer } from "@/app/types/printer";
 
 export interface PrinterOnboardingInput {
   name?: unknown;
@@ -90,6 +91,18 @@ export function normalizePrinterOnboardingInput(
     material: optionalText(input.material),
     build_volume: optionalText(input.build_volume),
     is_active: true,
+  };
+}
+
+export function normalizePrinterConnectionTestInput(
+  input: PrinterOnboardingInput,
+): Printer {
+  const normalized = normalizePrinterOnboardingInput(input);
+
+  return {
+    id: "connection-test",
+    ...normalized,
+    created_at: new Date(0).toISOString(),
   };
 }
 

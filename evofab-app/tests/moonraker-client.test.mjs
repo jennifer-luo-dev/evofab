@@ -39,9 +39,11 @@ compileModule("moonraker-client.ts");
 
 const { HARDWARE_CONFIRMATION, getMoonrakerMode, resolveMoonrakerBaseUrl } =
   await import(pathToFileURL(path.join(tempDir, "moonraker-config.mjs")));
-const { MoonrakerStatusConnector, normalizeMoonrakerStatus } = await import(
-  pathToFileURL(path.join(tempDir, "moonraker-client.mjs"))
-);
+const {
+  MoonrakerStatusConnector,
+  normalizeMoonrakerServerInfo,
+  normalizeMoonrakerStatus,
+} = await import(pathToFileURL(path.join(tempDir, "moonraker-client.mjs")));
 const { MoonrakerError } = await import(
   pathToFileURL(path.join(tempDir, "moonraker-errors.mjs"))
 );
@@ -270,5 +272,79 @@ test("connector reports malformed and offline responses predictably", async (t) 
     () => new MoonrakerStatusConnector().readStatus(printer),
     (error) =>
       error instanceof MoonrakerError && error.code === "MOONRAKER_OFFLINE",
+  );
+});
+
+test("normalizes Moonraker server info with optional Klipper version", () => {
+  assert.deepEqual(
+    normalizeMoonrakerServerInfo("printer-1", {
+      result: {
+        moonraker_version: "v0.9.3",
+        klipper_version: "v0.12.0",
+        klippy_state: "ready",
+      },
+    }),
+    {
+      moonrakerVersion: "v0.9.3",
+      klipperVersion: "v0.12.0",
+      klippyState: "ready",
+    },
+  );
+
+  assert.deepEqual(
+    normalizeMoonrakerServerInfo("printer-1", {
+      result: {
+        moonraker_version: "v0.9.3",
+      },
+    }),
+    {
+      moonrakerVersion: "v0.9.3",
+      klipperVersion: null,
+      klippyState: null,
+    },
+  );
+});
+
+test("connector reads server info through the same safe base URL", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  globalThis.fetch = async (url) => {
+    assert.equal(String(url), "http://127.0.0.1:7125/server/info");
+    return new Response(
+      JSON.stringify({
+        result: {
+          moonraker_version: "v0.9.3",
+          klippy_state: "ready",
+        },
+      }),
+      { status: 200 },
+    );
+  };
+
+  const connector = new MoonrakerStatusConnector({
+    mockBaseUrl: "http://127.0.0.1:7125",
+  });
+  const info = await connector.readServerInfo(printer);
+
+  assert.equal(info.moonrakerVersion, "v0.9.3");
+  assert.equal(info.klipperVersion, null);
+  assert.equal(info.klippyState, "ready");
+});
+
+test("connector reports malformed server info predictably", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  globalThis.fetch = async () => new Response("{not-json", { status: 200 });
+  await assert.rejects(
+    () => new MoonrakerStatusConnector().readServerInfo(printer),
+    (error) =>
+      error instanceof MoonrakerError &&
+      error.code === "MOONRAKER_MALFORMED_RESPONSE",
   );
 });
