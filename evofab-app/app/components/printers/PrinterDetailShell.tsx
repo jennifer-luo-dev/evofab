@@ -3,6 +3,7 @@
 import { useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { PrinterCameraPanel } from "@/app/components/printers/PrinterCameraPanel";
+import { PrinterConsolePanel } from "@/app/components/printers/PrinterConsolePanel";
 import { PrinterExtruderPanel } from "@/app/components/printers/PrinterExtruderPanel";
 import { PrinterHistoryPanel } from "@/app/components/printers/PrinterHistoryPanel";
 import { PrinterLevelingPanel } from "@/app/components/printers/PrinterLevelingPanel";
@@ -146,6 +147,9 @@ export function PrinterDetailShell({
               </div>
               <div className="md:col-span-2">
                 <PrinterQueuePanel jobs={historyJobs} />
+              </div>
+              <div className="md:col-span-2">
+                <PrinterConsolePanel printer={printer} />
               </div>
               <PrinterPreheatPanel
                 printer={printer}

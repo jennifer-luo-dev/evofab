@@ -198,6 +198,11 @@ export async function applyMockMoonrakerScript(
   const state = stateFor(printerKey);
   state.lastScript = script;
 
+  if (/^\s*G28\b/im.test(script)) {
+    state.homedAxes = { x: true, y: true, z: true };
+    state.position = { ...state.position, x: 0, y: 0, z: 0 };
+  }
+
   const hotendTarget = parseTarget(script, "M104");
   const bedTarget = parseTarget(script, "M140");
   const speedFactor = parsePercent(script, "M220");
