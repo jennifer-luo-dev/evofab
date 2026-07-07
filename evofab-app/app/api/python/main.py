@@ -1,16 +1,11 @@
 # main.py
 # FastAPI server that bridges the UR7e robot arm's RTDE (Real-Time Data
-# Exchange) protocol to browser WebSocket clients, and streams a live
-# camera feed with real-time PneuNet curvature characterization.
+# Exchange) protocol to browser WebSocket clients.
 #
 # Architecture:
 #   - One background thread keeps an RTDE connection to the robot and writes
 #     the latest state into _latest_state (a plain dict; GIL makes the
 #     assignment atomic).
-#   - A second background thread captures camera frames, runs the
-#     characterization pipeline (mask → skeleton → curvature), and writes
-#     JPEG-encoded overlay frames into _camera_frame plus metrics into
-#     _camera_metrics — also via atomic dict/bytes replacement.
 #   - Each browser WebSocket connection gets its own handler coroutine that
 #     polls _latest_state at POLL_HZ and pushes diffs to the client. A
 #     lightweight background sub-task watches for the disconnect frame so the
@@ -32,10 +27,11 @@ from contextlib import asynccontextmanager
 from math import sqrt
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, WebSocket
+from fastapi import FastAPI, HTTPException, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+from camera_manager import CameraManager
 
 ROBOT_IP = os.getenv("ROBOT_IP", "192.168.50.100")
 
@@ -58,6 +54,20 @@ HEARTBEAT_S = 5.0
 _latest_state: dict = {"connected": False}
 
 
+def _rtde_reachable(timeout: float = 1.5) -> bool:
+    """Cheap reachability probe on the RTDE port before the (GIL-holding)
+    RTDEReceiveInterface connect. Plain socket.create_connection releases the
+    GIL while blocked, so an unreachable robot only costs `timeout` seconds
+    instead of freezing the whole process for however long the C-level
+    connect takes to give up."""
+    import socket
+    try:
+        with socket.create_connection((ROBOT_IP, 30004), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 def _rtde_reader() -> None:
     """Background thread: maintains an RTDE connection to the robot and
     continuously refreshes _latest_state. Retries every 5 s on failure."""
@@ -75,6 +85,11 @@ def _rtde_reader() -> None:
     time.sleep(2)
 
     while True:
+        if not _rtde_reachable():
+            _latest_state = {"connected": False, "error": f"{ROBOT_IP} unreachable"}
+            time.sleep(5)
+            continue
+
         try:
             rtde = rtde_receive.RTDEReceiveInterface(ROBOT_IP)
 
@@ -109,367 +124,14 @@ def _rtde_reader() -> None:
             time.sleep(5)
 
 
-# ---------------------------------------------------------------------------
-# Camera characterization streaming — Orbbec Gemini 335Lg (G4005-270)
-#
-# A background thread opens the Orbbec pipeline (colour + depth, HW-aligned),
-# runs mask → skeleton → curvature on the depth stream, and writes results
-# into two module-level variables (atomic under the GIL):
-#   _camera_frame   — JPEG bytes of the latest annotated colour frame (or None)
-#   _camera_metrics — dict with curvature metrics, status, and sense_mode
-#
-# Sense modes:
-#   "depth" — ActuatorAnalyzer depth-gates on the Y16 depth frame (preferred)
-#   "rgb"   — brightness-threshold fallback if depth frame is unavailable
-#
-# Config is updated via POST /camera/config; the thread re-opens the pipeline
-# when camera_index changes.
-# ---------------------------------------------------------------------------
-
-_camera_config: dict = {
-    "camera_index": 1,          # Orbbec Gemini 335Lg (index 1 on this machine)
-    "z_min": 0.40,              # Near depth gate (metres)
-    "z_max": 0.55,              # Far depth gate (metres)
-    "threshold": 200,           # RGB brightness threshold (fallback only)
-    "overlay_mode": "combined", # "combined" | "raw" | "mask" | "skeleton"
-    "ppm": 2800.0,              # Pixels per metre for curvature scaling
-}
-
-_camera_frame: Optional[bytes] = None
-_camera_metrics: dict = {"status": "IDLE"}
-
-# ---------------------------------------------------------------------------
-# Chessboard calibration state
-# ---------------------------------------------------------------------------
-_CALIB_FILE = "camera_calibration.json"
-_calib_lock = threading.Lock()
-_calib: dict = {
-    "active": False,
-    "grid_cols": 9,
-    "grid_rows": 6,
-    "square_mm": 25.0,
-    "frame_count": 0,
-    "img_size": None,
-    "last_found": False,
-    "result": None,   # {rms, ppm, applied} set after calibrate/run
-}
-_calib_obj_pts: list = []   # accumulated 3-D object point arrays
-_calib_img_pts: list = []   # accumulated 2-D image point arrays
-_calib_pending: Optional[dict] = None   # latest detection: {found, objp, corners, img_size}
-_calib_mtx = None    # numpy camera matrix (or None)
-_calib_dist = None   # numpy distortion coefficients (or None)
-
-
-def _load_saved_calibration() -> None:
-    global _calib_mtx, _calib_dist
-    try:
-        import numpy as _np
-        with open(_CALIB_FILE) as fh:
-            data = json.load(fh)
-        _calib_mtx = _np.array(data["matrix"])
-        _calib_dist = _np.array(data["dist"])
-        _calib["result"] = {"rms": data.get("rms"), "ppm": data.get("ppm"), "applied": True}
-    except Exception:
-        pass
-
-
-def _annotate_and_store(cv2, np, color_bgr, mask, sense_mode, cfg, compute_spine_curvature) -> None:
-    """Shared: skeleton → curvature → annotated JPEG → write globals. Called by both camera paths."""
-    global _camera_frame, _camera_metrics, _calib_pending
-
-    skeleton = cv2.ximgproc.thinning(mask) if hasattr(cv2, "ximgproc") else np.zeros_like(mask)
-
-    result = compute_spine_curvature(skeleton, cfg["ppm"])
-
-    _camera_metrics = {
-        "status": result.status,
-        "mean_curvature": round(result.mean_curvature, 3),
-        "bend_angle_deg": round(result.bend_angle_deg, 2),
-        "radius_mm": round(result.radius_mm, 1),
-        "sense_mode": sense_mode,
-    }
-
-    overlay_mode = cfg["overlay_mode"]
-    if overlay_mode == "raw":
-        display = color_bgr.copy()
-    elif overlay_mode == "mask":
-        display = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-    elif overlay_mode == "skeleton":
-        display = np.zeros_like(color_bgr)
-        display[skeleton > 0] = [180, 212, 0]
-    else:  # combined
-        display = color_bgr.copy()
-        green_layer = np.zeros_like(color_bgr)
-        green_layer[mask > 0] = [0, 80, 0]
-        display = cv2.addWeighted(display, 1.0, green_layer, 0.5, 0)
-        display[skeleton > 0] = [180, 212, 0]
-
-    # Bounding box around the largest detected contour
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if contours:
-        largest = max(contours, key=cv2.contourArea)
-        bx, by, bw, bh = cv2.boundingRect(largest)
-        box_color = (180, 212, 0) if result.status == "TRACKING" else (60, 160, 160)
-        cv2.rectangle(display, (bx, by), (bx + bw, by + bh), box_color, 2)
-
-    # Fitted curvature arc — draw the circle segment spanning the skeleton extent
-    if result.status == "TRACKING" and result.radius_px > 1:
-        ys, xs = np.where(skeleton > 0)
-        if len(ys) >= 2:
-            cx, cy = result.center_px
-            r = int(round(result.radius_px))
-            angles = np.degrees(np.arctan2(ys.astype(float) - cy,
-                                           xs.astype(float) - cx))
-            a_min, a_max = float(angles.min()), float(angles.max())
-            # Expand arc slightly so it visually extends past the skeleton tips
-            pad = max(5.0, (a_max - a_min) * 0.1)
-            cv2.ellipse(display, (cx, cy), (r, r), 0,
-                        a_min - pad, a_max + pad,
-                        (0, 180, 255), 2, cv2.LINE_AA)
-            # Mark circle centre
-            cv2.circle(display, (cx, cy), 5, (0, 180, 255), -1, cv2.LINE_AA)
-
-    txt_color = (180, 212, 0) if result.status == "TRACKING" else (80, 100, 90)
-    cv2.putText(display, result.status, (12, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.8, txt_color, 2)
-    cv2.putText(display, f"[{sense_mode}]", (12, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (60, 90, 80), 1)
-    if result.status == "TRACKING":
-        cv2.putText(display, f"K: {result.mean_curvature:.2f} 1/m", (12, 80),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, txt_color, 1)
-        cv2.putText(display, f"Angle: {result.bend_angle_deg:.1f} deg", (12, 104),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, txt_color, 1)
-        cv2.putText(display, f"R: {result.radius_mm:.0f} mm", (12, 128),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, txt_color, 1)
-
-    # Chessboard corner detection overlay (calibration mode)
-    if _calib.get("active"):
-        gray_c = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2GRAY)
-        cols_n, rows_n = _calib["grid_cols"], _calib["grid_rows"]
-        found, corners = cv2.findChessboardCorners(
-            gray_c, (cols_n, rows_n),
-            cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_NORMALIZE_IMAGE,
-        )
-        if found:
-            cv2.cornerSubPix(gray_c, corners, (11, 11), (-1, -1),
-                             (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001))
-            cv2.drawChessboardCorners(display, (cols_n, rows_n), corners, found)
-            objp = np.zeros((rows_n * cols_n, 3), np.float32)
-            objp[:, :2] = np.mgrid[0:cols_n, 0:rows_n].T.reshape(-1, 2)
-            objp *= _calib["square_mm"]
-            _calib_pending = {
-                "found": True, "objp": objp, "corners": corners,
-                "img_size": (gray_c.shape[1], gray_c.shape[0]),
-            }
-        else:
-            _calib_pending = {"found": False}
-            cv2.putText(display, "NO CORNERS", (12, display.shape[0] - 16),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (40, 80, 200), 1)
-        _calib["last_found"] = bool(found)
-
-    _, buf = cv2.imencode(".jpg", display, [cv2.IMWRITE_JPEG_QUALITY, 80])
-    _camera_frame = buf.tobytes()
-
-
-def _camera_reader() -> None:
-    global _camera_frame, _camera_metrics
-
-    # macOS AVFoundation: prevent authorization dialog on background threads
-    os.environ.setdefault("OPENCV_AVFOUNDATION_SKIP_AUTH", "1")
-
-    # ── Core imports (required by both paths) ──────────────────────────────
-    try:
-        import cv2
-        import numpy as np
-    except ImportError:
-        _camera_metrics = {"status": "ERROR", "error": "opencv not installed — pip install opencv-contrib-python-headless"}
-        return
-    try:
-        from analyzer import ActuatorAnalyzer
-        from geometry import compute_spine_curvature
-    except ImportError as exc:
-        _camera_metrics = {"status": "ERROR", "error": f"analyzer/geometry import failed: {exc}"}
-        return
-
-    # ── Choose path: Orbbec SDK (depth+colour) or cv2 fallback (colour only) ─
-    # Mirrors camera.py which used cv2.VideoCapture and worked out of the box.
-    # pyorbbecsdk requires the Orbbec SDK driver to be installed separately.
-    try:
-        from pyorbbecsdk import Pipeline, Config, Context, OBSensorType, OBFormat, OBAlignMode, OBError
-        _use_orbbec = True
-    except ImportError:
-        _use_orbbec = False
-
-    while True:
-        cfg = _camera_config
-
-        # ════════════════════════════════════════════════════════════════
-        # PATH A — Orbbec SDK: colour + depth, hardware-aligned
-        # ════════════════════════════════════════════════════════════════
-        if _use_orbbec:
-            try:
-                ctx = Context()
-                device_list = ctx.query_devices()
-                if device_list.get_count() == 0:
-                    _camera_metrics = {"status": "NO_CAMERA",
-                                       "error": "Gemini not detected — check USB connection"}
-                    _camera_frame = None
-                    time.sleep(3)
-                    continue
-
-                device = device_list.get_device(min(cfg["camera_index"], device_list.get_count() - 1))
-                pipeline = Pipeline(device)
-                pipe_cfg = Config()
-
-                try:
-                    color_profiles = pipeline.get_stream_profile_list(OBSensorType.COLOR_SENSOR)
-                    color_profile = color_profiles.get_video_stream_profile(1280, 720, OBFormat.RGB888, 30)
-                    pipe_cfg.enable_stream(color_profile)
-                except OBError:
-                    pipe_cfg.enable_video_stream(OBSensorType.COLOR_SENSOR, 1280, 720, 30, OBFormat.UNKNOWN)
-
-                try:
-                    depth_profiles = pipeline.get_stream_profile_list(OBSensorType.DEPTH_SENSOR)
-                    depth_profile = depth_profiles.get_video_stream_profile(640, 576, OBFormat.Y16, 30)
-                    pipe_cfg.enable_stream(depth_profile)
-                except OBError:
-                    pipe_cfg.enable_video_stream(OBSensorType.DEPTH_SENSOR, 0, 0, 30, OBFormat.UNKNOWN)
-
-                try:
-                    pipe_cfg.set_align_mode(OBAlignMode.HW_MODE)
-                except Exception:
-                    pass
-
-                pipeline.start(pipe_cfg)
-                pipeline.enable_frame_sync()
-
-                analyzer = ActuatorAnalyzer(z_min=cfg["z_min"], z_max=cfg["z_max"], threshold=cfg["threshold"])
-                _camera_metrics = {"status": "IDLE", "sense_mode": "depth"}
-
-                try:
-                    while True:
-                        frames = pipeline.wait_for_frames(100)
-                        if frames is None:
-                            continue
-
-                        color_frame = frames.get_color_frame()
-                        if color_frame is None:
-                            continue
-
-                        cfg = _camera_config
-                        analyzer.z_min = cfg["z_min"]
-                        analyzer.z_max = cfg["z_max"]
-                        analyzer.threshold = cfg["threshold"]
-
-                        color_data = np.asarray(color_frame.get_data(), dtype=np.uint8)
-                        color_bgr = cv2.cvtColor(
-                            color_data.reshape(color_frame.get_height(), color_frame.get_width(), 3),
-                            cv2.COLOR_RGB2BGR,
-                        )
-                        if _calib_mtx is not None:
-                            color_bgr = cv2.undistort(color_bgr, _calib_mtx, _calib_dist)
-
-                        depth_frame = frames.get_depth_frame()
-                        if depth_frame is not None:
-                            depth_scale = depth_frame.get_depth_scale()
-                            depth_raw = np.asarray(depth_frame.get_data(), dtype=np.uint16).reshape(
-                                depth_frame.get_height(), depth_frame.get_width()
-                            )
-                            if depth_raw.shape[:2] != color_bgr.shape[:2]:
-                                depth_raw = cv2.resize(depth_raw,
-                                                       (color_bgr.shape[1], color_bgr.shape[0]),
-                                                       interpolation=cv2.INTER_NEAREST)
-                            mask = analyzer.generate_mask(depth_raw, depth_scale=depth_scale)
-                            sense_mode = "depth"
-                        else:
-                            mask = analyzer.generate_mask(color_bgr)
-                            sense_mode = "rgb"
-
-                        _annotate_and_store(cv2, np, color_bgr, mask, sense_mode, cfg, compute_spine_curvature)
-
-                        if _camera_config["camera_index"] != cfg["camera_index"]:
-                            break
-                finally:
-                    pipeline.stop()
-
-            except Exception as exc:
-                _camera_metrics = {"status": "NO_CAMERA", "error": str(exc)}
-                _camera_frame = None
-                time.sleep(3)
-                continue
-
-        # ════════════════════════════════════════════════════════════════
-        # PATH B — cv2.VideoCapture fallback (matches camera.py approach)
-        #          Colour stream only; brightness-threshold masking.
-        # ════════════════════════════════════════════════════════════════
-        else:
-            idx = cfg["camera_index"]
-
-            if platform.system() == "Windows":
-                cap = cv2.VideoCapture(idx, cv2.CAP_MSMF)
-                try:
-                    fourcc = cv2.VideoWriter.fourcc(*"MJPG")
-                except AttributeError:
-                    fourcc = cv2.VideoWriter_fourcc(*"MJPG")  # type: ignore
-                cap.set(cv2.CAP_PROP_FOURCC, fourcc)
-            else:
-                cap = cv2.VideoCapture(idx)
-
-            cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1.0)
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-
-            # Warmup — drain initial stale frames (mirrors camera.py)
-            for _ in range(15):
-                ret, _ = cap.read()
-                if ret:
-                    break
-                time.sleep(0.05)
-
-            if not cap.isOpened():
-                _camera_metrics = {"status": "NO_CAMERA", "error": f"cv2: cannot open camera index {idx}"}
-                _camera_frame = None
-                time.sleep(3)
-                continue
-
-            analyzer = ActuatorAnalyzer(threshold=cfg["threshold"])
-            _camera_metrics = {"status": "IDLE", "sense_mode": "rgb"}
-
-            try:
-                while True:
-                    ret, frame = cap.read()
-                    if not ret:
-                        break
-
-                    if _calib_mtx is not None:
-                        frame = cv2.undistort(frame, _calib_mtx, _calib_dist)
-
-                    cfg = _camera_config
-                    analyzer.threshold = cfg["threshold"]
-                    mask = analyzer.generate_mask(frame)
-
-                    try:
-                        _annotate_and_store(cv2, np, frame, mask, "rgb", cfg, compute_spine_curvature)
-                    except Exception:
-                        time.sleep(0.1)
-                        continue
-
-                    if _camera_config["camera_index"] != idx:
-                        break
-
-                    time.sleep(1 / 30)
-            except Exception as loop_exc:
-                _camera_metrics = {"status": "ERROR", "error": str(loop_exc)}
-                _camera_frame = None
-            finally:
-                cap.release()
-
-        time.sleep(0.5)
+_camera = CameraManager()  # auto-detects the Orbbec — see camera_manager.py
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    _load_saved_calibration()
     threading.Thread(target=_rtde_reader, daemon=True).start()
-    threading.Thread(target=_camera_reader, daemon=True).start()
+    threading.Thread(target=_serial_reader, daemon=True).start()
+    _camera.start()
     yield
 
 
@@ -748,6 +410,40 @@ ARDUINO_BAUD = 115200
 _serial_lock: threading.Lock = threading.Lock()
 _serial_conn = None  # serial.Serial | None
 
+# Actuation-synced capture — armed by /actuation/pulse (capture=true) and
+# resolved by _serial_reader the instant it sees STATUS:BUSY:CH<n> for the
+# matching channel (ground-truth hardware timestamp), or by timeout with a
+# fallback frame if the line never arrives. Not persisted to disk: this is a
+# live/latency-check view, not a stored result.
+CAPTURE_TIMEOUT_S = 2.0
+
+_capture_lock: threading.Lock = threading.Lock()
+_capture_request: Optional[dict] = None  # {"channel": int, "armed_at": float (monotonic)}
+_last_capture_meta: Optional[dict] = None  # {"channel", "synced", "latency_ms", "timestamp"}
+_last_capture_jpeg: Optional[bytes] = None
+
+
+def _resolve_capture(channel: int, synced: bool, event_ts: float) -> None:
+    """Grabs the freshest available camera frame and records it as the last
+    capture. event_ts is the monotonic time STATUS:BUSY was read (or the
+    timeout deadline, on the fallback path)."""
+    global _last_capture_meta, _last_capture_jpeg, _capture_request
+    with _capture_lock:
+        _capture_request = None
+
+    result = _camera.capture_now()
+    if result is None:
+        return  # camera not connected — nothing to save
+
+    jpeg, frame_ts = result
+    _last_capture_jpeg = jpeg
+    _last_capture_meta = {
+        "channel": channel,
+        "synced": synced,
+        "latency_ms": round((frame_ts - event_ts) * 1000.0, 1),
+        "timestamp": time.time(),
+    }
+
 
 def _find_arduino_port() -> str:
     """Return the best-guess serial port for an Arduino Uno.
@@ -786,17 +482,10 @@ def _find_arduino_port() -> str:
     )
 
 
-def _get_serial_conn():
-    """Return the open Serial connection, opening it if necessary.
-
-    Opening resets the Arduino over USB; a 2 s sleep lets it boot before
-    commands are sent. The startup STATUS:READY line is drained so it cannot
-    be mistaken for a command response.
-    """
-    global _serial_conn
-    if _serial_conn is not None and _serial_conn.is_open:
-        return _serial_conn
-
+def _open_serial_conn():
+    """Open the Arduino connection. Blocks ~2 s: opening resets the board
+    over USB (DTR toggle), and the startup STATUS:READY line is drained so
+    it cannot be mistaken for a command response."""
     try:
         import serial as pyserial
     except ImportError:
@@ -807,73 +496,118 @@ def _get_serial_conn():
     time.sleep(2)  # wait for Arduino to finish reset
     while conn.in_waiting:
         conn.readline()  # drain STATUS:READY and any startup noise
-    _serial_conn = conn
     return conn
 
 
-def _pulse_channel(channel: int, duration_ms: int) -> tuple[bool, str]:
-    """Send START:<CH>:<MS> and block until STATUS:DONE or timeout.
+def _serial_reader() -> None:
+    """Background thread: owns the Arduino connection for its whole lifetime.
 
-    Holds the serial lock for the full pulse duration, which serialises
-    concurrent pulse and abort requests at the API layer. The Arduino's
-    valve timer is independent of this lock — the solenoid opens as soon as
-    the command is received.
+    Opens the port once here — paying the ~2 s reset cost at server startup
+    instead of on the user's first button click — then continuously drains
+    incoming STATUS lines so the Arduino's TX buffer never fills up and
+    blocks its main loop. Reconnects automatically if the link drops.
+
+    Also watches for STATUS:BUSY:CH<n> — the Arduino's own timestamp for the
+    instant a solenoid physically opens — to resolve any pulse-armed camera
+    capture (see _resolve_capture). The serial connection's read timeout
+    (2 s, set in _open_serial_conn) doubles as the poll interval for the
+    capture-armed timeout fallback below, since readline() returns on its
+    own after that long even with no data.
+    """
+    global _serial_conn
+    while True:
+        try:
+            _serial_conn = _open_serial_conn()
+        except Exception:
+            time.sleep(5)
+            continue
+
+        try:
+            while True:
+                line = _serial_conn.readline()
+
+                with _capture_lock:
+                    req = _capture_request
+                if req is not None and time.monotonic() - req["armed_at"] > CAPTURE_TIMEOUT_S:
+                    _resolve_capture(req["channel"], synced=False, event_ts=time.monotonic())
+
+                if not line:
+                    continue  # readline() timed out with no data
+
+                text = line.decode(errors="ignore").strip()
+                if text.startswith("STATUS:BUSY:CH"):
+                    event_ts = time.monotonic()
+                    try:
+                        channel = int(text[len("STATUS:BUSY:CH"):])
+                    except ValueError:
+                        continue
+                    with _capture_lock:
+                        req = _capture_request
+                    if req is not None and req["channel"] == channel:
+                        _resolve_capture(channel, synced=True, event_ts=event_ts)
+        except Exception:
+            _serial_conn = None
+            time.sleep(2)
+
+
+def _pulse_channel(channel: int, duration_ms: int) -> tuple[bool, str]:
+    """Send START:<CH>:<MS> and return as soon as the write succeeds.
+
+    The Arduino opens the valve the instant it parses the command, so
+    blocking the HTTP response on STATUS:DONE only added the full pulse
+    duration to every request without changing when actuation happens.
+    Completion is now tracked purely by the Arduino's own timer — the
+    caller already knows duration_ms and can time it client-side.
     """
     global _serial_conn
     with _serial_lock:
+        conn = _serial_conn
+        if conn is None or not conn.is_open:
+            return False, "Arduino not connected — waiting for serial link."
         try:
-            ser = _get_serial_conn()
-            ser.write(f"START:{channel}:{duration_ms}\n".encode())
-
-            # Wait up to (duration + 5 s grace) for the DONE acknowledgment.
-            deadline = time.time() + (duration_ms / 1000.0) + 5.0
-            while time.time() < deadline:
-                raw = ser.readline()
-                if not raw:
-                    continue
-                line = raw.decode(errors="replace").strip()
-                if line == f"STATUS:DONE:CH{channel}":
-                    return True, f"Channel {channel} pulse complete ({duration_ms} ms)."
-                if line == "STATUS:ABORT_COMPLETE":
-                    return False, "Pulse interrupted by ABORT."
-
-            return False, f"Timeout: no DONE response from CH{channel} within {duration_ms + 5000} ms."
-
+            conn.write(f"START:{channel}:{duration_ms}\n".encode())
         except Exception as exc:
-            # Reset so the next request gets a fresh connection.
             _serial_conn = None
             return False, f"Serial error on CH{channel}: {exc}"
 
+    return True, f"Channel {channel} pulse started ({duration_ms} ms)."
+
 
 def _abort_all_channels() -> tuple[bool, str]:
-    """Send ABORT and wait for STATUS:ABORT_COMPLETE (up to 5 s)."""
+    """Send ABORT immediately. abortAll() on the Arduino runs synchronously
+    in firmware (all valves close before the next loop() iteration), so
+    there's nothing to wait for here either."""
     global _serial_conn
     with _serial_lock:
+        conn = _serial_conn
+        if conn is None or not conn.is_open:
+            return False, "Arduino not connected — waiting for serial link."
         try:
-            ser = _get_serial_conn()
-            ser.write(b"ABORT\n")
-            deadline = time.time() + 5.0
-            while time.time() < deadline:
-                raw = ser.readline()
-                if not raw:
-                    continue
-                if raw.decode(errors="replace").strip() == "STATUS:ABORT_COMPLETE":
-                    return True, "All channels aborted."
-            return False, "No ABORT_COMPLETE response within 5 s."
-
+            conn.write(b"ABORT\n")
         except Exception as exc:
             _serial_conn = None
             return False, f"Serial error on abort: {exc}"
 
+    return True, "Abort sent to all channels."
+
 
 class PulseRequest(BaseModel):
-    channel: int       # 1–4
-    duration_ms: int   # milliseconds (1–10 000)
+    channel: int              # 1–4
+    duration_ms: int          # milliseconds (1–10 000)
+    capture: bool = False     # if true, capture a photo synced to STATUS:BUSY:CH<n>
 
 
 @app.post("/actuation/pulse")
 async def actuation_pulse(body: PulseRequest) -> dict:
-    """Fire a timed solenoid pulse on one channel of the Arduino control board."""
+    """Fire a timed solenoid pulse on one channel of the Arduino control board.
+
+    If capture=True, arms a camera capture that _serial_reader resolves the
+    instant it sees STATUS:BUSY:CH<n> for this channel (ground-truth hardware
+    timing), or after CAPTURE_TIMEOUT_S as an unsynced fallback. This endpoint
+    still returns immediately after the serial write succeeds — the capture
+    itself happens asynchronously off the serial-reader thread; poll
+    GET /camera/last-capture for the result.
+    """
     if not (1 <= body.channel <= 4):
         raise HTTPException(status_code=422, detail="channel must be 1–4")
     if not (1 <= body.duration_ms <= 10_000):
@@ -881,7 +615,11 @@ async def actuation_pulse(body: PulseRequest) -> dict:
     loop = asyncio.get_running_loop()
     ok, msg = await loop.run_in_executor(None, _pulse_channel, body.channel, body.duration_ms)
     if ok:
-        return {"ok": True, "message": msg}
+        if body.capture:
+            global _capture_request
+            with _capture_lock:
+                _capture_request = {"channel": body.channel, "armed_at": time.monotonic()}
+        return {"ok": True, "message": msg, "capture_pending": body.capture}
     raise HTTPException(status_code=422, detail=msg)
 
 
@@ -905,221 +643,34 @@ async def actuation_status() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Camera calibration endpoints
+# Camera endpoints — Orbbec Gemini 335L, RGB only, nothing persisted to disk
 # ---------------------------------------------------------------------------
 
-class CalibConfigRequest(BaseModel):
-    active: Optional[bool] = None
-    grid_cols: Optional[int] = None
-    grid_rows: Optional[int] = None
-    square_mm: Optional[float] = None
+@app.get("/camera/status")
+async def camera_status() -> dict:
+    return _camera.status()
 
 
-@app.get("/camera/calibrate")
-async def calib_status_get() -> dict:
-    with _calib_lock:
-        return {**_calib, "calibrated": _calib_mtx is not None}
+@app.get("/camera/snapshot")
+async def camera_snapshot():
+    """Single current JPEG frame. Poll with a cache-busting query param
+    (e.g. ?t=Date.now()) from an <img> tag for a live-ish preview."""
+    jpeg = _camera.get_latest_jpeg_bytes()
+    if jpeg is None:
+        raise HTTPException(status_code=503, detail="Camera not connected")
+    return Response(content=jpeg, media_type="image/jpeg")
 
 
-@app.post("/camera/calibrate/config")
-async def calib_config_post(body: CalibConfigRequest) -> dict:
-    with _calib_lock:
-        if body.active is not None:
-            _calib["active"] = body.active
-        if body.grid_cols is not None and body.grid_cols >= 2:
-            _calib["grid_cols"] = body.grid_cols
-        if body.grid_rows is not None and body.grid_rows >= 2:
-            _calib["grid_rows"] = body.grid_rows
-        if body.square_mm is not None and body.square_mm > 0:
-            _calib["square_mm"] = body.square_mm
-    return _calib
+@app.get("/camera/last-capture")
+async def camera_last_capture() -> dict:
+    """Metadata for the most recent actuation-synced capture, if any."""
+    if _last_capture_meta is None:
+        raise HTTPException(status_code=404, detail="No capture yet — fire a pulse with capture=true first")
+    return {**_last_capture_meta, "image_url": "/camera/last-capture/image"}
 
 
-@app.post("/camera/calibrate/capture")
-async def calib_capture() -> dict:
-    pending = _calib_pending
-    if not pending or not pending.get("found"):
-        raise HTTPException(status_code=422, detail="No chessboard detected in current frame")
-    with _calib_lock:
-        _calib_obj_pts.append(pending["objp"])
-        _calib_img_pts.append(pending["corners"])
-        if _calib["img_size"] is None:
-            _calib["img_size"] = pending["img_size"]
-        _calib["frame_count"] += 1
-    return {"ok": True, "frame_count": _calib["frame_count"]}
-
-
-@app.post("/camera/calibrate/run")
-async def calib_run() -> dict:
-    with _calib_lock:
-        n = len(_calib_obj_pts)
-        if n < 8:
-            raise HTTPException(status_code=422, detail=f"Need ≥8 frames, have {n}")
-        img_size = _calib["img_size"]
-        obj_snap = list(_calib_obj_pts)
-        img_snap = list(_calib_img_pts)
-        sq_mm = _calib["square_mm"]
-        g_cols = _calib["grid_cols"]
-        g_rows = _calib["grid_rows"]
-
-    def _run_calib():
-        import numpy as _np
-        import cv2 as _cv2
-        rms, mtx, dist, _, _ = _cv2.calibrateCamera(obj_snap, img_snap, img_size, None, None)
-        # Estimate ppm: average horizontal pixel spacing between adjacent corners
-        spacings = []
-        for corners in img_snap:
-            pts = corners.reshape(g_rows, g_cols, 2)
-            for r in range(g_rows):
-                diffs = _np.diff(pts[r], axis=0)
-                spacings.extend(_np.linalg.norm(diffs, axis=1).tolist())
-        avg_px = float(_np.mean(spacings)) if spacings else 0.0
-        ppm = avg_px / (sq_mm / 1000.0) if avg_px > 0 else _camera_config["ppm"]
-        return rms, mtx, dist, ppm
-
-    loop = asyncio.get_running_loop()
-    rms, mtx, dist, ppm = await loop.run_in_executor(None, _run_calib)
-
-    global _calib_mtx, _calib_dist
-    _calib_mtx = mtx
-    _calib_dist = dist
-    result = {"rms": round(float(rms), 4), "ppm": round(float(ppm), 1), "applied": False}
-    _calib["result"] = result
-    return result
-
-
-@app.post("/camera/calibrate/apply")
-async def calib_apply() -> dict:
-    if _calib_mtx is None:
-        raise HTTPException(status_code=422, detail="Run calibration first")
-    ppm = _calib["result"]["ppm"]
-    global _camera_config
-    _camera_config = {**_camera_config, "ppm": ppm}
-    _calib["result"]["applied"] = True
-    data = {
-        "matrix": _calib_mtx.tolist(),
-        "dist": _calib_dist.tolist(),
-        "rms": _calib["result"]["rms"],
-        "ppm": ppm,
-    }
-    try:
-        with open(_CALIB_FILE, "w") as fh:
-            json.dump(data, fh, indent=2)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Could not save calibration: {exc}")
-    return {"ok": True, **data}
-
-
-@app.post("/camera/calibrate/clear")
-async def calib_clear() -> dict:
-    global _calib_pending, _calib_mtx, _calib_dist
-    with _calib_lock:
-        _calib_obj_pts.clear()
-        _calib_img_pts.clear()
-        _calib_pending = None
-        _calib_mtx = None
-        _calib_dist = None
-        _calib.update({
-            "active": False, "frame_count": 0, "img_size": None,
-            "last_found": False, "result": None,
-        })
-    try:
-        os.remove(_CALIB_FILE)
-    except FileNotFoundError:
-        pass
-    return {"ok": True}
-
-
-# ---------------------------------------------------------------------------
-# Camera endpoints
-# ---------------------------------------------------------------------------
-
-class CameraConfigRequest(BaseModel):
-    camera_index: Optional[int] = None
-    z_min: Optional[float] = None   # Near depth gate (metres)
-    z_max: Optional[float] = None   # Far depth gate (metres)
-    threshold: Optional[int] = None  # RGB brightness threshold (fallback)
-    overlay_mode: Optional[str] = None
-    ppm: Optional[float] = None
-
-
-@app.get("/camera/config")
-async def camera_config_get() -> dict:
-    return _camera_config
-
-
-@app.post("/camera/config")
-async def camera_config_post(body: CameraConfigRequest) -> dict:
-    """Update camera characterization config. Only supplied fields are changed."""
-    global _camera_config
-    new = dict(_camera_config)
-    if body.camera_index is not None:
-        new["camera_index"] = max(0, body.camera_index)
-    if body.z_min is not None and 0.0 < body.z_min < 5.0:
-        new["z_min"] = body.z_min
-    if body.z_max is not None and 0.0 < body.z_max <= 5.0:
-        new["z_max"] = body.z_max
-    if body.threshold is not None:
-        new["threshold"] = max(0, min(255, body.threshold))
-    if body.overlay_mode is not None and body.overlay_mode in ("combined", "raw", "mask", "skeleton"):
-        new["overlay_mode"] = body.overlay_mode
-    if body.ppm is not None and body.ppm > 0:
-        new["ppm"] = body.ppm
-    _camera_config = new  # atomic replacement under GIL
-    return {"ok": True, "config": _camera_config}
-
-
-@app.get("/camera/stream")
-async def camera_stream():
-    """MJPEG stream of the annotated camera feed. Use as <img src=...> in the browser."""
-    async def generate():
-        while True:
-            frame_bytes = _camera_frame
-            if frame_bytes is not None:
-                yield (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n\r\n"
-                    + frame_bytes
-                    + b"\r\n"
-                )
-                await asyncio.sleep(1 / 30)
-            else:
-                await asyncio.sleep(0.1)
-
-    return StreamingResponse(
-        generate(),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-    )
-
-
-@app.websocket("/ws/camera")
-async def camera_metrics_ws(websocket: WebSocket) -> None:
-    """Push curvature metrics to the browser at POLL_HZ, same pattern as /ws/robot."""
-    await websocket.accept()
-
-    async def _watch_disconnect() -> None:
-        try:
-            while True:
-                frame = await websocket.receive()
-                if frame["type"] == "websocket.disconnect":
-                    return
-        except Exception:
-            return
-
-    disconnect = asyncio.create_task(_watch_disconnect())
-    last_sent = ""
-    heartbeat_at = time.monotonic() + HEARTBEAT_S
-
-    try:
-        while not disconnect.done():
-            await asyncio.sleep(1 / POLL_HZ)
-            msg = json.dumps(_camera_metrics)
-            now = time.monotonic()
-            if msg != last_sent or now >= heartbeat_at:
-                await websocket.send_text(msg)
-                last_sent = msg
-                heartbeat_at = now + HEARTBEAT_S
-    except Exception:
-        pass
-    finally:
-        disconnect.cancel()
+@app.get("/camera/last-capture/image")
+async def camera_last_capture_image():
+    if _last_capture_jpeg is None:
+        raise HTTPException(status_code=404, detail="No capture yet")
+    return Response(content=_last_capture_jpeg, media_type="image/jpeg")

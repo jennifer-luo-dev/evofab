@@ -1,7 +1,6 @@
 // Topbar.tsx
 // React component that displays the lab identity and live status
-// indicator dots for every hardware device in the SDL pipeline.  the camera dot is a static placeholder
-// until camera status is tracked in the database.
+// indicator dots for every hardware device in the SDL pipeline.
 
 "use client";
 
@@ -55,14 +54,6 @@ export function Topbar() {
             className={`inline-block w-2 h-2 rounded-full ${statusColor[robotDotStatus(robot)]}`}
           />
           <span className="font-mono text-xs text-muted">UR7e</span>
-        </div>
-
-        {/* Camera — static placeholder until camera status is tracked */}
-        <div className="flex items-center gap-1.5">
-          <span
-            className={`inline-block w-2 h-2 rounded-full ${statusColor["idle"]}`}
-          />
-          <span className="font-mono text-xs text-muted">Camera</span>
         </div>
       </div>
     </header>
