@@ -30,6 +30,16 @@ const PrepareScene = dynamic(
 
 type SliceStatus =
   "idle" | "queued" | "slicing" | "done" | "failed" | "printing";
+type PrepareStep = "upload" | "material" | "orientation" | "supports" | "slice";
+type OrientationState = "uploaded" | "user-picked" | "auto" | null;
+
+const PREPARE_STEPS: Array<{ id: PrepareStep; label: string }> = [
+  { id: "upload", label: "Upload" },
+  { id: "material", label: "Material" },
+  { id: "orientation", label: "Orientation" },
+  { id: "supports", label: "Supports" },
+  { id: "slice", label: "Slice" },
+];
 
 interface SlicerJobResult {
   gcode_url: string;
@@ -98,14 +108,15 @@ export function CloudSlicerClient({
 }: CloudSlicerClientProps) {
   const router = useRouter();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [selectedProfileId, setSelectedProfileId] = useState(
-    materialProfiles[0]?.id ?? "",
-  );
+  const [selectedProfileId, setSelectedProfileId] = useState("");
+  const [activeStep, setActiveStep] = useState<PrepareStep>("upload");
   const [status, setStatus] = useState<SliceStatus>("idle");
   const [job, setJob] = useState<SlicerJob | null>(null);
   const [gcode, setGcode] = useState<string | null>(null);
   const [notice, setNotice] = useState<SliceNotice | null>(null);
   const [rotation, setRotation] = useState<number[] | null>(null);
+  const [orientationState, setOrientationState] =
+    useState<OrientationState>(null);
   const [supports, setSupports] = useState(false);
   const [inspectResult, setInspectResult] = useState<InspectResult | null>(
     null,
@@ -120,7 +131,7 @@ export function CloudSlicerClient({
     (profile) => profile.id === selectedProfileId,
   )
     ? selectedProfileId
-    : (filteredProfiles[0]?.id ?? "");
+    : "";
   const selectedProfile = useMemo(
     () =>
       filteredProfiles.find((profile) => profile.id === effectiveProfileId) ??
@@ -130,6 +141,7 @@ export function CloudSlicerClient({
   const canSlice =
     selectedFile !== null &&
     selectedProfile !== null &&
+    orientationState !== null &&
     status !== "queued" &&
     status !== "slicing";
   const layerCount = useMemo(
@@ -148,6 +160,24 @@ export function CloudSlicerClient({
     gcode !== null &&
     selectedProfile !== null &&
     !buildBlock;
+  const sliceDisabledReason = useMemo(() => {
+    if (!selectedFile) return "Upload an STL before slicing.";
+    if (!selectedProfile) return "Select a material profile before slicing.";
+    if (!orientationState)
+      return "Choose or confirm an orientation before slicing.";
+    if (status === "queued" || status === "slicing")
+      return "The current slice job is still running.";
+    return null;
+  }, [orientationState, selectedFile, selectedProfile, status]);
+  const printerDisabledReason = useMemo(() => {
+    if (status !== "done") return "Slice the part before selecting a printer.";
+    if (!gcode) return "Downloadable G-code is not ready yet.";
+    if (!selectedProfile)
+      return "Select a material profile before printer handoff.";
+    if (buildBlock)
+      return `Part exceeds build volume on ${buildBlock.axis.toUpperCase()} by ${buildBlock.overageMm.toFixed(1)} mm.`;
+    return null;
+  }, [buildBlock, gcode, selectedProfile, status]);
 
   function validateFile(file: File): string | null {
     if (!file.name.toLowerCase().endsWith(".stl")) return "Upload an STL file.";
@@ -161,6 +191,7 @@ export function CloudSlicerClient({
     setGcode(null);
     setStatus("idle");
     setRotation(null);
+    setOrientationState(null);
     setInspectResult(null);
 
     if (!file) {
@@ -180,10 +211,17 @@ export function CloudSlicerClient({
     }
 
     setSelectedFile(file);
+    setOrientationState("uploaded");
+    setActiveStep("material");
     setNotice({
       tone: "info",
       message: `${file.name} accepted. Ready to slice with the selected material profile.`,
     });
+  }
+
+  function handleOrientationChange(nextRotation: number[] | null) {
+    setRotation(nextRotation);
+    setOrientationState(nextRotation ? "user-picked" : "uploaded");
   }
 
   useEffect(() => {
@@ -253,7 +291,7 @@ export function CloudSlicerClient({
   }
 
   async function handleSlice() {
-    if (!selectedFile || !selectedProfile) return;
+    if (!selectedFile || !selectedProfile || !orientationState) return;
 
     setNotice({
       tone: "info",
@@ -323,7 +361,7 @@ export function CloudSlicerClient({
   }
 
   async function handleSelectPrinter() {
-    if (!canPrint || !selectedProfile || !gcode) return;
+    if (!canPrint || !selectedProfile || !gcode || !orientationState) return;
 
     setNotice({
       tone: "info",
@@ -343,7 +381,7 @@ export function CloudSlicerClient({
         prepareSettings: {
           supports,
           rotation,
-          orientation: rotation ? "custom" : "uploaded",
+          orientation: orientationState,
         },
         experimentParams: {},
         createdAt: new Date().toISOString(),
@@ -395,103 +433,181 @@ export function CloudSlicerClient({
             </span>
           </div>
 
-          <div className="mt-5">
-            {selectedFile ? (
-              <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[#111927]">
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
-                  <div>
-                    <p className="text-sm font-semibold text-white">
-                      {selectedFile.name}
-                    </p>
-                    <p className="mt-1 font-mono text-xs text-white/60">
-                      {formatBytes(selectedFile.size)}
-                    </p>
-                  </div>
-                  <label className="relative cursor-pointer rounded-md border border-white/15 px-3 py-2 text-xs font-semibold text-white transition-colors hover:border-[var(--color-teal)]">
-                    <input
-                      type="file"
-                      accept=".stl,model/stl"
-                      className="absolute inset-0 cursor-pointer opacity-0"
-                      onClick={(event) => {
-                        event.currentTarget.value = "";
-                      }}
-                      onChange={(event) =>
-                        handleFile(event.target.files?.[0] ?? null)
-                      }
-                    />
-                    Replace STL
-                  </label>
-                </div>
-                <PrepareScene
-                  file={selectedFile}
-                  rotation={rotation}
-                  buildVolume={buildVolume}
-                  bounds={inspectResult?.bounding_box_mm ?? null}
-                />
-              </div>
-            ) : (
-              <label className="relative flex min-h-44 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-lg border border-dashed border-[var(--color-border-2)] bg-[var(--color-surface-2)] px-4 text-center transition-colors hover:border-[var(--color-teal)]">
-                <input
-                  type="file"
-                  accept=".stl,model/stl"
-                  className="absolute inset-0 z-10 cursor-pointer opacity-0"
-                  onClick={(event) => {
-                    event.currentTarget.value = "";
-                  }}
-                  onChange={(event) =>
-                    handleFile(event.target.files?.[0] ?? null)
-                  }
-                />
-                <span className="text-2xl">+</span>
-                <span className="mt-2 text-sm font-medium text-[var(--color-text)]">
-                  Select STL
-                </span>
-                <span className="mt-1 text-xs text-[var(--color-muted)]">
-                  100 MB max
-                </span>
-              </label>
-            )}
-          </div>
-
-          <div className="mt-5 grid gap-4">
-            <label className="flex flex-col gap-2">
-              <span className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                Material
-              </span>
-              <select
-                value={effectiveProfileId}
-                onChange={(event) => setSelectedProfileId(event.target.value)}
-                className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-teal)]"
+          <div className="mt-5 grid grid-cols-5 gap-2">
+            {PREPARE_STEPS.map((step, index) => (
+              <button
+                key={step.id}
+                type="button"
+                onClick={() => setActiveStep(step.id)}
+                className={cn(
+                  "min-h-12 rounded-md border px-2 py-2 text-xs font-semibold transition-colors",
+                  activeStep === step.id
+                    ? "border-[var(--color-teal)] bg-[var(--color-teal)]/10 text-[var(--color-text)]"
+                    : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-muted)] hover:border-[var(--color-border-2)]",
+                )}
               >
-                {filteredProfiles.map((profile) => (
-                  <option key={profile.id} value={profile.id}>
-                    {profile.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+                <span className="block font-mono text-[10px]">{index + 1}</span>
+                <span>{step.label}</span>
+              </button>
+            ))}
           </div>
 
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
-            <label className="flex items-center gap-3 text-sm font-medium text-[var(--color-text)]">
-              <input
-                type="checkbox"
-                checked={supports}
-                onChange={(event) => setSupports(event.target.checked)}
-                className="h-4 w-4 accent-[var(--color-teal)]"
-              />
-              Add supports
-            </label>
-            {supportsRecommended && (
+          {activeStep === "upload" && (
+            <div className="mt-5">
+              {selectedFile ? (
+                <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[#111927]">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+                    <div>
+                      <p className="text-sm font-semibold text-white">
+                        {selectedFile.name}
+                      </p>
+                      <p className="mt-1 font-mono text-xs text-white/60">
+                        {formatBytes(selectedFile.size)}
+                      </p>
+                    </div>
+                    <label className="relative cursor-pointer rounded-md border border-white/15 px-3 py-2 text-xs font-semibold text-white transition-colors hover:border-[var(--color-teal)]">
+                      <input
+                        type="file"
+                        accept=".stl,model/stl"
+                        className="absolute inset-0 cursor-pointer opacity-0"
+                        onClick={(event) => {
+                          event.currentTarget.value = "";
+                        }}
+                        onChange={(event) =>
+                          handleFile(event.target.files?.[0] ?? null)
+                        }
+                      />
+                      Replace STL
+                    </label>
+                  </div>
+                  <PrepareScene
+                    file={selectedFile}
+                    rotation={rotation}
+                    buildVolume={buildVolume}
+                    bounds={inspectResult?.bounding_box_mm ?? null}
+                  />
+                </div>
+              ) : (
+                <label className="relative flex min-h-44 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-lg border border-dashed border-[var(--color-border-2)] bg-[var(--color-surface-2)] px-4 text-center transition-colors hover:border-[var(--color-teal)]">
+                  <input
+                    type="file"
+                    accept=".stl,model/stl"
+                    className="absolute inset-0 z-10 cursor-pointer opacity-0"
+                    onClick={(event) => {
+                      event.currentTarget.value = "";
+                    }}
+                    onChange={(event) =>
+                      handleFile(event.target.files?.[0] ?? null)
+                    }
+                  />
+                  <span className="text-2xl">+</span>
+                  <span className="mt-2 text-sm font-medium text-[var(--color-text)]">
+                    Select STL
+                  </span>
+                  <span className="mt-1 text-xs text-[var(--color-muted)]">
+                    100 MB max
+                  </span>
+                </label>
+              )}
+            </div>
+          )}
+
+          {activeStep === "material" && (
+            <div className="mt-5 grid gap-4">
+              <label className="flex flex-col gap-2">
+                <span className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                  Material
+                </span>
+                <select
+                  value={effectiveProfileId}
+                  onChange={(event) => setSelectedProfileId(event.target.value)}
+                  className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-teal)]"
+                >
+                  <option value="">Select a material profile</option>
+                  {filteredProfiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <button
                 type="button"
-                onClick={() => setSupports(true)}
-                className="rounded-md border border-[var(--color-amber)]/40 px-3 py-1.5 text-xs font-semibold text-[var(--color-amber)]"
+                disabled={!selectedProfile}
+                onClick={() => setActiveStep("orientation")}
+                className="w-fit rounded-lg border border-[var(--color-border-2)] px-4 py-2 text-sm font-semibold text-[var(--color-text)] transition-colors hover:border-[var(--color-teal)] disabled:cursor-not-allowed disabled:opacity-40"
               >
-                This part has overhangs — supports recommended
+                Continue
               </button>
-            )}
-          </div>
+            </div>
+          )}
+
+          {activeStep === "orientation" && (
+            <div className="mt-5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-[var(--color-text)]">
+                    {orientationState
+                      ? rotation
+                        ? "User-picked orientation"
+                        : "Uploaded orientation"
+                      : "Orientation required"}
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--color-muted)]">
+                    {selectedFile
+                      ? "Use the preview controls to choose a side down, or keep the uploaded pose."
+                      : "Upload an STL before choosing orientation."}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={!selectedFile}
+                  onClick={() => handleOrientationChange(null)}
+                  className="rounded-md border border-[var(--color-border-2)] px-3 py-2 text-xs font-semibold text-[var(--color-text)] transition-colors hover:border-[var(--color-teal)] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Use uploaded pose
+                </button>
+              </div>
+              <button
+                type="button"
+                disabled={!orientationState}
+                onClick={() => setActiveStep("supports")}
+                className="mt-3 rounded-lg border border-[var(--color-border-2)] px-4 py-2 text-sm font-semibold text-[var(--color-text)] transition-colors hover:border-[var(--color-teal)] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Continue
+              </button>
+            </div>
+          )}
+
+          {activeStep === "supports" && (
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
+              <label className="flex items-center gap-3 text-sm font-medium text-[var(--color-text)]">
+                <input
+                  type="checkbox"
+                  checked={supports}
+                  onChange={(event) => setSupports(event.target.checked)}
+                  className="h-4 w-4 accent-[var(--color-teal)]"
+                />
+                Add supports
+              </label>
+              {supportsRecommended && (
+                <button
+                  type="button"
+                  onClick={() => setSupports(true)}
+                  className="rounded-md border border-[var(--color-amber)]/40 px-3 py-1.5 text-xs font-semibold text-[var(--color-amber)]"
+                >
+                  This part has overhangs — supports recommended
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setActiveStep("slice")}
+                className="rounded-md border border-[var(--color-border-2)] px-3 py-2 text-xs font-semibold text-[var(--color-text)] transition-colors hover:border-[var(--color-teal)]"
+              >
+                Continue
+              </button>
+            </div>
+          )}
 
           {(inspectPending || inspectResult || buildBlock) && (
             <div className="mt-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 text-sm text-[var(--color-text)]">
@@ -546,22 +662,38 @@ export function CloudSlicerClient({
             </p>
           )}
 
-          <div className="mt-5 flex flex-wrap gap-3">
-            <button
-              onClick={handleSlice}
-              disabled={!canSlice}
-              className="rounded-lg bg-[var(--color-teal)] px-5 py-2.5 text-sm font-semibold text-[var(--color-bg)] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Slice
-            </button>
-            <button
-              onClick={handleSelectPrinter}
-              disabled={!canPrint}
-              className="rounded-lg border border-[var(--color-border-2)] px-5 py-2.5 text-sm font-semibold text-[var(--color-text)] transition-all hover:border-[var(--color-teal)] disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Select a printer
-            </button>
-          </div>
+          {activeStep === "slice" && (
+            <div className="mt-5 flex flex-wrap items-start gap-3">
+              <div>
+                <button
+                  onClick={handleSlice}
+                  disabled={!canSlice}
+                  className="rounded-lg bg-[var(--color-teal)] px-5 py-2.5 text-sm font-semibold text-[var(--color-bg)] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Slice
+                </button>
+                {sliceDisabledReason && (
+                  <p className="mt-2 max-w-xs text-xs text-[var(--color-muted)]">
+                    {sliceDisabledReason}
+                  </p>
+                )}
+              </div>
+              <div>
+                <button
+                  onClick={handleSelectPrinter}
+                  disabled={!canPrint}
+                  className="rounded-lg border border-[var(--color-border-2)] px-5 py-2.5 text-sm font-semibold text-[var(--color-text)] transition-all hover:border-[var(--color-teal)] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Select a printer
+                </button>
+                {printerDisabledReason && (
+                  <p className="mt-2 max-w-xs text-xs text-[var(--color-muted)]">
+                    {printerDisabledReason}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
         </section>
 
         <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
@@ -618,8 +750,12 @@ export function CloudSlicerClient({
                 Prepare
               </p>
               <p className="mt-2 font-mono text-xs text-[var(--color-text)]">
-                {rotation ? "custom side down" : "uploaded orientation"} ·{" "}
-                {supports ? "supports on" : "supports off"}
+                {orientationState === "user-picked"
+                  ? "user-picked side down"
+                  : orientationState === "auto"
+                    ? "auto-oriented"
+                    : "uploaded orientation"}{" "}
+                · {supports ? "supports on" : "supports off"}
               </p>
             </div>
           </div>
@@ -630,7 +766,7 @@ export function CloudSlicerClient({
         gcode={gcode}
         status={status}
         rotation={rotation}
-        onOrientationChange={setRotation}
+        onOrientationChange={handleOrientationChange}
       />
     </div>
   );
