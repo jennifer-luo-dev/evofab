@@ -165,6 +165,15 @@ export function PrintersFleetClient({
           return (
             <section
               key={printer.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => router.push(`/printers/${printer.id}`)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  router.push(`/printers/${printer.id}`);
+                }
+              }}
               className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
             >
               <div className="flex items-start justify-between gap-3">
@@ -233,23 +242,25 @@ export function PrintersFleetClient({
                   </p>
                 </div>
               )}
-              {draft && (
-                <button
-                  disabled={busyPrinterId !== null}
-                  onClick={() => startPreparedPrint(printer)}
-                  className="mt-4 w-full rounded-lg bg-[var(--color-teal)] px-4 py-2 text-sm font-semibold text-[var(--color-bg)] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {busyPrinterId === printer.id
-                    ? "Starting..."
-                    : "Start prepared print"}
-                </button>
-              )}
-              <PrinterPreheatPanel
-                printer={printer}
-                materialProfiles={materialProfiles}
-              />
-              <PrinterMotionPanel printer={printer} />
-              <PrinterMacroPanel printer={printer} />
+              <div onClick={(event) => event.stopPropagation()}>
+                {draft && (
+                  <button
+                    disabled={busyPrinterId !== null}
+                    onClick={() => startPreparedPrint(printer)}
+                    className="mt-4 w-full rounded-lg bg-[var(--color-teal)] px-4 py-2 text-sm font-semibold text-[var(--color-bg)] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {busyPrinterId === printer.id
+                      ? "Starting..."
+                      : "Start prepared print"}
+                  </button>
+                )}
+                <PrinterPreheatPanel
+                  printer={printer}
+                  materialProfiles={materialProfiles}
+                />
+                <PrinterMotionPanel printer={printer} />
+                <PrinterMacroPanel printer={printer} />
+              </div>
             </section>
           );
         })}

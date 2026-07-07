@@ -1,0 +1,2 @@
+ALTER TABLE printers
+  ADD COLUMN IF NOT EXISTS webcam_url TEXT;
