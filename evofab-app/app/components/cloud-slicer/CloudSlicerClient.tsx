@@ -23,6 +23,10 @@ const SliceViewer = dynamic(
   () => import("./SliceViewer").then((module) => module.SliceViewer),
   { ssr: false },
 );
+const PrepareScene = dynamic(
+  () => import("./PrepareScene").then((module) => module.PrepareScene),
+  { ssr: false },
+);
 
 type SliceStatus =
   "idle" | "queued" | "slicing" | "done" | "failed" | "printing";
@@ -391,24 +395,63 @@ export function CloudSlicerClient({
             </span>
           </div>
 
-          <label className="relative mt-5 flex min-h-44 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-lg border border-dashed border-[var(--color-border-2)] bg-[var(--color-surface-2)] px-4 text-center transition-colors hover:border-[var(--color-teal)]">
-            <input
-              type="file"
-              accept=".stl,model/stl"
-              className="absolute inset-0 z-10 cursor-pointer opacity-0"
-              onClick={(event) => {
-                event.currentTarget.value = "";
-              }}
-              onChange={(event) => handleFile(event.target.files?.[0] ?? null)}
-            />
-            <span className="text-2xl">{selectedFile ? "✓" : "+"}</span>
-            <span className="mt-2 text-sm font-medium text-[var(--color-text)]">
-              {selectedFile ? selectedFile.name : "Select STL"}
-            </span>
-            <span className="mt-1 text-xs text-[var(--color-muted)]">
-              {selectedFile ? formatBytes(selectedFile.size) : "100 MB max"}
-            </span>
-          </label>
+          <div className="mt-5">
+            {selectedFile ? (
+              <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[#111927]">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+                  <div>
+                    <p className="text-sm font-semibold text-white">
+                      {selectedFile.name}
+                    </p>
+                    <p className="mt-1 font-mono text-xs text-white/60">
+                      {formatBytes(selectedFile.size)}
+                    </p>
+                  </div>
+                  <label className="relative cursor-pointer rounded-md border border-white/15 px-3 py-2 text-xs font-semibold text-white transition-colors hover:border-[var(--color-teal)]">
+                    <input
+                      type="file"
+                      accept=".stl,model/stl"
+                      className="absolute inset-0 cursor-pointer opacity-0"
+                      onClick={(event) => {
+                        event.currentTarget.value = "";
+                      }}
+                      onChange={(event) =>
+                        handleFile(event.target.files?.[0] ?? null)
+                      }
+                    />
+                    Replace STL
+                  </label>
+                </div>
+                <PrepareScene
+                  file={selectedFile}
+                  rotation={rotation}
+                  buildVolume={buildVolume}
+                  bounds={inspectResult?.bounding_box_mm ?? null}
+                />
+              </div>
+            ) : (
+              <label className="relative flex min-h-44 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-lg border border-dashed border-[var(--color-border-2)] bg-[var(--color-surface-2)] px-4 text-center transition-colors hover:border-[var(--color-teal)]">
+                <input
+                  type="file"
+                  accept=".stl,model/stl"
+                  className="absolute inset-0 z-10 cursor-pointer opacity-0"
+                  onClick={(event) => {
+                    event.currentTarget.value = "";
+                  }}
+                  onChange={(event) =>
+                    handleFile(event.target.files?.[0] ?? null)
+                  }
+                />
+                <span className="text-2xl">+</span>
+                <span className="mt-2 text-sm font-medium text-[var(--color-text)]">
+                  Select STL
+                </span>
+                <span className="mt-1 text-xs text-[var(--color-muted)]">
+                  100 MB max
+                </span>
+              </label>
+            )}
+          </div>
 
           <div className="mt-5 grid gap-4">
             <label className="flex flex-col gap-2">
