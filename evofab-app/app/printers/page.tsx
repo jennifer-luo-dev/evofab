@@ -30,10 +30,6 @@ export default async function PrintersPage() {
         </span>
       </div>
 
-      <div className="mt-6">
-        <PrinterOnboardingForm />
-      </div>
-
       <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {printers.map((printer) => {
           const status = printer.printer_status;
@@ -120,6 +116,10 @@ export default async function PrintersPage() {
             </section>
           );
         })}
+      </div>
+
+      <div className="mt-6">
+        <PrinterOnboardingForm />
       </div>
     </div>
   );

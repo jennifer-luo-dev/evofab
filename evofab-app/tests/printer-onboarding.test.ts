@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   initialPrinterStatus,
+  normalizePrinterConnectionTestInput,
   normalizePrinterOnboardingInput,
   PrinterOnboardingError,
 } from "../app/lib/printer-onboarding";
@@ -65,4 +66,22 @@ test("printer onboarding creates an offline initial status row", () => {
   assert.equal(status.status, "offline");
   assert.equal(status.progress_source, "unknown");
   assert.equal(status.layer_source, "unknown");
+});
+
+test("printer connection test reuses onboarding normalization", () => {
+  const printer = normalizePrinterConnectionTestInput({
+    name: " EvoFab H ",
+    model: " Custom FGF ",
+    ip: " 10.247.137.21 ",
+    port: "7125",
+    type: "FGF",
+  });
+
+  assert.equal(printer.id, "connection-test");
+  assert.equal(printer.name, "EvoFab H");
+  assert.equal(printer.model, "Custom FGF");
+  assert.equal(printer.ip, "10.247.137.21");
+  assert.equal(printer.port, 7125);
+  assert.equal(printer.type, "FGF");
+  assert.equal(printer.is_active, true);
 });

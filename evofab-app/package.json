@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "format:check": "prettier --check README.md app/lib/mock-status-producer.ts app/lib/mock-status-scenarios.ts scripts/mock-status-producer.ts tests/**/*.ts",
+    "format:check": "prettier --check README.md docs/live-demo.md app/api/printers/test-connection/route.ts app/components/printers/PrinterOnboardingForm.tsx app/lib/mock-status-producer.ts app/lib/mock-status-scenarios.ts app/lib/moonraker-client.ts app/lib/printer-onboarding.ts app/lib/status-worker.ts scripts/mock-status-producer.ts scripts/status-worker.ts tests/**/*.ts",
+    "status:worker": "tsx scripts/status-worker.ts",
     "test": "tsx --test tests/*.test.ts tests/*.test.mjs",
     "test:integration": "tsx --test tests/integration/*.test.ts",
     "status:mock": "tsx scripts/mock-status-producer.ts"
