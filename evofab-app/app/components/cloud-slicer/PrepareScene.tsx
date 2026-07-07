@@ -13,6 +13,7 @@ interface PrepareSceneProps {
   buildVolume: BuildVolumeMm | null;
   bounds: BoundingBoxMm | null;
   faces: SlicerFace[];
+  showSupportPreview?: boolean;
   onFacePick: (face: SlicerFace) => void;
 }
 
@@ -22,6 +23,7 @@ export function PrepareScene({
   buildVolume,
   bounds,
   faces,
+  showSupportPreview = false,
   onFacePick,
 }: PrepareSceneProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -122,6 +124,34 @@ export function PrepareScene({
       mesh.position.y -= modelBox.min.y - BED_CLEARANCE_MM;
       scene.add(mesh);
       disposables.push(geometry, material);
+
+      const placedBox = new THREE.Box3().setFromObject(mesh);
+      if (showSupportPreview) {
+        const supportMaterial = new THREE.MeshBasicMaterial({
+          color: 0x22c55e,
+          transparent: true,
+          opacity: 0.32,
+          depthWrite: false,
+        });
+        const width = Math.max(4, (placedBox.max.x - placedBox.min.x) * 0.18);
+        const depth = Math.max(4, (placedBox.max.z - placedBox.min.z) * 0.18);
+        const height = Math.max(8, (placedBox.max.y - placedBox.min.y) * 0.42);
+        const supportGeometry = new THREE.BoxGeometry(width, height, depth);
+        const centers = [-0.24, 0.24];
+        for (const xFactor of centers) {
+          for (const zFactor of centers) {
+            const support = new THREE.Mesh(supportGeometry, supportMaterial);
+            support.position.set(
+              (placedBox.max.x - placedBox.min.x) * xFactor,
+              height / 2,
+              (placedBox.max.z - placedBox.min.z) * zFactor,
+            );
+            support.renderOrder = 1;
+            scene.add(support);
+          }
+        }
+        disposables.push(supportGeometry, supportMaterial);
+      }
 
       const faceMeshes: Array<{
         face: SlicerFace;
@@ -252,7 +282,15 @@ export function PrepareScene({
       cancelled = true;
       cleanup();
     };
-  }, [bounds, buildVolume, faces, file, onFacePick, rotation]);
+  }, [
+    bounds,
+    buildVolume,
+    faces,
+    file,
+    onFacePick,
+    rotation,
+    showSupportPreview,
+  ]);
 
   return (
     <canvas

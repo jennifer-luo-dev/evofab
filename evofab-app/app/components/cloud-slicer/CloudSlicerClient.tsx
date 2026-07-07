@@ -187,6 +187,50 @@ export function CloudSlicerClient({
       return `Part exceeds build volume on ${buildBlock.axis.toUpperCase()} by ${buildBlock.overageMm.toFixed(1)} mm.`;
     return null;
   }, [buildBlock, gcode, selectedProfile, status]);
+  const visibleNotice = useMemo<SliceNotice | null>(() => {
+    if (
+      notice?.tone === "error" ||
+      status === "queued" ||
+      status === "slicing" ||
+      status === "done"
+    ) {
+      return notice;
+    }
+    if (activeStep === "upload" && selectedFile) {
+      return {
+        tone: "info",
+        message:
+          orientationState === "auto"
+            ? `${selectedFile.name} is auto-oriented. Continue when the placement looks right.`
+            : orientationState === "user-picked"
+              ? `${selectedFile.name} is oriented from your selected face. Continue when the placement looks right.`
+              : `${selectedFile.name} is using the uploaded pose. Auto-orient is available if you want it.`,
+      };
+    }
+    if (activeStep === "material" && selectedProfile) {
+      return {
+        tone: "success",
+        message: `Material selected: ${selectedProfile.name}. Review the settings, then continue.`,
+      };
+    }
+    if (activeStep === "supports") {
+      return {
+        tone: "info",
+        message: supports
+          ? "Supports enabled. The preview highlights the planned support volume; final support toolpaths appear after slicing."
+          : "Supports disabled. Turn them on to compare the support preview before slicing.",
+      };
+    }
+    return notice;
+  }, [
+    activeStep,
+    notice,
+    orientationState,
+    selectedFile,
+    selectedProfile,
+    status,
+    supports,
+  ]);
 
   function validateFile(file: File): string | null {
     if (!file.name.toLowerCase().endsWith(".stl")) return "Upload an STL file.";
@@ -733,6 +777,19 @@ export function CloudSlicerClient({
                     : "Inspect data is still loading for this model."}
                 </p>
               </div>
+              {selectedFile && (
+                <div className="mt-3 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[#111927]">
+                  <PrepareScene
+                    file={selectedFile}
+                    rotation={rotation}
+                    buildVolume={buildVolume}
+                    bounds={inspectResult?.bounding_box_mm ?? null}
+                    faces={[]}
+                    showSupportPreview={supports}
+                    onFacePick={handleFacePick}
+                  />
+                </div>
+              )}
               <button
                 type="button"
                 onClick={goNext}
@@ -780,23 +837,23 @@ export function CloudSlicerClient({
               </div>
             )}
 
-          {notice && (
+          {visibleNotice && (
             <p
               className={cn(
                 "mt-4 rounded-lg border px-3 py-2 text-sm",
-                notice.tone === "error"
+                visibleNotice.tone === "error"
                   ? "border-[var(--color-red)]/30 bg-[var(--color-red)]/10 text-[var(--color-red)]"
-                  : notice.tone === "success"
+                  : visibleNotice.tone === "success"
                     ? "border-[var(--color-green)]/30 bg-[var(--color-green)]/10 text-[var(--color-green)]"
                     : "border-[var(--color-teal)]/30 bg-[var(--color-teal)]/10 text-[var(--color-text)]",
               )}
             >
-              {notice.code && (
+              {visibleNotice.code && (
                 <span className="mr-2 font-mono text-xs uppercase">
-                  {notice.code}
+                  {visibleNotice.code}
                 </span>
               )}
-              {notice.message}
+              {visibleNotice.message}
             </p>
           )}
 
