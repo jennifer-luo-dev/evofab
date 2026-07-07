@@ -38,6 +38,9 @@ export async function POST(req: NextRequest) {
   const submittedSettings = normalizePrintSettings(
     JSON.parse((form.get("settings") as string) || "{}"),
   );
+  const prepareSettings = JSON.parse(
+    (form.get("prepare_settings") as string) || "{}",
+  );
   const experiment_params = JSON.parse(
     (form.get("experiment_params") as string) || "{}",
   );
@@ -105,7 +108,7 @@ export async function POST(req: NextRequest) {
       material_profile_id,
       filename: file.name,
       file_key: fileKey,
-      print_settings: settings,
+      print_settings: { ...settings, prepare: prepareSettings },
       experiment_params,
       status: "printing",
       pipeline_step: "printing",

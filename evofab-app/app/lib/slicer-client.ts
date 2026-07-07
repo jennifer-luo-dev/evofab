@@ -22,6 +22,10 @@ export interface SlicerJobResult {
   material_used_g: number;
   engine: string;
   profile_id: string;
+  rotation?: number[] | null;
+  drop_to_bed?: boolean;
+  transformed_bounding_box_mm?: BoundingBoxMm | null;
+  supports?: boolean | null;
 }
 
 export interface SlicerJob {
@@ -42,6 +46,26 @@ export interface SlicerSubmitResponse {
 export interface SubmitSliceInput {
   model: File;
   profileId: string;
+  rotation?: number[] | null;
+  supports?: boolean;
+}
+
+export interface BoundingBoxMm {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface SlicerInspectResult {
+  bounding_box_mm: BoundingBoxMm;
+  is_watertight: boolean;
+  overhang_ratio: number;
+  triangle_count: number;
+}
+
+export interface InspectModelInput {
+  model: File;
+  rotation?: number[] | null;
 }
 
 export interface SlicerClientOptions {
@@ -55,6 +79,7 @@ export interface SlicerClientOptions {
 
 const MOCK_JOB_ID_PREFIX = "mock-slicer-job";
 const MOCK_TOTAL_LAYERS = 48;
+const mockJobs = new Map<string, SlicerJobResult>();
 
 function buildMockGcodeFixture(totalLayers = MOCK_TOTAL_LAYERS): string {
   const lines = [
@@ -127,7 +152,30 @@ const MOCK_RESULT: SlicerJobResult = {
   material_used_g: 17.42,
   engine: "mock",
   profile_id: "pla-fgf",
+  rotation: null,
+  drop_to_bed: true,
+  transformed_bounding_box_mm: { x: 24, y: 24, z: 40 },
+  supports: null,
 };
+
+function mockInspectResult(input: InspectModelInput): SlicerInspectResult {
+  const name = input.model.name.toLowerCase();
+  const rotated = Boolean(input.rotation);
+  return {
+    bounding_box_mm: name.includes("oversize")
+      ? { x: 999, y: 24, z: 40 }
+      : rotated
+        ? { x: 24, y: 40, z: 24 }
+        : { x: 24, y: 24, z: 40 },
+    is_watertight: !name.includes("leaky"),
+    overhang_ratio: name.includes("high-overhang")
+      ? 0.62
+      : name.includes("flat") || rotated
+        ? 0.08
+        : 0.2,
+    triangle_count: 12,
+  };
+}
 
 async function parseJsonSafely(text: string): Promise<unknown> {
   if (!text) return null;
@@ -225,8 +273,16 @@ export class SlicerClient {
 
   async submitSlice(input: SubmitSliceInput): Promise<SlicerSubmitResponse> {
     if (this.config.mode === "mock") {
+      const jobId = `${MOCK_JOB_ID_PREFIX}-${Date.now()}`;
+      mockJobs.set(jobId, {
+        ...MOCK_RESULT,
+        profile_id: input.profileId,
+        rotation: input.rotation ?? null,
+        transformed_bounding_box_mm: mockInspectResult(input).bounding_box_mm,
+        supports: input.supports ?? null,
+      });
       return {
-        job_id: `${MOCK_JOB_ID_PREFIX}-${Date.now()}`,
+        job_id: jobId,
         status: "queued",
       };
     }
@@ -234,6 +290,8 @@ export class SlicerClient {
     const form = new FormData();
     form.append("model", input.model, input.model.name);
     form.append("profile_id", input.profileId);
+    if (input.rotation) form.append("rotation", JSON.stringify(input.rotation));
+    if (input.supports !== undefined) form.append("supports", String(input.supports));
 
     try {
       const response = await this.fetchImpl(`${this.config.url}/slice`, {
@@ -255,7 +313,7 @@ export class SlicerClient {
       return {
         job_id: jobId,
         status: "done",
-        result: MOCK_RESULT,
+        result: mockJobs.get(jobId) ?? MOCK_RESULT,
       };
     }
 
@@ -307,6 +365,30 @@ export class SlicerClient {
       }
 
       return injectPrintStatsInfo(await response.text());
+    } catch (error) {
+      throw normalizeSlicerError(error);
+    }
+  }
+
+  async inspectModel(input: InspectModelInput): Promise<SlicerInspectResult> {
+    if (this.config.mode === "mock") {
+      return mockInspectResult(input);
+    }
+
+    const form = new FormData();
+    form.append("model", input.model, input.model.name);
+    if (input.rotation) form.append("rotation", JSON.stringify(input.rotation));
+
+    try {
+      const response = await this.fetchImpl(`${this.config.url}/inspect`, {
+        method: "POST",
+        body: form,
+        headers: {
+          Authorization: `Bearer ${this.config.token}`,
+        },
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+      return await readResponse<SlicerInspectResult>(response);
     } catch (error) {
       throw normalizeSlicerError(error);
     }

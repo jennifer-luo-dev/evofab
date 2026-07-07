@@ -13,6 +13,8 @@ interface SliceViewerProps {
   file: File | null;
   gcode: string | null;
   status: string;
+  rotation: number[] | null;
+  onOrientationChange: (rotation: number[] | null) => void;
 }
 
 const LINE_TYPES: Array<{
@@ -110,10 +112,17 @@ function modelBounds(layers: GcodeLayer[]) {
   };
 }
 
-export function SliceViewer({ gcode, status }: SliceViewerProps) {
+export function SliceViewer({
+  file,
+  gcode,
+  status,
+  rotation,
+  onOrientationChange,
+}: SliceViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [layerIndex, setLayerIndex] = useState(0);
   const [showInfo, setShowInfo] = useState(true);
+  const [orientationMode, setOrientationMode] = useState(false);
   const layers = useMemo(() => (gcode ? parseGcodeLayers(gcode) : []), [gcode]);
   const reportedTotal = useMemo(
     () => (gcode ? layerTotalFromGcode(gcode) : null),
@@ -132,6 +141,7 @@ export function SliceViewer({ gcode, status }: SliceViewerProps) {
   );
   const totalPathMm = stats.reduce((sum, stat) => sum + stat.lengthMm, 0);
   const hasRenderableSlice = gcode !== null && layers.length > 0;
+  const hasRenderableScene = hasRenderableSlice || file !== null;
 
   useEffect(() => {
     let cancelled = false;
@@ -140,11 +150,12 @@ export function SliceViewer({ gcode, status }: SliceViewerProps) {
 
     async function renderScene() {
       const canvas = canvasRef.current;
-      if (!canvas || !activeLayer) return;
+      if (!canvas || !hasRenderableScene) return;
 
       const THREE = await import("three");
       const { OrbitControls } =
         await import("three/examples/jsm/controls/OrbitControls.js");
+      const { STLLoader } = await import("three/examples/jsm/loaders/STLLoader.js");
       if (cancelled) return;
 
       const renderer = new THREE.WebGLRenderer({
@@ -183,6 +194,37 @@ export function SliceViewer({ gcode, status }: SliceViewerProps) {
       grid.position.y = 0.01;
       scene.add(grid);
       disposables.push(grid.geometry, grid.material);
+
+      let modelMesh: import("three").Mesh | null = null;
+      if (file) {
+        const stlBuffer = await file.arrayBuffer();
+        if (cancelled) return;
+        const geometry = new STLLoader().parse(stlBuffer);
+        geometry.computeVertexNormals();
+        geometry.computeBoundingBox();
+        const box = geometry.boundingBox;
+        const center = new THREE.Vector3();
+        const size = new THREE.Vector3();
+        box?.getCenter(center);
+        box?.getSize(size);
+        geometry.translate(-center.x, -center.y, -(box?.min.z ?? 0));
+        const material = new THREE.MeshStandardMaterial({
+          color: 0x9cc7d6,
+          metalness: 0.08,
+          roughness: 0.72,
+          transparent: true,
+          opacity: hasRenderableSlice ? 0.24 : 0.82,
+        });
+        modelMesh = new THREE.Mesh(geometry, material);
+        modelMesh.rotation.x = -Math.PI / 2;
+        if (rotation) {
+          modelMesh.quaternion.multiply(
+            new THREE.Quaternion(rotation[0], rotation[1], rotation[2], rotation[3]),
+          );
+        }
+        scene.add(modelMesh);
+        disposables.push(geometry, material);
+      }
 
       function appendPositions(positions: number[], segments: GcodeSegment[]) {
         for (const segment of segments) {
@@ -228,26 +270,30 @@ export function SliceViewer({ gcode, status }: SliceViewerProps) {
       }
 
       const previousLayers = visibleLayers.slice(0, -1);
-      for (const type of LINE_TYPES) {
-        addLines(previousLayers, type.id, type.color, 0.22);
-        addLines([activeLayer], type.id, type.color, 1);
+      if (activeLayer) {
+        for (const type of LINE_TYPES) {
+          addLines(previousLayers, type.id, type.color, 0.22);
+          addLines([activeLayer], type.id, type.color, 1);
+        }
       }
 
-      const layerPlaneGeometry = new THREE.PlaneGeometry(
-        Math.max(1, bounds.sizeX + 4),
-        Math.max(1, bounds.sizeY + 4),
-      );
-      const layerPlaneMaterial = new THREE.MeshBasicMaterial({
-        color: 0xfff2a6,
-        transparent: true,
-        opacity: 0.045,
-        side: THREE.DoubleSide,
-      });
-      const layerPlane = new THREE.Mesh(layerPlaneGeometry, layerPlaneMaterial);
-      layerPlane.rotation.x = -Math.PI / 2;
-      layerPlane.position.y = activeLayer.z;
-      scene.add(layerPlane);
-      disposables.push(layerPlaneGeometry, layerPlaneMaterial);
+      if (activeLayer) {
+        const layerPlaneGeometry = new THREE.PlaneGeometry(
+          Math.max(1, bounds.sizeX + 4),
+          Math.max(1, bounds.sizeY + 4),
+        );
+        const layerPlaneMaterial = new THREE.MeshBasicMaterial({
+          color: 0xfff2a6,
+          transparent: true,
+          opacity: 0.045,
+          side: THREE.DoubleSide,
+        });
+        const layerPlane = new THREE.Mesh(layerPlaneGeometry, layerPlaneMaterial);
+        layerPlane.rotation.x = -Math.PI / 2;
+        layerPlane.position.y = activeLayer.z;
+        scene.add(layerPlane);
+        disposables.push(layerPlaneGeometry, layerPlaneMaterial);
+      }
 
       scene.add(new THREE.AmbientLight(0xffffff, 0.78));
       const keyLight = new THREE.DirectionalLight(0xffffff, 0.85);
@@ -257,7 +303,7 @@ export function SliceViewer({ gcode, status }: SliceViewerProps) {
       const span = Math.max(bounds.sizeX, bounds.sizeY, 40);
       camera.position.set(span * 0.95, span * 0.85, span * 1.35);
       controls.enableDamping = true;
-      controls.target.set(0, activeLayer.z * 0.38, 0);
+      controls.target.set(0, (activeLayer?.z ?? 0) * 0.38, 0);
       controls.update();
 
       function resize() {
@@ -277,8 +323,30 @@ export function SliceViewer({ gcode, status }: SliceViewerProps) {
         frameId = window.requestAnimationFrame(animate);
       }
 
+      function chooseFace(event: PointerEvent) {
+        if (!orientationMode || !modelMesh) return;
+        const rect = renderer.domElement.getBoundingClientRect();
+        const pointer = new THREE.Vector2(
+          ((event.clientX - rect.left) / rect.width) * 2 - 1,
+          -((event.clientY - rect.top) / rect.height) * 2 + 1,
+        );
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(pointer, camera);
+        const hit = raycaster.intersectObject(modelMesh, false)[0];
+        if (!hit?.face) return;
+        const normal = hit.face.normal.clone().normalize();
+        const quaternion = new THREE.Quaternion().setFromUnitVectors(
+          normal,
+          new THREE.Vector3(0, 0, -1),
+        );
+        onOrientationChange([quaternion.x, quaternion.y, quaternion.z, quaternion.w]);
+        setOrientationMode(false);
+      }
+
       animate();
+      renderer.domElement.addEventListener("pointerdown", chooseFace);
       cleanup = () => {
+        renderer.domElement.removeEventListener("pointerdown", chooseFace);
         window.cancelAnimationFrame(frameId);
         controls.dispose();
         for (const disposable of disposables) disposable.dispose();
@@ -292,7 +360,17 @@ export function SliceViewer({ gcode, status }: SliceViewerProps) {
       cancelled = true;
       cleanup();
     };
-  }, [activeLayer, layers, visibleLayers]);
+  }, [
+    activeLayer,
+    file,
+    hasRenderableScene,
+    hasRenderableSlice,
+    layers,
+    onOrientationChange,
+    orientationMode,
+    rotation,
+    visibleLayers,
+  ]);
 
   return (
     <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
@@ -313,22 +391,46 @@ export function SliceViewer({ gcode, status }: SliceViewerProps) {
           {reportedTotal ? `${reportedTotal} reported` : "no layers"}
         </span>
       </div>
+      {file && (
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setOrientationMode((current) => !current)}
+            className="rounded-lg border border-[var(--color-border-2)] px-3 py-2 text-xs font-semibold text-[var(--color-text)] transition-colors hover:border-[var(--color-teal)]"
+          >
+            This side down
+          </button>
+          <button
+            type="button"
+            onClick={() => onOrientationChange(null)}
+            className="rounded-lg border border-[var(--color-border-2)] px-3 py-2 text-xs font-semibold text-[var(--color-text)] transition-colors hover:border-[var(--color-teal)]"
+          >
+            Reset
+          </button>
+          <span className="self-center font-mono text-xs text-[var(--color-muted)]">
+            {rotation ? "custom orientation" : "uploaded orientation"}
+          </span>
+        </div>
+      )}
 
       <div className="mt-4">
         <div className="relative min-h-[620px] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[#111927]">
-          {hasRenderableSlice ? (
+          {hasRenderableScene ? (
             <>
               <canvas ref={canvasRef} className="h-full min-h-[620px] w-full" />
 
-              <button
-                type="button"
-                onClick={() => setShowInfo((current) => !current)}
-                className="absolute right-24 top-5 rounded-lg border border-white/15 bg-black/60 px-3 py-2 text-xs font-semibold text-white shadow-xl backdrop-blur transition-colors hover:border-[var(--color-teal)]"
-              >
-                {showInfo ? "Hide Info" : "Show Info"}
-              </button>
+              {hasRenderableSlice && (
+                <button
+                  type="button"
+                  onClick={() => setShowInfo((current) => !current)}
+                  className="absolute right-24 top-5 rounded-lg border border-white/15 bg-black/60 px-3 py-2 text-xs font-semibold text-white shadow-xl backdrop-blur transition-colors hover:border-[var(--color-teal)]"
+                >
+                  {showInfo ? "Hide Info" : "Show Info"}
+                </button>
+              )}
 
-              <div className="absolute bottom-5 right-5 top-5 flex w-14 flex-col items-center justify-between rounded-lg border border-white/15 bg-black/55 px-2 py-3 backdrop-blur">
+              {hasRenderableSlice && (
+                <div className="absolute bottom-5 right-5 top-5 flex w-14 flex-col items-center justify-between rounded-lg border border-white/15 bg-black/55 px-2 py-3 backdrop-blur">
                 <span className="text-[10px] uppercase tracking-wider text-white/70">
                   {layers.length}
                 </span>
@@ -347,9 +449,10 @@ export function SliceViewer({ gcode, status }: SliceViewerProps) {
                 <span className="rounded bg-white/90 px-1.5 py-0.5 font-mono text-xs text-black">
                   {safeLayerIndex + 1}
                 </span>
-              </div>
+                </div>
+              )}
 
-              {showInfo && (
+              {showInfo && hasRenderableSlice && (
                 <>
                   <div className="absolute right-24 top-16 w-[300px] rounded-lg border border-white/10 bg-black/55 p-4 text-sm text-white shadow-xl backdrop-blur">
                     <div className="grid grid-cols-[1fr_52px_42px_58px] gap-2 border-b border-white/20 pb-2 text-xs font-semibold text-white/80">

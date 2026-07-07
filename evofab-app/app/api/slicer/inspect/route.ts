@@ -22,20 +22,14 @@ export async function POST(req: NextRequest) {
   try {
     const form = await req.formData();
     const model = form.get("model");
-    const profileId = form.get("profile_id");
     const rotationValue = form.get("rotation");
-    const supportsValue = form.get("supports");
 
-    if (
-      !(model instanceof File) ||
-      typeof profileId !== "string" ||
-      !profileId
-    ) {
+    if (!(model instanceof File)) {
       return NextResponse.json(
         {
           error: {
             code: "SLICER_INVALID_INPUT",
-            message: "A model STL and material profile are required.",
+            message: "A model STL is required.",
             retryable: false,
             details: {},
           },
@@ -65,19 +59,12 @@ export async function POST(req: NextRequest) {
       typeof rotationValue === "string" && rotationValue
         ? JSON.parse(rotationValue)
         : null;
-    const supports =
-      typeof supportsValue === "string" ? supportsValue === "true" : undefined;
-    const job = await new SlicerClient().submitSlice({
-      model,
-      profileId,
-      rotation,
-      supports,
-    });
-    return NextResponse.json({ job }, { status: 202 });
+    const result = await new SlicerClient().inspectModel({ model, rotation });
+    return NextResponse.json({ result });
   } catch (error) {
     if (error instanceof SlicerError) return slicerErrorResponse(error);
     return NextResponse.json(
-      { error: { message: "Unable to submit slice job." } },
+      { error: { message: "Unable to inspect STL geometry." } },
       { status: 502 },
     );
   }
