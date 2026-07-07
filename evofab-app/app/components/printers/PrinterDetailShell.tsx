@@ -58,7 +58,7 @@ export function PrinterDetailShell({
   const content = (
     <section
       onClick={(event) => event.stopPropagation()}
-      className="flex max-h-[calc(100dvh-7rem)] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-border bg-bg shadow-2xl"
+      className="flex max-h-[calc(100dvh-9rem)] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-border bg-bg shadow-2xl"
     >
       <header className="flex items-start justify-between gap-4 border-b border-border bg-surface px-4 py-3">
         <div>
@@ -190,7 +190,7 @@ export function PrinterDetailShell({
         onMouseDown={(event) => {
           if (event.target === event.currentTarget) close();
         }}
-        className="fixed inset-0 z-40 flex items-start justify-center overflow-auto bg-black/70 px-6 py-10"
+        className="fixed inset-x-0 bottom-0 top-24 z-40 flex items-start justify-center overflow-auto bg-black/70 px-6 pb-10 pt-6"
       >
         {content}
       </div>
@@ -202,7 +202,7 @@ export function PrinterDetailShell({
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) close();
       }}
-      className="fixed inset-0 z-40 flex items-start justify-center overflow-auto bg-black/70 px-6 py-10"
+      className="fixed inset-x-0 bottom-0 top-24 z-40 flex items-start justify-center overflow-auto bg-black/70 px-6 pb-10 pt-6"
     >
       {content}
     </div>
