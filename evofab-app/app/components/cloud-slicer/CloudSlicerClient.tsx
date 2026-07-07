@@ -4,8 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import type { MaterialProfile } from "@/app/types/job";
-import type { PrinterWithStatus } from "@/app/types/printer";
 import { cn } from "@/app/lib/utils";
+import {
+  createPreparedPrintId,
+  preparedPrintStorageKey,
+  type PreparedPrintDraft,
+} from "@/app/lib/prepared-print";
 import {
   filterMaterialProfilesForPrinterType,
   settingsFromMaterialProfile,
@@ -56,7 +60,6 @@ interface InspectResult {
 
 interface CloudSlicerClientProps {
   materialProfiles: MaterialProfile[];
-  printers: PrinterWithStatus[];
 }
 
 function formatBytes(bytes: number): string {
@@ -88,15 +91,11 @@ async function readJsonOrThrow<T>(response: Response): Promise<T> {
 
 export function CloudSlicerClient({
   materialProfiles,
-  printers,
 }: CloudSlicerClientProps) {
   const router = useRouter();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState(
     materialProfiles[0]?.id ?? "",
-  );
-  const [selectedPrinterId, setSelectedPrinterId] = useState(
-    printers[0]?.id ?? "",
   );
   const [status, setStatus] = useState<SliceStatus>("idle");
   const [job, setJob] = useState<SlicerJob | null>(null);
@@ -109,17 +108,9 @@ export function CloudSlicerClient({
   );
   const [inspectPending, setInspectPending] = useState(false);
 
-  const selectedPrinter = useMemo(
-    () => printers.find((printer) => printer.id === selectedPrinterId) ?? null,
-    [printers, selectedPrinterId],
-  );
   const filteredProfiles = useMemo(
-    () =>
-      filterMaterialProfilesForPrinterType(
-        materialProfiles,
-        selectedPrinter?.type,
-      ),
-    [materialProfiles, selectedPrinter?.type],
+    () => filterMaterialProfilesForPrinterType(materialProfiles, undefined),
+    [materialProfiles],
   );
   const effectiveProfileId = filteredProfiles.some(
     (profile) => profile.id === selectedProfileId,
@@ -142,8 +133,8 @@ export function CloudSlicerClient({
     [gcode],
   );
   const buildVolume = useMemo(
-    () => parseBuildVolume(selectedPrinter?.build_volume),
-    [selectedPrinter?.build_volume],
+    () => parseBuildVolume(null),
+    [],
   );
   const buildBlock = useMemo(
     () => buildVolumeBlock(inspectResult?.bounding_box_mm ?? null, buildVolume),
@@ -155,7 +146,6 @@ export function CloudSlicerClient({
     status === "done" &&
     gcode !== null &&
     selectedProfile !== null &&
-    selectedPrinter !== null &&
     !buildBlock;
 
   function validateFile(file: File): string | null {
@@ -331,52 +321,42 @@ export function CloudSlicerClient({
     }
   }
 
-  async function handlePrint() {
-    if (!canPrint || !selectedPrinter || !selectedProfile || !gcode) return;
+  async function handleSelectPrinter() {
+    if (!canPrint || !selectedProfile || !gcode) return;
 
-    setStatus("printing");
     setNotice({
       tone: "info",
-      message: "Sending generated G-code to the selected printer.",
+      message: "Prepared print saved. Choose a printer from the fleet.",
     });
 
     try {
-      const file = new File([gcode], `${job?.job_id ?? "cloud-slice"}.gcode`, {
-        type: "text/plain",
-      });
-      const form = new FormData();
-      form.append("file", file);
-      form.append("printer_id", selectedPrinter.id);
-      form.append("experiment_id", "");
-      form.append("material_profile_id", selectedProfile.id);
-      form.append(
-        "settings",
-        JSON.stringify(settingsFromMaterialProfile(selectedProfile)),
-      );
-      form.append(
-        "prepare_settings",
-        JSON.stringify({
+      const draftId = createPreparedPrintId();
+      const draft: PreparedPrintDraft = {
+        id: draftId,
+        filename: `${job?.job_id ?? "cloud-slice"}.gcode`,
+        gcode,
+        materialProfileId: selectedProfile.id,
+        settings: settingsFromMaterialProfile(selectedProfile),
+        prepareSettings: {
           supports,
           rotation,
           orientation: rotation ? "custom" : "uploaded",
-        }),
+        },
+        experimentParams: {},
+        createdAt: new Date().toISOString(),
+      };
+      window.sessionStorage.setItem(
+        preparedPrintStorageKey(draftId),
+        JSON.stringify(draft),
       );
-      form.append("experiment_params", "{}");
-
-      const response = await fetch("/api/jobs", {
-        method: "POST",
-        body: form,
-      });
-      const body = await readJsonOrThrow<{ job: { id: string } }>(response);
-      router.push(`/monitor/${body.job.id}`);
+      router.push(`/printers?preparedJob=${encodeURIComponent(draftId)}`);
     } catch (error) {
-      setStatus("done");
       setNotice({
         tone: "error",
         message:
           error instanceof Error
             ? error.message
-            : "Unable to send this G-code to the printer.",
+            : "Unable to prepare this G-code for printer selection.",
       });
     }
   }
@@ -431,7 +411,7 @@ export function CloudSlicerClient({
             </span>
           </label>
 
-          <div className="mt-5 grid md:grid-cols-2 gap-4">
+          <div className="mt-5 grid gap-4">
             <label className="flex flex-col gap-2">
               <span className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
                 Material
@@ -444,23 +424,6 @@ export function CloudSlicerClient({
                 {filteredProfiles.map((profile) => (
                   <option key={profile.id} value={profile.id}>
                     {profile.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="flex flex-col gap-2">
-              <span className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                Printer
-              </span>
-              <select
-                value={selectedPrinterId}
-                onChange={(event) => setSelectedPrinterId(event.target.value)}
-                className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-teal)]"
-              >
-                {printers.map((printer) => (
-                  <option key={printer.id} value={printer.id}>
-                    {printer.name}
                   </option>
                 ))}
               </select>
@@ -546,11 +509,11 @@ export function CloudSlicerClient({
               Slice
             </button>
             <button
-              onClick={handlePrint}
+              onClick={handleSelectPrinter}
               disabled={!canPrint}
               className="rounded-lg border border-[var(--color-border-2)] px-5 py-2.5 text-sm font-semibold text-[var(--color-text)] transition-all hover:border-[var(--color-teal)] disabled:cursor-not-allowed disabled:opacity-40"
             >
-              Send To Printer
+              Select a printer
             </button>
           </div>
         </section>
