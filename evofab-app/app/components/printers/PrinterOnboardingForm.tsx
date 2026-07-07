@@ -123,101 +123,109 @@ export function PrinterOnboardingForm() {
     "rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-teal)]";
 
   return (
-    <form
-      onSubmit={submit}
-      className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
-    >
-      <div className="grid gap-3 md:grid-cols-3">
-        <input
-          className={inputClass}
-          placeholder="Name"
-          value={form.name}
-          onChange={(event) => update("name", event.target.value)}
-          required
-        />
-        <input
-          className={inputClass}
-          placeholder="Model"
-          value={form.model}
-          onChange={(event) => update("model", event.target.value)}
-          required
-        />
-        <select
-          className={inputClass}
-          value={form.type}
-          onChange={(event) =>
-            update("type", event.target.value as PrinterType)
-          }
-        >
-          <option value="FDM">FDM</option>
-          <option value="FGF">FGF</option>
-        </select>
-        <input
-          className={inputClass}
-          placeholder="Moonraker IP"
-          value={form.ip}
-          onChange={(event) => update("ip", event.target.value)}
-          required
-        />
-        <input
-          className={inputClass}
-          inputMode="numeric"
-          placeholder="Port"
-          value={form.port}
-          onChange={(event) => update("port", event.target.value)}
-          required
-        />
-        <input
-          className={inputClass}
-          placeholder="Build volume"
-          value={form.build_volume}
-          onChange={(event) => update("build_volume", event.target.value)}
-        />
-        <input
-          className={inputClass}
-          placeholder="Material"
-          value={form.material}
-          onChange={(event) => update("material", event.target.value)}
-        />
-        <div className="grid gap-2 md:col-span-2 md:grid-cols-2">
-          <button
-            type="button"
-            disabled={testBusy || busy}
-            onClick={testConnection}
-            className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-semibold text-[var(--color-text)] transition-all hover:border-[var(--color-teal)] disabled:cursor-not-allowed disabled:opacity-40"
+    <details className="group rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold text-[var(--color-text)] marker:hidden">
+        <span>Add printer</span>
+        <span className="text-xs text-[var(--color-muted)] transition-transform group-open:rotate-180">
+          ▼
+        </span>
+      </summary>
+      <form
+        onSubmit={submit}
+        className="border-t border-[var(--color-border)] p-4"
+      >
+        <div className="grid gap-3 md:grid-cols-3">
+          <input
+            className={inputClass}
+            placeholder="Name"
+            value={form.name}
+            onChange={(event) => update("name", event.target.value)}
+            required
+          />
+          <input
+            className={inputClass}
+            placeholder="Model"
+            value={form.model}
+            onChange={(event) => update("model", event.target.value)}
+            required
+          />
+          <select
+            className={inputClass}
+            value={form.type}
+            onChange={(event) =>
+              update("type", event.target.value as PrinterType)
+            }
           >
-            {testBusy ? "Testing..." : "Test connection"}
-          </button>
-          <button
-            disabled={busy || testBusy}
-            className="rounded-lg bg-[var(--color-teal)] px-4 py-2 text-sm font-semibold text-[var(--color-bg)] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {busy ? "Adding..." : "Add Printer"}
-          </button>
+            <option value="FDM">FDM</option>
+            <option value="FGF">FGF</option>
+          </select>
+          <input
+            className={inputClass}
+            placeholder="Moonraker IP"
+            value={form.ip}
+            onChange={(event) => update("ip", event.target.value)}
+            required
+          />
+          <input
+            className={inputClass}
+            inputMode="numeric"
+            placeholder="Port"
+            value={form.port}
+            onChange={(event) => update("port", event.target.value)}
+            required
+          />
+          <input
+            className={inputClass}
+            placeholder="Build volume"
+            value={form.build_volume}
+            onChange={(event) => update("build_volume", event.target.value)}
+          />
+          <input
+            className={inputClass}
+            placeholder="Material"
+            value={form.material}
+            onChange={(event) => update("material", event.target.value)}
+          />
+          <div className="grid gap-2 md:col-span-2 md:grid-cols-2">
+            <button
+              type="button"
+              disabled={testBusy || busy}
+              onClick={testConnection}
+              className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-semibold text-[var(--color-text)] transition-all hover:border-[var(--color-teal)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {testBusy ? "Testing..." : "Test connection"}
+            </button>
+            <button
+              disabled={busy || testBusy}
+              className="rounded-lg bg-[var(--color-teal)] px-4 py-2 text-sm font-semibold text-[var(--color-bg)] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {busy ? "Adding..." : "Add Printer"}
+            </button>
+          </div>
         </div>
-      </div>
-      {testMessage && (
-        <p
-          className={
-            testMessage.tone === "error"
-              ? "mt-3 text-xs text-[var(--color-red)]"
-              : "mt-3 text-xs text-[var(--color-green)]"
-          }
-        >
-          {testMessage.text}
-        </p>
-      )}
-      {message && (
-        <p
-          className={
-            message.tone === "error"
-              ? "mt-3 text-xs text-[var(--color-red)]"
-              : "mt-3 text-xs text-[var(--color-green)]"
-          }
-        >
-          {message.text}
-        </p>
-      )}
-    </form>
+        {testMessage && (
+          <p
+            className={
+              testMessage.tone === "error"
+                ? "mt-3 text-xs text-[var(--color-red)]"
+                : "mt-3 text-xs text-[var(--color-green)]"
+            }
+          >
+            {testMessage.text}
+          </p>
+        )}
+        {message && (
+          <p
+            className={
+              message.tone === "error"
+                ? "mt-3 text-xs text-[var(--color-red)]"
+                : "mt-3 text-xs text-[var(--color-green)]"
+            }
+          >
+            {message.text}
+          </p>
+        )}
+      </form>
+    </details>
   );
 }

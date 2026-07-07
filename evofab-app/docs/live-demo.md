@@ -24,6 +24,11 @@ SLICER_URL=http://localhost:8055
 SLICER_TOKEN=<shared bearer token>
 ```
 
+When these values are saved in `.env.local`, keep each assignment on its own
+line with no trailing shell continuation backslashes. A value such as
+`MOONRAKER_MODE=hardware \` is parsed literally and will not match the required
+`hardware` mode string.
+
 Keep `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and
 `SUPABASE_SERVICE_ROLE_KEY` configured for William's Supabase project. The
 status worker needs the service-role key because it writes `printer_status`.
