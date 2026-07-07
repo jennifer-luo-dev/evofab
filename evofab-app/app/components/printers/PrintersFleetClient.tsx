@@ -3,19 +3,14 @@
 import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { StatusDot } from "@/app/components/ui/StatusDot";
-import { PrinterMacroPanel } from "@/app/components/printers/PrinterMacroPanel";
-import { PrinterMotionPanel } from "@/app/components/printers/PrinterMotionPanel";
-import { PrinterPreheatPanel } from "@/app/components/printers/PrinterPreheatPanel";
 import {
   preparedPrintStorageKey,
   type PreparedPrintDraft,
 } from "@/app/lib/prepared-print";
-import type { MaterialProfile } from "@/app/types/job";
 import type { PrinterWithStatus } from "@/app/types/printer";
 
 interface PrintersFleetClientProps {
   printers: PrinterWithStatus[];
-  materialProfiles: MaterialProfile[];
 }
 
 async function readJsonOrThrow<T>(response: Response): Promise<T> {
@@ -33,7 +28,6 @@ async function readJsonOrThrow<T>(response: Response): Promise<T> {
 
 export function PrintersFleetClient({
   printers,
-  materialProfiles,
 }: PrintersFleetClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -43,6 +37,9 @@ export function PrintersFleetClient({
     text: string;
   } | null>(null);
   const [busyPrinterId, setBusyPrinterId] = useState<string | null>(null);
+  const [homeBusyPrinterId, setHomeBusyPrinterId] = useState<string | null>(
+    null,
+  );
 
   const draftState = useMemo<{
     draft: PreparedPrintDraft | null;
@@ -131,6 +128,32 @@ export function PrintersFleetClient({
     }
   }
 
+  async function homePrinter(printer: PrinterWithStatus) {
+    if (homeBusyPrinterId) return;
+
+    setHomeBusyPrinterId(printer.id);
+    setMessage(null);
+    try {
+      const response = await fetch(`/api/printers/${printer.id}/motion`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "home" }),
+      });
+      await readJsonOrThrow(response);
+      setMessage({
+        tone: "info",
+        text: `${printer.name} homing command accepted.`,
+      });
+    } catch (error) {
+      setMessage({
+        tone: "error",
+        text: error instanceof Error ? error.message : "Unable to home printer.",
+      });
+    } finally {
+      setHomeBusyPrinterId(null);
+    }
+  }
+
   return (
     <>
       {(draft || visibleMessage) && (
@@ -161,6 +184,11 @@ export function PrintersFleetClient({
       <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {printers.map((printer) => {
           const status = printer.printer_status;
+          const statusValue = status?.status ?? "offline";
+          const canHome =
+            (statusValue === "idle" || statusValue === "paused") &&
+            homeBusyPrinterId === null;
+          const canOpenLeveling = statusValue === "idle";
 
           return (
             <section
@@ -174,7 +202,7 @@ export function PrintersFleetClient({
                   router.push(`/printers/${printer.id}`);
                 }
               }}
-              className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
+              className="cursor-pointer rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 transition-colors hover:border-[var(--color-border-2)]"
             >
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -185,7 +213,7 @@ export function PrintersFleetClient({
                     {printer.model}
                   </p>
                 </div>
-                <StatusDot status={status?.status ?? "offline"} />
+                <StatusDot status={statusValue} />
               </div>
 
               <div className="mt-4 grid grid-cols-2 gap-3">
@@ -209,57 +237,32 @@ export function PrintersFleetClient({
                       : "—"}
                   </p>
                 </div>
-                <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                    Progress
-                  </p>
-                  <p className="mt-1 font-mono text-sm text-[var(--color-text)]">
-                    {status ? `${status.progress.toFixed(1)}%` : "—"}
-                  </p>
-                  {status?.progress_source === "estimated" && (
-                    <p className="mt-1 text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                      estimated
-                    </p>
-                  )}
-                </div>
-                <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                    Address
-                  </p>
-                  <p className="mt-1 truncate font-mono text-sm text-[var(--color-text)]">
-                    {printer.ip}:{printer.port}
-                  </p>
-                </div>
               </div>
-              {status?.fault_message && (
-                <div className="mt-3 rounded-lg border border-[var(--color-red)]/30 bg-[var(--color-red)]/10 p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-[var(--color-red)]">
-                    Klipper fault
-                    {status.fault_mcu ? ` · ${status.fault_mcu}` : ""}
-                  </p>
-                  <p className="mt-1 text-xs text-[var(--color-red)]">
-                    {status.fault_message}
-                  </p>
-                </div>
-              )}
-              <div onClick={(event) => event.stopPropagation()}>
-                {draft && (
-                  <button
-                    disabled={busyPrinterId !== null}
-                    onClick={() => startPreparedPrint(printer)}
-                    className="mt-4 w-full rounded-lg bg-[var(--color-teal)] px-4 py-2 text-sm font-semibold text-[var(--color-bg)] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {busyPrinterId === printer.id
-                      ? "Starting..."
-                      : "Start prepared print"}
-                  </button>
-                )}
-                <PrinterPreheatPanel
-                  printer={printer}
-                  materialProfiles={materialProfiles}
-                />
-                <PrinterMotionPanel printer={printer} />
-                <PrinterMacroPanel printer={printer} />
+              <div
+                className="mt-4 grid grid-cols-3 gap-2"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <button
+                  disabled={!canHome}
+                  onClick={() => homePrinter(printer)}
+                  className="rounded-md border border-[var(--color-border)] px-2 py-1.5 text-xs font-semibold text-[var(--color-text)] transition-colors hover:border-[var(--color-teal)] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {homeBusyPrinterId === printer.id ? "Homing" : "Home"}
+                </button>
+                <button
+                  disabled={!canOpenLeveling}
+                  onClick={() => router.push(`/printers/${printer.id}?tab=leveling`)}
+                  className="rounded-md border border-[var(--color-border)] px-2 py-1.5 text-xs font-semibold text-[var(--color-text)] transition-colors hover:border-[var(--color-teal)] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Bed leveling
+                </button>
+                <button
+                  disabled={!draft || busyPrinterId !== null}
+                  onClick={() => startPreparedPrint(printer)}
+                  className="rounded-md bg-[var(--color-teal)] px-2 py-1.5 text-xs font-semibold text-[var(--color-bg)] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {busyPrinterId === printer.id ? "Starting" : "Start a print"}
+                </button>
               </div>
             </section>
           );
