@@ -27,11 +27,15 @@ from contextlib import asynccontextmanager
 from math import sqrt
 from typing import Optional
 
+import cv2
+import numpy as np
 from fastapi import FastAPI, HTTPException, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from analyzer import ActuatorAnalyzer
 from camera_manager import CameraManager
+from geometry import compute_spine_curvature
 
 ROBOT_IP = os.getenv("ROBOT_IP", "192.168.50.100")
 
@@ -427,17 +431,93 @@ CAPTURE_DELAY_S = 0.5
 
 _capture_lock: threading.Lock = threading.Lock()
 _capture_request: Optional[dict] = None  # {"channel": int, "armed_at": float (monotonic)}
-_last_capture_meta: Optional[dict] = None  # {"channel", "synced", "latency_ms", "timestamp"}
-_last_capture_jpeg: Optional[bytes] = None
+_last_capture_meta: Optional[dict] = None  # {"channel", "synced", "latency_ms", "timestamp", curvature fields}
+_last_capture_jpeg: Optional[bytes] = None  # the annotated image (mask/skeleton/fit drawn on), not raw
+
+# Vision pipeline (analyzer.py mask -> skeleton, geometry.py circle fit).
+# RGB-only input (no Orbbec-SDK depth stream, see camera_manager.py), so
+# ActuatorAnalyzer always takes its brightness-threshold branch — z_min/z_max
+# are unused in that mode, kept at analyzer.py's own defaults.
+_analyzer = ActuatorAnalyzer()
+
+# Pixels-per-metre scaling for geometry.py's circle fit, carried over from
+# this project's previous default (see git history) — NOT calibrated for the
+# current camera mounting/framing. mean_curvature/bend_angle_deg/radius_mm
+# are only as trustworthy as this number; the drawn fit circle on the
+# captured image is the reliable way to sanity-check the pipeline itself
+# independent of this scale factor.
+PPM = 2800.0
+
+
+def _annotate_curvature(frame_bgr: np.ndarray):
+    """Runs mask -> skeleton -> circle-fit on one frame and draws the result
+    (mask tint, skeleton, fitted arc + center) on a copy of it, so the fit
+    can be visually checked against the image it came from. Returns
+    (annotated_bgr, CurvatureResult)."""
+    raw_mask = _analyzer.generate_mask(frame_bgr)
+
+    # Restrict to the largest connected blob before skeletonizing. The
+    # brightness threshold in analyzer.generate_mask also picks up scattered
+    # bright patches from the reflective test-rig background, not just the
+    # actuator — skeletonizing the whole raw mask fit a circle to that
+    # background speckle instead of the actuator (confirmed by dumping the
+    # raw mask directly). Assumes the actuator is the largest bright blob in
+    # frame; revisit if the background ever out-sizes it.
+    contours, _ = cv2.findContours(raw_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    largest = max(contours, key=cv2.contourArea) if contours else None
+    if largest is not None:
+        mask = np.zeros_like(raw_mask)
+        cv2.drawContours(mask, [largest], -1, 255, thickness=cv2.FILLED)
+    else:
+        mask = raw_mask
+
+    skeleton = _analyzer.extract_spine(mask)
+    result = compute_spine_curvature(skeleton, PPM)
+
+    display = frame_bgr.copy()
+    green_layer = np.zeros_like(display)
+    green_layer[mask > 0] = (0, 80, 0)
+    display = cv2.addWeighted(display, 1.0, green_layer, 0.5, 0)
+    display[skeleton > 0] = (180, 212, 0)
+
+    if largest is not None:
+        bx, by, bw, bh = cv2.boundingRect(largest)
+        box_color = (180, 212, 0) if result.status == "TRACKING" else (60, 160, 160)
+        cv2.rectangle(display, (bx, by), (bx + bw, by + bh), box_color, 2)
+
+    # Fitted curvature arc — draw the circle segment spanning the skeleton extent
+    if result.status == "TRACKING" and result.radius_px > 1:
+        ys, xs = np.where(skeleton > 0)
+        if len(ys) >= 2:
+            cx, cy = result.center_px
+            r = int(round(result.radius_px))
+            angles = np.degrees(np.arctan2(ys.astype(float) - cy, xs.astype(float) - cx))
+            a_min, a_max = float(angles.min()), float(angles.max())
+            pad = max(5.0, (a_max - a_min) * 0.1)
+            cv2.ellipse(display, (cx, cy), (r, r), 0, a_min - pad, a_max + pad, (0, 180, 255), 2, cv2.LINE_AA)
+            cv2.circle(display, (cx, cy), 5, (0, 180, 255), -1, cv2.LINE_AA)
+
+    txt_color = (180, 212, 0) if result.status == "TRACKING" else (80, 100, 90)
+    cv2.putText(display, result.status, (12, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.8, txt_color, 2)
+    if result.status == "TRACKING":
+        cv2.putText(display, f"K: {result.mean_curvature:.2f} 1/m", (12, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, txt_color, 1)
+        cv2.putText(display, f"Angle: {result.bend_angle_deg:.1f} deg", (12, 84),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, txt_color, 1)
+        cv2.putText(display, f"R: {result.radius_mm:.0f} mm", (12, 108),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, txt_color, 1)
+
+    return display, result
 
 
 def _resolve_capture(channel: int, synced: bool, event_ts: float, armed_at: float) -> None:
-    """Grabs the freshest available camera frame and records it as the last
-    capture. event_ts is the monotonic time STATUS:BUSY was read (or the
-    timeout deadline, on the fallback path). armed_at identifies which arm
-    request this resolves — since the synced path runs on a delay timer, a
-    fast re-fire could otherwise let a stale timer clear/overwrite a newer
-    request; if _capture_request has since moved on, this is a no-op."""
+    """Grabs the freshest available camera frame, runs curvature analysis on
+    it, and records the annotated result as the last capture. event_ts is
+    the monotonic time STATUS:BUSY was read (or the timeout deadline, on the
+    fallback path). armed_at identifies which arm request this resolves —
+    since the synced path runs on a delay timer, a fast re-fire could
+    otherwise let a stale timer clear/overwrite a newer request; if
+    _capture_request has since moved on, this is a no-op."""
     global _last_capture_meta, _last_capture_jpeg, _capture_request
     with _capture_lock:
         req = _capture_request
@@ -449,13 +529,26 @@ def _resolve_capture(channel: int, synced: bool, event_ts: float, armed_at: floa
     if result is None:
         return  # camera not connected — nothing to save
 
-    jpeg, frame_ts = result
-    _last_capture_jpeg = jpeg
+    frame, frame_ts = result
+    try:
+        annotated, curvature = _annotate_curvature(frame)
+    except Exception:
+        annotated, curvature = frame, None
+
+    ok, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    if not ok:
+        return
+
+    _last_capture_jpeg = buf.tobytes()
     _last_capture_meta = {
         "channel": channel,
         "synced": synced,
         "latency_ms": round((frame_ts - event_ts) * 1000.0, 1),
         "timestamp": time.time(),
+        "analysis_status": curvature.status if curvature else "ERROR",
+        "mean_curvature": round(curvature.mean_curvature, 3) if curvature and curvature.status == "TRACKING" else None,
+        "bend_angle_deg": round(curvature.bend_angle_deg, 2) if curvature and curvature.status == "TRACKING" else None,
+        "radius_mm": round(curvature.radius_mm, 1) if curvature and curvature.status == "TRACKING" else None,
     }
 
 

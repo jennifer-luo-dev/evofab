@@ -125,13 +125,13 @@ class CameraManager:
         return buf.tobytes() if ok else None
 
     def capture_now(self) -> Optional[tuple]:
-        """Returns (jpeg_bytes, frame_capture_monotonic_ts) for the freshest
-        frame currently available, or None if the camera isn't connected."""
+        """Returns (raw BGR ndarray, frame_capture_monotonic_ts) for the
+        freshest frame currently available, or None if the camera isn't
+        connected. Raw, not JPEG-encoded — callers that want to run vision
+        analysis (see _annotate_curvature in main.py) need pixels, and can
+        encode after annotating instead of encoding twice."""
         frame = self._latest_frame
         if frame is None:
             return None
         ndarray, ts = frame
-        ok, buf = cv2.imencode(".jpg", ndarray, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
-        if not ok:
-            return None
-        return buf.tobytes(), ts
+        return ndarray.copy(), ts

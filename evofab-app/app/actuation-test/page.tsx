@@ -30,6 +30,10 @@ interface LastCapture {
   latency_ms: number;
   timestamp: number; // seconds, epoch — for comparing against a pre-fire mark
   image_url: string;
+  analysis_status: 'TRACKING' | 'NO_TARGET' | 'MATH_ERROR' | 'ERROR';
+  mean_curvature: number | null; // 1/m
+  bend_angle_deg: number | null;
+  radius_mm: number | null;
 }
 
 /** Manual Arduino solenoid test page: per-channel pulse firing with a global abort. */
@@ -351,6 +355,27 @@ export default function ActuationTestPage() {
             )}
           </div>
         </div>
+
+        {lastCapture && (
+          <div className="flex items-center justify-between text-xs font-mono pt-1">
+            <span
+              className={
+                lastCapture.analysis_status === 'TRACKING' ? 'text-teal' : 'text-amber-400'
+              }
+            >
+              {lastCapture.analysis_status}
+            </span>
+            {lastCapture.analysis_status === 'TRACKING' && (
+              <span className="text-muted">
+                K <span className="text-text">{lastCapture.mean_curvature?.toFixed(2)}</span> 1/m
+                {'  ·  '}
+                Angle <span className="text-text">{lastCapture.bend_angle_deg?.toFixed(1)}</span>°
+                {'  ·  '}
+                R <span className="text-text">{lastCapture.radius_mm?.toFixed(0)}</span> mm
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Arduino connection status */}
