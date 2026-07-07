@@ -4,6 +4,7 @@ import { useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { PrinterCameraPanel } from "@/app/components/printers/PrinterCameraPanel";
 import { PrinterExtruderPanel } from "@/app/components/printers/PrinterExtruderPanel";
+import { PrinterHistoryPanel } from "@/app/components/printers/PrinterHistoryPanel";
 import { PrinterLevelingPanel } from "@/app/components/printers/PrinterLevelingPanel";
 import { PrinterMacroPanel } from "@/app/components/printers/PrinterMacroPanel";
 import { PrinterMotionPanel } from "@/app/components/printers/PrinterMotionPanel";
@@ -15,6 +16,7 @@ import type { PrinterWithStatus } from "@/app/types/printer";
 interface PrinterDetailShellProps {
   printer: PrinterWithStatus;
   activeJob: Job | null;
+  historyJobs: Job[];
   materialProfiles: MaterialProfile[];
   overlay?: boolean;
 }
@@ -33,6 +35,7 @@ function formatPosition(printer: PrinterWithStatus): string {
 export function PrinterDetailShell({
   printer,
   activeJob,
+  historyJobs,
   materialProfiles,
   overlay = false,
 }: PrinterDetailShellProps) {
@@ -136,6 +139,9 @@ export function PrinterDetailShell({
               </div>
               <div className="md:col-span-2">
                 <PrinterLevelingPanel printer={printer} />
+              </div>
+              <div className="md:col-span-2">
+                <PrinterHistoryPanel jobs={historyJobs} />
               </div>
               <PrinterPreheatPanel
                 printer={printer}
