@@ -411,11 +411,19 @@ _serial_lock: threading.Lock = threading.Lock()
 _serial_conn = None  # serial.Serial | None
 
 # Actuation-synced capture — armed by /actuation/pulse (capture=true) and
-# resolved by _serial_reader the instant it sees STATUS:BUSY:CH<n> for the
-# matching channel (ground-truth hardware timestamp), or by timeout with a
-# fallback frame if the line never arrives. Not persisted to disk: this is a
-# live/latency-check view, not a stored result.
+# resolved by _serial_reader when it sees STATUS:BUSY:CH<n> for the matching
+# channel (ground-truth hardware timestamp for valve-open), or by timeout
+# with a fallback frame if the line never arrives. Not persisted to disk:
+# this is a live/latency-check view, not a stored result.
 CAPTURE_TIMEOUT_S = 2.0
+
+# STATUS:BUSY fires the instant the valve opens, not when the actuator has
+# finished responding — air takes time to flow through the tubing and
+# visibly inflate/bend the actuator. Capturing immediately on STATUS:BUSY
+# caught it still at rest; this delay lets the physical actuation catch up
+# before the frame is grabbed. Empirically tuned — revisit if actuator
+# response time changes (different tubing length, pressure, actuator).
+CAPTURE_DELAY_S = 0.5
 
 _capture_lock: threading.Lock = threading.Lock()
 _capture_request: Optional[dict] = None  # {"channel": int, "armed_at": float (monotonic)}
@@ -423,12 +431,18 @@ _last_capture_meta: Optional[dict] = None  # {"channel", "synced", "latency_ms",
 _last_capture_jpeg: Optional[bytes] = None
 
 
-def _resolve_capture(channel: int, synced: bool, event_ts: float) -> None:
+def _resolve_capture(channel: int, synced: bool, event_ts: float, armed_at: float) -> None:
     """Grabs the freshest available camera frame and records it as the last
     capture. event_ts is the monotonic time STATUS:BUSY was read (or the
-    timeout deadline, on the fallback path)."""
+    timeout deadline, on the fallback path). armed_at identifies which arm
+    request this resolves — since the synced path runs on a delay timer, a
+    fast re-fire could otherwise let a stale timer clear/overwrite a newer
+    request; if _capture_request has since moved on, this is a no-op."""
     global _last_capture_meta, _last_capture_jpeg, _capture_request
     with _capture_lock:
+        req = _capture_request
+        if req is None or req["armed_at"] != armed_at:
+            return  # superseded by a newer arm — stale timer, do nothing
         _capture_request = None
 
     result = _camera.capture_now()
@@ -529,7 +543,9 @@ def _serial_reader() -> None:
                 with _capture_lock:
                     req = _capture_request
                 if req is not None and time.monotonic() - req["armed_at"] > CAPTURE_TIMEOUT_S:
-                    _resolve_capture(req["channel"], synced=False, event_ts=time.monotonic())
+                    _resolve_capture(
+                        req["channel"], synced=False, event_ts=time.monotonic(), armed_at=req["armed_at"]
+                    )
 
                 if not line:
                     continue  # readline() timed out with no data
@@ -544,7 +560,13 @@ def _serial_reader() -> None:
                     with _capture_lock:
                         req = _capture_request
                     if req is not None and req["channel"] == channel:
-                        _resolve_capture(channel, synced=True, event_ts=event_ts)
+                        # Delay the actual grab so the actuator has time to
+                        # visibly respond — see CAPTURE_DELAY_S.
+                        threading.Timer(
+                            CAPTURE_DELAY_S,
+                            _resolve_capture,
+                            args=(channel, True, event_ts, req["armed_at"]),
+                        ).start()
         except Exception:
             _serial_conn = None
             time.sleep(2)

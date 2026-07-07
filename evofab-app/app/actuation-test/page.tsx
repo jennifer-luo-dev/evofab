@@ -152,7 +152,7 @@ export default function ActuationTestPage() {
    */
   async function firePulse(
     channel: Channel,
-    opts: { durationOverride?: number; capture?: boolean } = {},
+    opts: { durationOverride?: number; capture?: boolean } = {}
   ) {
     const duration_ms = opts.durationOverride ?? durations[channel];
     const capture = opts.capture ?? captureEnabled;
@@ -304,7 +304,7 @@ export default function ActuationTestPage() {
               <img
                 src={`${API}/camera/snapshot?t=${snapshotTick}`}
                 alt="Live camera preview"
-                className="absolute inset-0 w-full h-full object-cover"
+                className="absolute inset-0 w-full h-full object-cover transform -scale-y-100 -scale-x-100"
               />
             ) : (
               <div className="absolute inset-0 flex items-center justify-center">
@@ -329,14 +329,12 @@ export default function ActuationTestPage() {
                 <img
                   src={`${API}${lastCapture.image_url}?t=${lastCapture.timestamp}`}
                   alt={`Actuation capture: CH${lastCapture.channel}`}
-                  className="absolute inset-0 w-full h-full object-cover"
+                  className="absolute inset-0 w-full h-full object-cover transform -scale-y-100 -scale-x-100"
                 />
                 <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between">
                   <span
                     className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
-                      lastCapture.synced
-                        ? 'bg-teal/20 text-teal'
-                        : 'bg-amber-400/20 text-amber-400'
+                      lastCapture.synced ? 'bg-teal/20 text-teal' : 'bg-amber-400/20 text-amber-400'
                     }`}
                   >
                     CH{lastCapture.channel} · {lastCapture.synced ? 'synced' : 'timeout'} ·{' '}
