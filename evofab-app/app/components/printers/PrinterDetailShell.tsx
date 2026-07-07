@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { PrinterCameraPanel } from "@/app/components/printers/PrinterCameraPanel";
 import { PrinterConsolePanel } from "@/app/components/printers/PrinterConsolePanel";
 import { PrinterExtruderPanel } from "@/app/components/printers/PrinterExtruderPanel";
@@ -41,10 +42,15 @@ export function PrinterDetailShell({
   overlay = false,
 }: PrinterDetailShellProps) {
   const status = printer.printer_status;
+  const searchParams = useSearchParams();
+  const preparedJobId = searchParams.get("preparedJob");
 
   const close = useCallback(() => {
-    window.location.assign("/printers");
-  }, []);
+    const query = preparedJobId
+      ? `?preparedJob=${encodeURIComponent(preparedJobId)}`
+      : "";
+    window.location.assign(`/printers${query}`);
+  }, [preparedJobId]);
 
   useEffect(() => {
     if (!overlay) return;
@@ -96,7 +102,9 @@ export function PrinterDetailShell({
                 </p>
                 <p className="mt-1 font-mono text-sm text-text">
                   {formatTemp(status?.hotend_temp)}
-                  {status?.hotend_target ? ` / ${status.hotend_target.toFixed(0)} C` : ""}
+                  {status?.hotend_target
+                    ? ` / ${status.hotend_target.toFixed(0)} C`
+                    : ""}
                 </p>
               </div>
               <div className="rounded-lg bg-surface p-3">
@@ -105,7 +113,9 @@ export function PrinterDetailShell({
                 </p>
                 <p className="mt-1 font-mono text-sm text-text">
                   {formatTemp(status?.bed_temp)}
-                  {status?.bed_target ? ` / ${status.bed_target.toFixed(0)} C` : ""}
+                  {status?.bed_target
+                    ? ` / ${status.bed_target.toFixed(0)} C`
+                    : ""}
                 </p>
               </div>
               <div className="rounded-lg bg-surface p-3">
@@ -128,7 +138,8 @@ export function PrinterDetailShell({
                     {activeJob.filename}
                   </p>
                   <p className="mt-1 font-mono text-xs text-muted">
-                    {activeJob.status} · {(activeJob.print_progress ?? 0).toFixed(1)}%
+                    {activeJob.status} ·{" "}
+                    {(activeJob.print_progress ?? 0).toFixed(1)}%
                   </p>
                 </div>
               ) : (

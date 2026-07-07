@@ -26,9 +26,7 @@ async function readJsonOrThrow<T>(response: Response): Promise<T> {
   return json as T;
 }
 
-export function PrintersFleetClient({
-  printers,
-}: PrintersFleetClientProps) {
+export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const draftId = searchParams.get("preparedJob");
@@ -83,6 +81,22 @@ export function PrintersFleetClient({
   const draft = draftState.draft;
   const visibleMessage = message ?? draftState.loadMessage;
   const preparedFilename = draft?.filename ?? null;
+  const preparedDisplayName = draft?.displayName ?? preparedFilename;
+
+  function detailHref(printerId: string): string {
+    const query = draftId ? `?preparedJob=${encodeURIComponent(draftId)}` : "";
+    return `/printers/${printerId}${query}`;
+  }
+
+  function cameraUrl(printer: PrinterWithStatus): string | null {
+    const configured = printer.webcam_url?.trim();
+    if (configured) {
+      return /^https?:\/\//i.test(configured)
+        ? configured
+        : `http://${configured}`;
+    }
+    return printer.ip ? `http://${printer.ip}/webcam/?action=stream` : null;
+  }
 
   async function startPreparedPrint(printer: PrinterWithStatus) {
     if (!draft || !draftId || busyPrinterId) return;
@@ -99,14 +113,8 @@ export function PrintersFleetClient({
       form.append("experiment_id", "");
       form.append("material_profile_id", draft.materialProfileId ?? "");
       form.append("settings", JSON.stringify(draft.settings));
-      form.append(
-        "prepare_settings",
-        JSON.stringify(draft.prepareSettings),
-      );
-      form.append(
-        "experiment_params",
-        JSON.stringify(draft.experimentParams),
-      );
+      form.append("prepare_settings", JSON.stringify(draft.prepareSettings));
+      form.append("experiment_params", JSON.stringify(draft.experimentParams));
 
       const response = await fetch("/api/jobs", {
         method: "POST",
@@ -147,7 +155,8 @@ export function PrintersFleetClient({
     } catch (error) {
       setMessage({
         tone: "error",
-        text: error instanceof Error ? error.message : "Unable to home printer.",
+        text:
+          error instanceof Error ? error.message : "Unable to home printer.",
       });
     } finally {
       setHomeBusyPrinterId(null);
@@ -195,11 +204,11 @@ export function PrintersFleetClient({
               key={printer.id}
               role="button"
               tabIndex={0}
-              onClick={() => router.push(`/printers/${printer.id}`)}
+              onClick={() => router.push(detailHref(printer.id))}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
-                  router.push(`/printers/${printer.id}`);
+                  router.push(detailHref(printer.id));
                 }
               }}
               className="cursor-pointer rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 transition-colors hover:border-[var(--color-border-2)]"
@@ -238,8 +247,22 @@ export function PrintersFleetClient({
                   </p>
                 </div>
               </div>
+              <div className="mt-3 overflow-hidden rounded-lg bg-black">
+                {cameraUrl(printer) ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- MJPEG streams need a plain browser img element.
+                  <img
+                    src={cameraUrl(printer) ?? undefined}
+                    alt={`${printer.name} camera stream`}
+                    className="aspect-video w-full scale-y-[-1] object-cover"
+                  />
+                ) : (
+                  <div className="flex aspect-video items-center justify-center text-xs text-[var(--color-muted)]">
+                    No camera configured
+                  </div>
+                )}
+              </div>
               <div
-                className="mt-4 grid grid-cols-3 gap-2"
+                className="mt-4 grid grid-cols-2 gap-2"
                 onClick={(event) => event.stopPropagation()}
               >
                 <button
@@ -251,17 +274,29 @@ export function PrintersFleetClient({
                 </button>
                 <button
                   disabled={!canOpenLeveling}
-                  onClick={() => router.push(`/printers/${printer.id}?tab=leveling`)}
+                  onClick={() =>
+                    router.push(
+                      `${detailHref(printer.id)}${draftId ? "&" : "?"}tab=leveling`,
+                    )
+                  }
                   className="rounded-md border border-[var(--color-border)] px-2 py-1.5 text-xs font-semibold text-[var(--color-text)] transition-colors hover:border-[var(--color-teal)] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Bed leveling
                 </button>
+              </div>
+              <div
+                className="mt-2"
+                onClick={(event) => event.stopPropagation()}
+              >
                 <button
                   disabled={!draft || busyPrinterId !== null}
                   onClick={() => startPreparedPrint(printer)}
-                  className="rounded-md bg-[var(--color-teal)] px-2 py-1.5 text-xs font-semibold text-[var(--color-bg)] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+                  title={preparedDisplayName ?? "Start a print"}
+                  className="w-full truncate rounded-md bg-[var(--color-teal)] px-2 py-1.5 text-xs font-semibold text-[var(--color-bg)] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {busyPrinterId === printer.id ? "Starting" : "Start a print"}
+                  {busyPrinterId === printer.id
+                    ? "Starting"
+                    : (preparedDisplayName ?? "Start a print")}
                 </button>
               </div>
             </section>

@@ -132,10 +132,7 @@ export function CloudSlicerClient({
     () => (gcode ? layerTotalFromGcode(gcode) : null),
     [gcode],
   );
-  const buildVolume = useMemo(
-    () => parseBuildVolume(null),
-    [],
-  );
+  const buildVolume = useMemo(() => parseBuildVolume(null), []);
   const buildBlock = useMemo(
     () => buildVolumeBlock(inspectResult?.bounding_box_mm ?? null, buildVolume),
     [buildVolume, inspectResult?.bounding_box_mm],
@@ -334,6 +331,8 @@ export function CloudSlicerClient({
       const draft: PreparedPrintDraft = {
         id: draftId,
         filename: `${job?.job_id ?? "cloud-slice"}.gcode`,
+        displayName:
+          selectedFile?.name ?? `${job?.job_id ?? "cloud-slice"}.gcode`,
         gcode,
         materialProfileId: selectedProfile.id,
         settings: settingsFromMaterialProfile(selectedProfile),
@@ -454,7 +453,9 @@ export function CloudSlicerClient({
           {(inspectPending || inspectResult || buildBlock) && (
             <div className="mt-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 text-sm text-[var(--color-text)]">
               <div className="flex flex-wrap gap-3 font-mono text-xs text-[var(--color-muted)]">
-                <span>{inspectPending ? "Inspecting STL" : "Inspect ready"}</span>
+                <span>
+                  {inspectPending ? "Inspecting STL" : "Inspect ready"}
+                </span>
                 {inspectResult && (
                   <>
                     <span>
@@ -468,13 +469,15 @@ export function CloudSlicerClient({
               </div>
               {buildBlock && (
                 <p className="mt-2 text-[var(--color-red)]">
-                  Part exceeds printer build volume on {buildBlock.axis.toUpperCase()} by{" "}
+                  Part exceeds printer build volume on{" "}
+                  {buildBlock.axis.toUpperCase()} by{" "}
                   {buildBlock.overageMm.toFixed(1)} mm.
                 </p>
               )}
               {inspectResult && !inspectResult.is_watertight && (
                 <p className="mt-2 text-[var(--color-amber)]">
-                  Mesh is not watertight; slicing can continue, but inspect the first layer carefully.
+                  Mesh is not watertight; slicing can continue, but inspect the
+                  first layer carefully.
                 </p>
               )}
             </div>

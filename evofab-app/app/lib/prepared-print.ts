@@ -5,6 +5,7 @@ export const PREPARED_PRINT_STORAGE_PREFIX = "evofab:prepared-print:";
 export interface PreparedPrintDraft {
   id: string;
   filename: string;
+  displayName?: string;
   gcode: string;
   materialProfileId: string | null;
   settings: PrintSettings;
