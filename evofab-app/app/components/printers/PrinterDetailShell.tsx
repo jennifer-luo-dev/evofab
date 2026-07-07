@@ -4,6 +4,7 @@ import { useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { PrinterCameraPanel } from "@/app/components/printers/PrinterCameraPanel";
 import { PrinterExtruderPanel } from "@/app/components/printers/PrinterExtruderPanel";
+import { PrinterLevelingPanel } from "@/app/components/printers/PrinterLevelingPanel";
 import { PrinterMacroPanel } from "@/app/components/printers/PrinterMacroPanel";
 import { PrinterMotionPanel } from "@/app/components/printers/PrinterMotionPanel";
 import { PrinterPreheatPanel } from "@/app/components/printers/PrinterPreheatPanel";
@@ -132,6 +133,9 @@ export function PrinterDetailShell({
             <div className="grid gap-4 md:grid-cols-2">
               <div className="md:col-span-2">
                 <PrinterExtruderPanel printer={printer} />
+              </div>
+              <div className="md:col-span-2">
+                <PrinterLevelingPanel printer={printer} />
               </div>
               <PrinterPreheatPanel
                 printer={printer}
