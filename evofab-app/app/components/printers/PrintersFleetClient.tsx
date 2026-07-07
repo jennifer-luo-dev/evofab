@@ -199,7 +199,7 @@ export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
           const statusValue = status?.status ?? "offline";
           const canHome =
             (statusValue === "idle" || statusValue === "paused") &&
-            homeBusyPrinterId === null;
+            homeBusyPrinterId !== printer.id;
           const canOpenLeveling = statusValue === "idle";
 
           return (
