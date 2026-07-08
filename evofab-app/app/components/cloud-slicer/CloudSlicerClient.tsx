@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { type ChangeEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import type { MaterialProfile } from "@/app/types/job";
@@ -14,9 +14,15 @@ import {
   filterMaterialProfilesForPrinterType,
   settingsFromMaterialProfile,
 } from "@/app/lib/material-profiles";
-import { buildVolumeBlock, parseBuildVolume } from "@/app/lib/printability";
+import {
+  buildVolumeBlock,
+  DEFAULT_FGF_BUILD_VOLUME,
+  parseBuildVolume,
+} from "@/app/lib/printability";
 import { layerTotalFromGcode } from "@/app/lib/gcode-layer-parser";
+import { displaySlicerEngine } from "@/app/lib/slicer-display";
 import type { SlicerFace } from "@/app/lib/slicer-client";
+import type { Printer } from "@/app/types/printer";
 
 const MAX_STL_BYTES = 100 * 1024 * 1024;
 const EXTRUDING_G1_RE = /^G1\b(?=[^\n]*\bE[-+]?\d*\.?\d+)/m;
@@ -78,6 +84,7 @@ interface InspectResult {
 
 interface CloudSlicerClientProps {
   materialProfiles: MaterialProfile[];
+  printers: Printer[];
 }
 
 function formatBytes(bytes: number): string {
@@ -109,6 +116,7 @@ async function readJsonOrThrow<T>(response: Response): Promise<T> {
 
 export function CloudSlicerClient({
   materialProfiles,
+  printers,
 }: CloudSlicerClientProps) {
   const router = useRouter();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -154,7 +162,19 @@ export function CloudSlicerClient({
       job?.result?.layer_count ?? (gcode ? layerTotalFromGcode(gcode) : null),
     [gcode, job?.result?.layer_count],
   );
-  const buildVolume = useMemo(() => parseBuildVolume(null), []);
+  const defaultPrinter = useMemo(
+    () =>
+      printers.find((printer) => printer.type === "FGF") ??
+      printers.find((printer) => printer.build_volume) ??
+      null,
+    [printers],
+  );
+  const buildVolume = useMemo(
+    () =>
+      parseBuildVolume(defaultPrinter?.build_volume) ??
+      DEFAULT_FGF_BUILD_VOLUME,
+    [defaultPrinter?.build_volume],
+  );
   const buildBlock = useMemo(
     () => buildVolumeBlock(inspectResult?.bounding_box_mm ?? null, buildVolume),
     [buildVolume, inspectResult?.bounding_box_mm],
@@ -166,9 +186,40 @@ export function CloudSlicerClient({
     gcode !== null &&
     selectedProfile !== null &&
     !buildBlock;
+  const hasCompletedSliceResult =
+    activeStep === "slice" &&
+    status === "done" &&
+    gcode !== null &&
+    !!job?.result;
+  const hasSliceViewerOutcome =
+    activeStep === "slice" &&
+    ((status === "done" && gcode !== null) || status === "failed");
   const activeStepIndex = PREPARE_STEPS.findIndex(
     (step) => step.id === activeStep,
   );
+  const canGoNext = useMemo(() => {
+    if (activeStep === "upload") {
+      return (
+        selectedFile !== null && orientationState !== null && !inspectPending
+      );
+    }
+    if (activeStep === "material") return selectedProfile !== null;
+    if (activeStep === "supports") {
+      return (
+        selectedFile !== null &&
+        selectedProfile !== null &&
+        orientationState !== null &&
+        !inspectPending
+      );
+    }
+    return false;
+  }, [
+    activeStep,
+    inspectPending,
+    orientationState,
+    selectedFile,
+    selectedProfile,
+  ]);
   const sliceDisabledReason = useMemo(() => {
     if (!selectedFile) return "Upload an STL before slicing.";
     if (!selectedProfile) return "Select a material profile before slicing.";
@@ -233,9 +284,20 @@ export function CloudSlicerClient({
   ]);
 
   function validateFile(file: File): string | null {
-    if (!file.name.toLowerCase().endsWith(".stl")) return "Upload an STL file.";
     if (file.size > MAX_STL_BYTES) return "STL must be 100 MB or smaller.";
+    const name = file.name.trim();
+    const hasExtension = /\.[^./\\]+$/.test(name);
+    if (hasExtension && !name.toLowerCase().endsWith(".stl")) {
+      return "Upload an STL file.";
+    }
     return null;
+  }
+
+  function uploadFilename(file: File): string {
+    const name = file.name.trim();
+    if (name.toLowerCase().endsWith(".stl")) return name;
+    const stem = name ? name.replace(/\.[^/.\\]+$/, "") : "mobile-upload";
+    return `${stem || "mobile-upload"}.stl`;
   }
 
   function handleFile(file: File | null) {
@@ -268,8 +330,15 @@ export function CloudSlicerClient({
     setOrientationState("uploaded");
     setNotice({
       tone: "info",
-      message: `${file.name} accepted. Choose auto-orient or keep the uploaded pose, then continue.`,
+      message: `${uploadFilename(file)} accepted. Choose auto-orient or keep the uploaded pose, then continue.`,
     });
+  }
+
+  function handleFileInput(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const file = input.files?.[0] ?? null;
+    if (!file) return;
+    handleFile(file);
   }
 
   function goToStep(step: PrepareStep) {
@@ -279,6 +348,7 @@ export function CloudSlicerClient({
   }
 
   function goNext() {
+    if (!canGoNext) return;
     const nextStep = PREPARE_STEPS[activeStepIndex + 1];
     if (nextStep) goToStep(nextStep.id);
   }
@@ -311,7 +381,11 @@ export function CloudSlicerClient({
       setInspectPending(true);
       try {
         const form = new FormData();
-        form.append("model", selectedFile as File);
+        form.append(
+          "model",
+          selectedFile as File,
+          uploadFilename(selectedFile as File),
+        );
         if (rotation) form.append("rotation", JSON.stringify(rotation));
         form.append("include_faces", "true");
         const response = await fetch("/api/slicer/inspect", {
@@ -384,7 +458,7 @@ export function CloudSlicerClient({
 
     try {
       const form = new FormData();
-      form.append("model", selectedFile);
+      form.append("model", selectedFile, uploadFilename(selectedFile));
       form.append("profile_id", selectedProfile.id);
       if (rotation) form.append("rotation", JSON.stringify(rotation));
       form.append("supports", String(supports));
@@ -558,14 +632,8 @@ export function CloudSlicerClient({
                     <label className="relative cursor-pointer rounded-md border border-white/15 px-3 py-2 text-xs font-semibold text-white transition-colors hover:border-[var(--color-teal)]">
                       <input
                         type="file"
-                        accept=".stl,model/stl"
                         className="absolute inset-0 cursor-pointer opacity-0"
-                        onClick={(event) => {
-                          event.currentTarget.value = "";
-                        }}
-                        onChange={(event) =>
-                          handleFile(event.target.files?.[0] ?? null)
-                        }
+                        onChange={handleFileInput}
                       />
                       Replace STL
                     </label>
@@ -616,10 +684,13 @@ export function CloudSlicerClient({
                     </div>
                     <button
                       type="button"
+                      disabled={!canGoNext}
                       onClick={goNext}
                       className={cn(
-                        "rounded-lg border px-4 py-2 text-sm font-semibold transition-all",
-                        NEXT_READY_CLASS,
+                        "rounded-lg border px-4 py-2 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40",
+                        canGoNext
+                          ? NEXT_READY_CLASS
+                          : "border-[var(--color-border-2)] text-[var(--color-text)]",
                       )}
                     >
                       Next
@@ -627,17 +698,11 @@ export function CloudSlicerClient({
                   </div>
                 </div>
               ) : (
-                <label className="relative flex min-h-44 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-lg border border-dashed border-[var(--color-border-2)] bg-[var(--color-surface-2)] px-4 text-center transition-colors hover:border-[var(--color-teal)]">
+                <label className="relative flex min-h-44 w-full cursor-pointer flex-col items-center justify-center overflow-hidden rounded-lg border border-dashed border-[var(--color-border-2)] bg-[var(--color-surface-2)] px-4 text-center transition-colors hover:border-[var(--color-teal)]">
                   <input
                     type="file"
-                    accept=".stl,model/stl"
                     className="absolute inset-0 z-10 cursor-pointer opacity-0"
-                    onClick={(event) => {
-                      event.currentTarget.value = "";
-                    }}
-                    onChange={(event) =>
-                      handleFile(event.target.files?.[0] ?? null)
-                    }
+                    onChange={handleFileInput}
                   />
                   <span className="text-2xl">+</span>
                   <span className="mt-2 text-sm font-medium text-[var(--color-text)]">
@@ -725,11 +790,11 @@ export function CloudSlicerClient({
               )}
               <button
                 type="button"
-                disabled={!selectedProfile}
+                disabled={!canGoNext}
                 onClick={goNext}
                 className={cn(
                   "w-fit rounded-lg border px-4 py-2 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40",
-                  selectedProfile
+                  canGoNext
                     ? NEXT_READY_CLASS
                     : "border-[var(--color-border-2)] text-[var(--color-text)]",
                 )}
@@ -792,10 +857,13 @@ export function CloudSlicerClient({
               )}
               <button
                 type="button"
+                disabled={!canGoNext}
                 onClick={goNext}
                 className={cn(
-                  "mt-3 rounded-md border px-3 py-2 text-xs font-semibold transition-all",
-                  NEXT_READY_CLASS,
+                  "mt-3 rounded-md border px-3 py-2 text-xs font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40",
+                  canGoNext
+                    ? NEXT_READY_CLASS
+                    : "border-[var(--color-border-2)] text-[var(--color-text)]",
                 )}
               >
                 Next
@@ -896,7 +964,7 @@ export function CloudSlicerClient({
           )}
         </section>
 
-        {activeStep === "slice" && (
+        {hasCompletedSliceResult && (
           <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
             <h2 className="text-sm font-semibold text-[var(--color-text)]">
               Slice Result
@@ -927,7 +995,7 @@ export function CloudSlicerClient({
                   Engine
                 </p>
                 <p className="mt-2 truncate font-mono text-sm text-[var(--color-text)]">
-                  {job?.result?.engine ?? "—"}
+                  {displaySlicerEngine(job?.result?.engine)}
                 </p>
               </div>
               <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
@@ -963,12 +1031,14 @@ export function CloudSlicerClient({
           </section>
         )}
       </div>
-      {activeStep === "slice" && (
+      {hasSliceViewerOutcome && (
         <SliceViewer
+          key={job?.job_id ?? "pending-preview"}
           file={selectedFile}
           gcode={gcode}
           status={status}
           rotation={rotation}
+          buildVolume={buildVolume}
           reportedLayerCount={job?.result?.layer_count ?? null}
         />
       )}

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SlicerClient } from "@/app/lib/slicer-client";
 import { SlicerError } from "@/app/lib/slicer-errors";
+import { resolveSlicerProfileId } from "@/app/lib/slicer-profile-aliases";
 
 const MAX_STL_BYTES = 100 * 1024 * 1024;
 
@@ -69,7 +70,7 @@ export async function POST(req: NextRequest) {
       typeof supportsValue === "string" ? supportsValue === "true" : undefined;
     const job = await new SlicerClient().submitSlice({
       model,
-      profileId,
+      profileId: resolveSlicerProfileId(profileId),
       rotation,
       supports,
     });

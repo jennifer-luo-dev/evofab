@@ -11,11 +11,25 @@ export interface BuildVolumeBlock {
   overageMm: number;
 }
 
-export function parseBuildVolume(value: string | null | undefined): BuildVolumeMm | null {
+export const DEFAULT_FGF_BUILD_VOLUME: BuildVolumeMm = {
+  x: 300,
+  y: 300,
+  z: 400,
+};
+
+export function parseBuildVolume(
+  value: string | null | undefined,
+): BuildVolumeMm | null {
   if (!value) return null;
-  const normalized = value.toLowerCase().replaceAll("×", "x").replaceAll("mm", "");
+  const normalized = value
+    .toLowerCase()
+    .replaceAll("×", "x")
+    .replaceAll("mm", "");
   const parts = normalized.split("x").map((part) => Number(part.trim()));
-  if (parts.length !== 3 || parts.some((part) => !Number.isFinite(part) || part <= 0)) {
+  if (
+    parts.length !== 3 ||
+    parts.some((part) => !Number.isFinite(part) || part <= 0)
+  ) {
     return null;
   }
   return { x: parts[0], y: parts[1], z: parts[2] };

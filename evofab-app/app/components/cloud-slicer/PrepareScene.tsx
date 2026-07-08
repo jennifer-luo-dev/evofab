@@ -72,15 +72,27 @@ export function PrepareScene({
       scene.add(plate);
       disposables.push(plateGeometry, plateMaterial);
 
-      const grid = new THREE.GridHelper(
-        plateSize,
-        Math.max(8, Math.round(plateSize / 20)),
-        0x7f8a93,
-        0x3f4850,
+      const gridSpacing = plateSize > 500 ? 50 : 20;
+      const gridVertices: number[] = [];
+      for (let x = -plateX / 2; x <= plateX / 2 + 0.001; x += gridSpacing) {
+        gridVertices.push(x, 0.02, -plateY / 2, x, 0.02, plateY / 2);
+      }
+      for (let z = -plateY / 2; z <= plateY / 2 + 0.001; z += gridSpacing) {
+        gridVertices.push(-plateX / 2, 0.02, z, plateX / 2, 0.02, z);
+      }
+      const gridGeometry = new THREE.BufferGeometry();
+      gridGeometry.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(gridVertices, 3),
       );
-      grid.position.y = 0.02;
+      const gridMaterial = new THREE.LineBasicMaterial({
+        color: 0x3f4850,
+        transparent: true,
+        opacity: 0.72,
+      });
+      const grid = new THREE.LineSegments(gridGeometry, gridMaterial);
       scene.add(grid);
-      disposables.push(grid.geometry, grid.material);
+      disposables.push(gridGeometry, gridMaterial);
 
       const volumeGeometry = new THREE.BoxGeometry(plateX, plateZ, plateY);
       const edges = new THREE.EdgesGeometry(volumeGeometry);
