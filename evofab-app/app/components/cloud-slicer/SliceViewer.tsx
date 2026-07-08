@@ -3,13 +3,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   layerTotalFromGcode,
-  parseGcodeLayers,
   type GcodeLayer,
   type GcodeLineType,
   type GcodeSegment,
 } from "@/app/lib/gcode-layer-parser";
 import { GCODE_PREVIEW_TUBE_OPTIONS } from "@/app/lib/gcode-preview-adapter";
 import type { BuildVolumeMm } from "@/app/lib/printability";
+import { phaseJPreviewAdapter } from "./preview-adapter";
 
 interface SliceViewerProps {
   file: File | null;
@@ -145,7 +145,10 @@ export function SliceViewer({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [layerProgress, setLayerProgress] = useState(100);
   const [showInfo, setShowInfo] = useState(true);
-  const layers = useMemo(() => (gcode ? parseGcodeLayers(gcode) : []), [gcode]);
+  const layers = useMemo(
+    () => (gcode ? phaseJPreviewAdapter.parse(gcode) : []),
+    [gcode],
+  );
   const reportedTotal = useMemo(
     () => reportedLayerCount ?? (gcode ? layerTotalFromGcode(gcode) : null),
     [gcode, reportedLayerCount],
@@ -329,6 +332,7 @@ export function SliceViewer({
       }
 
       const previousLayers = visibleLayers.slice(0, -1);
+      phaseJPreviewAdapter.render();
       if (activeLayer) {
         for (const type of LINE_TYPES) {
           addTubes(previousLayers, type.id, type.color, 0.22);
