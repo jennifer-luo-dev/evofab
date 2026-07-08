@@ -20,9 +20,15 @@ import {
   parseBuildVolume,
 } from "@/app/lib/printability";
 import { layerTotalFromGcode } from "@/app/lib/gcode-layer-parser";
-import { displaySlicerEngine } from "@/app/lib/slicer-display";
 import type { SlicerFace } from "@/app/lib/slicer-client";
 import type { Printer } from "@/app/types/printer";
+import { PrepareStepper } from "./PrepareStepper";
+import { SliceResultSummary } from "./SliceResultSummary";
+import {
+  NEXT_READY_CLASS,
+  PREPARE_STEPS,
+  usePrepareStepper,
+} from "./prepare-workflow";
 
 const MAX_STL_BYTES = 100 * 1024 * 1024;
 const EXTRUDING_G1_RE = /^G1\b(?=[^\n]*\bE[-+]?\d*\.?\d+)/m;
@@ -37,17 +43,7 @@ const PrepareScene = dynamic(
 
 type SliceStatus =
   "idle" | "queued" | "slicing" | "done" | "failed" | "printing";
-type PrepareStep = "upload" | "material" | "supports" | "slice";
 type OrientationState = "uploaded" | "user-picked" | "auto" | null;
-
-const PREPARE_STEPS: Array<{ id: PrepareStep; label: string }> = [
-  { id: "upload", label: "Upload" },
-  { id: "material", label: "Material" },
-  { id: "supports", label: "Supports" },
-  { id: "slice", label: "Slice" },
-];
-const NEXT_READY_CLASS =
-  "border-[var(--color-green)]/70 bg-[var(--color-green)]/10 text-[var(--color-green)] shadow-[0_0_18px_rgba(34,197,94,0.28)]";
 
 interface SlicerJobResult {
   gcode_url: string;
@@ -92,13 +88,6 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function formatDuration(seconds: number): string {
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.round(seconds % 60);
-  if (mins <= 0) return `${secs}s`;
-  return `${mins}m ${secs.toString().padStart(2, "0")}s`;
-}
-
 async function readJsonOrThrow<T>(response: Response): Promise<T> {
   const json = await response.json().catch(() => null);
 
@@ -121,8 +110,8 @@ export function CloudSlicerClient({
   const router = useRouter();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState("");
-  const [activeStep, setActiveStep] = useState<PrepareStep>("upload");
-  const [highestStepIndex, setHighestStepIndex] = useState(0);
+  const { activeStep, highestStepIndex, goToStep, resetPrepareSteps } =
+    usePrepareStepper();
   const [status, setStatus] = useState<SliceStatus>("idle");
   const [job, setJob] = useState<SlicerJob | null>(null);
   const [gcode, setGcode] = useState<string | null>(null);
@@ -308,7 +297,7 @@ export function CloudSlicerClient({
     setRotation(null);
     setOrientationState(null);
     setInspectResult(null);
-    setHighestStepIndex(0);
+    resetPrepareSteps();
 
     if (!file) {
       setSelectedFile(null);
@@ -339,12 +328,6 @@ export function CloudSlicerClient({
     const file = input.files?.[0] ?? null;
     if (!file) return;
     handleFile(file);
-  }
-
-  function goToStep(step: PrepareStep) {
-    const nextIndex = PREPARE_STEPS.findIndex((item) => item.id === step);
-    setActiveStep(step);
-    setHighestStepIndex((current) => Math.max(current, nextIndex));
   }
 
   function goNext() {
@@ -596,25 +579,11 @@ export function CloudSlicerClient({
             </span>
           </div>
 
-          <div className="mt-5 grid grid-cols-4 gap-2">
-            {PREPARE_STEPS.map((step, index) => (
-              <button
-                key={step.id}
-                type="button"
-                disabled={index > highestStepIndex}
-                onClick={() => setActiveStep(step.id)}
-                className={cn(
-                  "min-h-12 rounded-md border px-2 py-2 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40",
-                  activeStep === step.id
-                    ? "border-[var(--color-teal)] bg-[var(--color-teal)]/10 text-[var(--color-text)]"
-                    : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-muted)] hover:border-[var(--color-border-2)]",
-                )}
-              >
-                <span className="block font-mono text-[10px]">{index + 1}</span>
-                <span>{step.label}</span>
-              </button>
-            ))}
-          </div>
+          <PrepareStepper
+            activeStep={activeStep}
+            highestStepIndex={highestStepIndex}
+            onStepSelect={goToStep}
+          />
 
           {activeStep === "upload" && (
             <div className="mt-5">
@@ -965,70 +934,21 @@ export function CloudSlicerClient({
         </section>
 
         {hasCompletedSliceResult && (
-          <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-            <h2 className="text-sm font-semibold text-[var(--color-text)]">
-              Slice Result
-            </h2>
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
-                <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                  Print Time
-                </p>
-                <p className="mt-2 font-mono text-lg text-[var(--color-text)]">
-                  {job?.result?.print_time_s
-                    ? formatDuration(job.result.print_time_s)
-                    : "—"}
-                </p>
-              </div>
-              <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
-                <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                  Material
-                </p>
-                <p className="mt-2 font-mono text-lg text-[var(--color-text)]">
-                  {job?.result?.material_used_g
-                    ? `${job.result.material_used_g.toFixed(2)} g`
-                    : "—"}
-                </p>
-              </div>
-              <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
-                <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                  Engine
-                </p>
-                <p className="mt-2 truncate font-mono text-sm text-[var(--color-text)]">
-                  {displaySlicerEngine(job?.result?.engine)}
-                </p>
-              </div>
-              <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
-                <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                  G-code
-                </p>
-                <p className="mt-2 font-mono text-sm text-[var(--color-text)]">
-                  {gcode ? formatBytes(new Blob([gcode]).size) : "—"}
-                </p>
-              </div>
-              <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
-                <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                  Layers
-                </p>
-                <p className="mt-2 font-mono text-lg text-[var(--color-text)]">
-                  {layerCount ?? "—"}
-                </p>
-              </div>
-              <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
-                <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                  Prepare
-                </p>
-                <p className="mt-2 font-mono text-xs text-[var(--color-text)]">
-                  {orientationState === "user-picked"
-                    ? "user-picked side down"
-                    : orientationState === "auto"
-                      ? "auto-oriented"
-                      : "uploaded orientation"}{" "}
-                  · {supports ? "supports on" : "supports off"}
-                </p>
-              </div>
-            </div>
-          </section>
+          <SliceResultSummary
+            printTimeS={job?.result?.print_time_s ?? null}
+            materialUsedG={job?.result?.material_used_g ?? null}
+            engine={job?.result?.engine}
+            gcodeBytes={gcode ? new Blob([gcode]).size : null}
+            layerCount={layerCount}
+            orientationLabel={
+              orientationState === "user-picked"
+                ? "user-picked side down"
+                : orientationState === "auto"
+                  ? "auto-oriented"
+                  : "uploaded orientation"
+            }
+            supports={supports}
+          />
         )}
       </div>
       {hasSliceViewerOutcome && (
