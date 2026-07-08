@@ -1,10 +1,10 @@
 # Phase H Live Demo Runbook
 
-This runbook is for William's supervised hardware bring-up of printer H on the
+This runbook is for William's supervised hardware bring-up of the FGF Printer on the
 Tufts lab network. The Vercel preview cannot reach LAN printers; run this demo
 from William's Mac while connected to the lab network.
 
-Printer H:
+FGF Printer:
 
 - Moonraker URL: `http://10.247.137.21:7125`
 - Onboarding IP: `10.247.137.21`
@@ -59,13 +59,13 @@ status worker needs the service-role key because it writes `printer_status`.
    - Expected evidence: the app opens at `http://localhost:3000`.
    - Abort if: the app cannot load printer data from Supabase.
 
-## 3. Onboard Printer H
+## 3. Onboard FGF Printer
 
 1. Open `/printers`.
-2. Enter printer H:
-   - Name: `Printer H`
-   - Model: the label William wants shown in the fleet
-   - Type: `FDM` or `FGF`, matching the actual machine
+2. Enter FGF Printer:
+   - Name: `FGF Printer`
+   - Model: `FGF Printer`
+   - Type: `FGF`
    - Moonraker IP: `10.247.137.21`
    - Port: `7125`
 3. Press `Test connection`.
@@ -74,7 +74,7 @@ status worker needs the service-role key because it writes `printer_status`.
    - Abort if: the result is `MOONRAKER_TIMEOUT`, `MOONRAKER_OFFLINE`,
      `HARDWARE_CONFIRMATION_REQUIRED`, `UNSAFE_MOCK_URL`, or malformed.
 4. Press `Add Printer`.
-   - Expected evidence: printer H appears in the `/printers` fleet and receives
+   - Expected evidence: FGF Printer appears in the `/printers` fleet and receives
      a `printer_status` row.
    - Abort if: the printer cannot be created or its initial status row cannot be
      written.
@@ -92,8 +92,8 @@ print, motion, heater, macro, or e-stop commands directly.
 
 Expected evidence:
 
-- Worker logs show successful polls for printer H.
-- `/printers` shows printer H online with real temperatures.
+- Worker logs show successful polls for FGF Printer.
+- `/printers` shows FGF Printer online with real temperatures.
 - The monitor temperature chart shows live hotend and bed values.
 
 Abort criteria:
@@ -107,7 +107,7 @@ Abort criteria:
 Stop-worker evidence:
 
 - Stop `npm run status:worker`.
-- Expected evidence: the dashboard synthesizes printer H as offline after about
+- Expected evidence: the dashboard synthesizes FGF Printer as offline after about
   30 seconds through the existing stale-status path.
 
 ### Step 2: Software E-Stop And Guarded Recovery
@@ -176,7 +176,7 @@ Abort criteria:
 ### Step 5: Short Supervised Print
 
 1. Upload the demo STL.
-2. Inspect it, select printer H, and confirm the build-volume precheck passes.
+2. Inspect it, select FGF Printer, and confirm the build-volume precheck passes.
 3. Slice with the real slicer service.
 4. Start the print from the dashboard while William supervises the printer.
 5. During the print, perform one runtime-override spot check within allowed
@@ -192,7 +192,7 @@ Expected evidence:
 
 Abort criteria:
 
-- The precheck reports the model does not fit printer H.
+- The precheck reports the model does not fit FGF Printer.
 - Slicer service fails or returns malformed G-code.
 - Progress or layer evidence is clearly synthetic during hardware mode.
 - Runtime override violates a clamp or produces unsafe printer behavior.
@@ -261,7 +261,7 @@ For the implementation log, record:
 
 - Commit SHA for each work item.
 - Gate results after each work item and at final verification.
-- Printer H connection-test result and versions shown.
+- FGF Printer connection-test result and versions shown.
 - Worker tick evidence for live online status.
 - The time the worker was stopped and the time the dashboard showed offline.
 - Each verification ladder step completed, result, and abort reason if stopped.
