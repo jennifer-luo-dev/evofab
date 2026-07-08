@@ -12,6 +12,7 @@ interface PrinterMetricsCardProps {
 
 function formatEta(seconds: number | null): string {
   if (seconds === null) return '—'
+  if (seconds < 60) return `${Math.max(0, Math.round(seconds))}s`
   const h = Math.floor(seconds / 3600)
   const m = Math.floor((seconds % 3600) / 60)
   return h > 0 ? `${h}h ${m}m` : `${m}m`
@@ -24,6 +25,11 @@ export function PrinterMetricsCard({
   layerTotal,
   printerStatus,
 }: PrinterMetricsCardProps) {
+  const progress = printerStatus?.progress ?? jobProgress
+  const currentLayer = printerStatus?.layer_current ?? layerCurrent
+  const totalLayer = printerStatus?.layer_total ?? layerTotal
+  const layerSource = printerStatus?.layer_source ?? 'unknown'
+
   return (
     <div className="p-5 rounded-xl border border-border bg-surface">
       <div className="flex items-center justify-between mb-4">
@@ -33,12 +39,15 @@ export function PrinterMetricsCard({
 
       <div className="mb-4">
         <div className="flex justify-between text-xs font-mono text-muted mb-1.5">
-          <span>{jobProgress.toFixed(0)}%</span>
-          {layerCurrent !== null && layerTotal !== null && (
-            <span>Layer {layerCurrent} / {layerTotal}</span>
+          <span>{progress.toFixed(0)}%</span>
+          {currentLayer !== null && totalLayer !== null && (
+            <span>
+              Layer {currentLayer} / {totalLayer}
+              {layerSource === 'estimated' ? ' estimated' : ''}
+            </span>
           )}
         </div>
-        <ProgressBar value={jobProgress} height="md" />
+        <ProgressBar value={progress} height="md" />
       </div>
 
       <div className="grid grid-cols-3 gap-2">

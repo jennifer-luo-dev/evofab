@@ -6,7 +6,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "format:check": "prettier --check README.md docs/live-demo.md app/api/printers/test-connection/route.ts app/components/printers/PrinterOnboardingForm.tsx app/lib/mock-status-producer.ts app/lib/mock-status-scenarios.ts app/lib/moonraker-client.ts app/lib/printer-onboarding.ts app/lib/status-worker.ts scripts/mock-status-producer.ts scripts/status-worker.ts tests/**/*.ts",
+    "status:worker": "tsx scripts/status-worker.ts",
+    "test": "tsx --test tests/*.test.ts tests/*.test.mjs",
+    "test:integration": "tsx --test tests/integration/*.test.ts",
+    "status:mock": "tsx scripts/mock-status-producer.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.3",
@@ -14,21 +20,26 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "gcode-preview": "^2.18.0",
     "next": "16.2.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-dropzone": "^15.0.0",
-    "recharts": "^3.8.1"
+    "recharts": "^3.8.1",
+    "three": "^0.185.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/three": "^0.185.0",
     "@types/ws": "^8.18.1",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
+    "prettier": "^3.7.4",
     "tailwindcss": "^4",
+    "tsx": "^4.21.0",
     "typescript": "^5"
   }
 }

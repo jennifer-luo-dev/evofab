@@ -1,36 +1,127 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# EvoFab Dashboard
 
-## Getting Started
+Next.js dashboard for EvoFab printer setup, job monitoring, and results review.
 
-First, run the development server:
+## Local Development
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) with your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Copy `.env.local.example` to `.env.local` and fill values from the local
+Supabase project or William's hosted project. Keep `.env.local` private.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Required environment variables:
 
-## Learn More
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY` for server-side/local script writes and
+  integration tests
+- `SUPABASE_PROJECT_REF` for `supabase link --project-ref "$SUPABASE_PROJECT_REF"`
+- `MOONRAKER_MODE=mock` for local Phase F work
+- `SLICER_MODE=mock` for local Phase F work
+- `SLICER_TOKEN` only when `SLICER_MODE=real`
 
-To learn more about Next.js, take a look at the following resources:
+To initialize a fresh hosted Supabase project after the environment is set:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+supabase link --project-ref "$SUPABASE_PROJECT_REF"
+supabase db push
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Mock Printer Status
 
-## Deploy on Vercel
+The dashboard reads live printer state from Supabase `printer_status`. For local
+development without hardware, run the deterministic mock status producer in a
+separate terminal:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+MOONRAKER_MODE=mock npm run status:mock
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Useful environment variables:
+
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY` for local script writes when RLS requires it
+- `MOONRAKER_MODE=mock`
+- `MOCK_STATUS_SEED` for deterministic scenario changes
+- `MOCK_STATUS_INTERVAL_MS`, default `2000`
+
+The producer only runs in mock mode. It writes one status row per active printer
+every two seconds by default. If the producer stops, the server read helper
+synthesizes offline status after the 30 second stale threshold.
+
+## Moonraker Safety Modes
+
+Read-side Moonraker status calls use an explicit mode:
+
+```bash
+MOONRAKER_MODE=mock      # default; only loopback mock URLs are allowed
+MOONRAKER_MODE=local     # Moonraker calls are disabled
+MOONRAKER_MODE=hardware  # real printer IP/port calls require confirmation
+```
+
+Hardware mode requires:
+
+```bash
+HARDWARE_CONFIRMATION=I_UNDERSTAND_THIS_CONTROLS_PHYSICAL_HARDWARE
+```
+
+The safe status connector normalizes Moonraker `/printer/objects/query`
+responses into the existing `printer_status` shape. Local/demo status
+development should still prefer `npm run status:mock`.
+
+## Cloud Slicer
+
+The dashboard talks to the Phase A slicer service through server-side proxy
+routes, so the browser never receives the bearer token. Local development
+defaults to mock mode:
+
+```bash
+SLICER_MODE=mock
+```
+
+Real mode requires the running slicer service and the shared token in
+`.env.local`:
+
+```bash
+SLICER_MODE=real
+SLICER_URL=http://localhost:8055
+SLICER_TOKEN=<shared bearer token>
+```
+
+Health checks target `/health`; the service root intentionally returns 404.
+The dashboard does not hard-code the engine version or localhost. Moving the
+service to another host should require only a `SLICER_URL` change. Mock mode
+returns fixture G-code with `START_PRINT` and extruding `G1` moves so the UI
+and print handoff match real slicer output markers.
+
+Prepare-stage mock mode also echoes the additive `rotation` quaternion and
+`supports` boolean returned by `POST /slice`. The Cloud Slicer form exposes one
+`Add supports` switch; the `/inspect` proxy drives the overhang nudge and can
+enable that switch without adding support-type controls.
+
+Upload, printer changes, and orientation changes call `/api/slicer/inspect`.
+The client blocks Print when the inspected bounding box exceeds the selected
+printer `build_volume`, warns on non-watertight meshes, and shows the
+pre-print summary with time, material, layer count, orientation, and supports.
+
+## Verification
+
+```bash
+npm run format:check
+npm run lint
+npm run typecheck
+npm run test
+npm run build
+```
+
+Run the local Supabase integration test only when Docker/Supabase are available:
+
+```bash
+RUN_LOCAL_SUPABASE_TESTS=1 npm run test:integration
+```

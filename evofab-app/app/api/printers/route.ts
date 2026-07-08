@@ -1,95 +1,86 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import {
+  initialPrinterStatus,
+  normalizePrinterOnboardingInput,
+  PrinterOnboardingError,
+} from "@/app/lib/printer-onboarding";
+import { getActivePrintersWithStatus } from "@/app/lib/printer-status-source";
 import { createClient } from "@/app/lib/supabase-server";
-import type { PrinterStatus, PrinterWithStatus, PrinterStatusType } from "@/app/types/printer";
 
-const MOONRAKER_TIMEOUT_MS = 3000;
-
-const STATE_MAP: Record<string, PrinterStatusType> = {
-  standby: "idle",
-  printing: "printing",
-  paused: "paused",
-  error: "error",
-  complete: "idle",
-  cancelled: "idle",
-};
-
-async function fetchMoonrakerStatus(
-  ip: string,
-  port: number,
-  printerId: string,
-): Promise<PrinterStatus> {
-  const url = `http://${ip}:${port}/printer/objects/query?print_stats&extruder&heater_bed&virtual_sdcard`;
-
-  try {
-    const res = await fetch(url, {
-      signal: AbortSignal.timeout(MOONRAKER_TIMEOUT_MS),
-      cache: "no-store",
-    });
-
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-    const json = await res.json();
-    const status = json.result?.status ?? {};
-    const ps = status.print_stats ?? {};
-    const ext = status.extruder ?? {};
-    const bed = status.heater_bed ?? {};
-    const vsd = status.virtual_sdcard ?? {};
-
-    return {
-      printer_id: printerId,
-      online: true,
-      status: STATE_MAP[ps.state] ?? "idle",
-      print_state: ps.state ?? null,
-      filename: ps.filename || null,
-      progress: typeof vsd.progress === "number" ? vsd.progress * 100 : 0,
-      layer_current: ps.info?.current_layer ?? null,
-      layer_total: ps.info?.total_layer ?? null,
-      hotend_temp: ext.temperature ?? null,
-      hotend_target: ext.target ?? null,
-      bed_temp: bed.temperature ?? null,
-      bed_target: bed.target ?? null,
-      eta_seconds: null,
-      updated_at: new Date().toISOString(),
-    };
-  } catch {
-    return {
-      printer_id: printerId,
-      online: false,
-      status: "offline",
-      print_state: null,
-      filename: null,
-      progress: 0,
-      layer_current: null,
-      layer_total: null,
-      hotend_temp: null,
-      hotend_target: null,
-      bed_temp: null,
-      bed_target: null,
-      eta_seconds: null,
-      updated_at: new Date().toISOString(),
-    };
-  }
+function errorResponse(
+  status: number,
+  code: string,
+  message: string,
+  retryable = false,
+  details?: unknown,
+) {
+  return NextResponse.json(
+    { error: { code, message, retryable, details } },
+    { status },
+  );
 }
 
 export async function GET() {
-  const supabase = await createClient();
+  try {
+    const printers = await getActivePrintersWithStatus();
+    return NextResponse.json({ printers });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unable to load printers.";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
 
-  const { data: printers } = await supabase
-    .from("printers")
-    .select("*")
-    .eq("is_active", true)
-    .order("name");
+export async function POST(req: NextRequest) {
+  try {
+    const input = normalizePrinterOnboardingInput(await req.json());
+    const supabase = await createClient();
+    const { data: printer, error } = await supabase
+      .from("printers")
+      .insert(input)
+      .select()
+      .single();
 
-  const results: PrinterWithStatus[] = await Promise.all(
-    (printers ?? []).map(async (printer) => ({
-      ...printer,
-      printer_status: await fetchMoonrakerStatus(
-        printer.ip,
-        printer.port,
-        printer.id,
-      ),
-    })),
-  );
+    if (error || !printer) {
+      return errorResponse(
+        500,
+        "PRINTER_CREATE_FAILED",
+        "Unable to create printer.",
+        true,
+        error?.message,
+      );
+    }
 
-  return NextResponse.json({ printers: results });
+    const { error: statusError } = await supabase
+      .from("printer_status")
+      .upsert(initialPrinterStatus(printer.id), { onConflict: "printer_id" });
+
+    if (statusError) {
+      return errorResponse(
+        500,
+        "PRINTER_STATUS_CREATE_FAILED",
+        "Printer was created, but its initial status row could not be created.",
+        true,
+        statusError.message,
+      );
+    }
+
+    return NextResponse.json({ printer }, { status: 201 });
+  } catch (error) {
+    if (error instanceof PrinterOnboardingError) {
+      return errorResponse(
+        error.status,
+        error.code,
+        error.message,
+        false,
+        error.details,
+      );
+    }
+    return errorResponse(
+      400,
+      "PRINTER_INVALID_INPUT",
+      "Unable to read printer onboarding request.",
+      false,
+    );
+  }
 }
