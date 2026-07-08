@@ -4,6 +4,42 @@ import type { MaterialProfile } from "@/app/types/job";
 import type { Printer } from "@/app/types/printer";
 
 export default async function CloudSlicerPage() {
+  if (process.env.EVOFAB_E2E_MOCK_SUPABASE === "1") {
+    return (
+      <CloudSlicerClient
+        materialProfiles={[
+          {
+            id: "pla-fgf",
+            name: "PLA FGF",
+            printer_type: "FGF",
+            nozzle_temp: 190,
+            bed_temp: 60,
+            speed: 18,
+            flow_rate: 100,
+            fan_speed: 40,
+            notes: "Mock profile",
+            created_at: "2026-07-08T00:00:00.000Z",
+          },
+        ]}
+        printers={[
+          {
+            id: "printer-fgf",
+            name: "FGF Printer",
+            model: "FGF Printer",
+            ip: "127.0.0.1",
+            port: 7125,
+            type: "FGF",
+            material: "PLA",
+            build_volume: "300x300x400mm",
+            webcam_url: null,
+            is_active: true,
+            created_at: "2026-07-08T00:00:00.000Z",
+          },
+        ]}
+      />
+    );
+  }
+
   const supabase = await createClient();
   const [
     { data: materialProfiles, error },
