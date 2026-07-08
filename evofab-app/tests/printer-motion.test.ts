@@ -5,6 +5,7 @@ import {
   mockPrinterKey,
   resetMockMoonrakerState,
 } from "../app/lib/mock-moonraker";
+import { HARDWARE_CONFIRMATION } from "../app/lib/moonraker";
 import { MotionError, runPrinterMotion } from "../app/lib/printer-motion";
 
 const printer = { id: "printer-1", ip: "127.0.0.1", port: 7125 };
@@ -59,6 +60,67 @@ test("manual motion blocks jog and extrusion while printing", async () => {
     (error) =>
       error instanceof MotionError && error.code === "MOTION_BLOCKED_PRINTING",
   );
+});
+
+test("hardware jog reads Moonraker toolhead homing before motion", async () => {
+  const originalMode = process.env.MOONRAKER_MODE;
+  const originalConfirmation = process.env.HARDWARE_CONFIRMATION;
+  const originalFetch = globalThis.fetch;
+  const seenUrls: string[] = [];
+
+  process.env.MOONRAKER_MODE = "hardware";
+  process.env.HARDWARE_CONFIRMATION = HARDWARE_CONFIRMATION;
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    const href = String(url);
+    seenUrls.push(href);
+    if (href.includes("/printer/objects/query?toolhead")) {
+      return new Response(
+        JSON.stringify({
+          result: {
+            status: {
+              toolhead: {
+                homed_axes: "xy",
+                position: [0, 0, 0, 0],
+              },
+            },
+          },
+        }),
+        { status: 200 },
+      );
+    }
+    throw new Error(`Unexpected Moonraker request: ${href}`);
+  }) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      () =>
+        runPrinterMotion(printer, idleStatus, {
+          action: "jog",
+          axis: "z",
+          distanceMm: 1,
+          feedrateMmMin: 600,
+        }),
+      (error) =>
+        error instanceof MotionError &&
+        error.code === "MOTION_REQUIRES_HOME" &&
+        JSON.stringify(error.details).includes('"z":false'),
+    );
+    assert.deepEqual(seenUrls, [
+      "http://127.0.0.1:7125/printer/objects/query?toolhead",
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalMode === undefined) {
+      delete process.env.MOONRAKER_MODE;
+    } else {
+      process.env.MOONRAKER_MODE = originalMode;
+    }
+    if (originalConfirmation === undefined) {
+      delete process.env.HARDWARE_CONFIRMATION;
+    } else {
+      process.env.HARDWARE_CONFIRMATION = originalConfirmation;
+    }
+  }
 });
 
 test("manual extrusion enforces cold-extrude guard and allows hot extrusion", async () => {

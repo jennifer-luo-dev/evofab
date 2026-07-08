@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import type { PrinterWithStatus } from "@/app/types/printer";
 
 interface PrinterMotionPanelProps {
@@ -26,10 +27,11 @@ async function postMotion(printerId: string, body: unknown) {
 }
 
 export function PrinterMotionPanel({ printer }: PrinterMotionPanelProps) {
+  const router = useRouter();
   const status = printer.printer_status?.status ?? "offline";
   const hotendTemp = printer.printer_status?.hotend_temp ?? null;
-  const canJogOrExtrude = status === "idle" || status === "paused";
-  const canExtrude = canJogOrExtrude && (hotendTemp ?? 0) >= 170;
+  const canSendMotion = status !== "printing";
+  const canExtrude = canSendMotion && (hotendTemp ?? 0) >= 170;
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: Tone; text: string }>({
     tone: "idle",
@@ -42,6 +44,7 @@ export function PrinterMotionPanel({ printer }: PrinterMotionPanelProps) {
     try {
       await postMotion(printer.id, body);
       setMessage({ tone: "ok", text: `${label} sent.` });
+      router.refresh();
     } catch (error) {
       setMessage({
         tone: "error",
@@ -60,14 +63,14 @@ export function PrinterMotionPanel({ printer }: PrinterMotionPanelProps) {
       <div className="grid grid-cols-4 gap-2">
         <button
           className={buttonClass}
-          disabled={busy !== null || status === "printing"}
+          disabled={busy !== null || !canSendMotion}
           onClick={() => run("Home", { action: "home" })}
         >
           Home
         </button>
         <button
           className={buttonClass}
-          disabled={busy !== null || !canJogOrExtrude}
+          disabled={busy !== null || !canSendMotion}
           onClick={() =>
             run("X+", {
               action: "jog",
@@ -81,7 +84,7 @@ export function PrinterMotionPanel({ printer }: PrinterMotionPanelProps) {
         </button>
         <button
           className={buttonClass}
-          disabled={busy !== null || !canJogOrExtrude}
+          disabled={busy !== null || !canSendMotion}
           onClick={() =>
             run("Y+", {
               action: "jog",
@@ -95,7 +98,7 @@ export function PrinterMotionPanel({ printer }: PrinterMotionPanelProps) {
         </button>
         <button
           className={buttonClass}
-          disabled={busy !== null || !canJogOrExtrude}
+          disabled={busy !== null || !canSendMotion}
           onClick={() =>
             run("Z+", {
               action: "jog",
@@ -109,14 +112,14 @@ export function PrinterMotionPanel({ printer }: PrinterMotionPanelProps) {
         </button>
         <button
           className={buttonClass}
-          disabled={busy !== null || status === "printing"}
+          disabled={busy !== null || !canSendMotion}
           onClick={() => run("Baby+", { action: "babystep", deltaMm: 0.02 })}
         >
           Baby+
         </button>
         <button
           className={buttonClass}
-          disabled={busy !== null || status === "printing"}
+          disabled={busy !== null || !canSendMotion}
           onClick={() => run("Baby-", { action: "babystep", deltaMm: -0.02 })}
         >
           Baby-

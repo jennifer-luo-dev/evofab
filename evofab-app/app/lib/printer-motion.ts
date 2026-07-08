@@ -4,6 +4,7 @@ import {
   getMoonrakerMode,
   homeToolhead,
   jogToolhead,
+  readToolheadState,
   runGcodeScript,
 } from "@/app/lib/moonraker";
 import {
@@ -123,21 +124,18 @@ function assertIdleOrPaused(status: MotionStatus) {
   }
 }
 
-function assertHomed(printer: MotionPrinter) {
-  if (getMoonrakerMode() !== "mock") {
-    throw new MotionError({
-      code: "MOTION_HOMING_STATE_UNAVAILABLE",
-      message: "Jogging requires a known homed state.",
-      status: 409,
-    });
-  }
-  const state = getMockMoonrakerState(motionMockKey(printer));
-  if (!state.homedAxes.x || !state.homedAxes.y || !state.homedAxes.z) {
+async function assertHomed(printer: MotionPrinter) {
+  const homedAxes =
+    getMoonrakerMode() === "mock"
+      ? getMockMoonrakerState(motionMockKey(printer)).homedAxes
+      : (await readToolheadState(printer.ip, printer.port)).homedAxes;
+
+  if (!homedAxes.x || !homedAxes.y || !homedAxes.z) {
     throw new MotionError({
       code: "MOTION_REQUIRES_HOME",
       message: "Home the printer before jogging.",
       status: 409,
-      details: { homed_axes: state.homedAxes },
+      details: { homed_axes: homedAxes },
     });
   }
 }
@@ -184,7 +182,7 @@ export async function runPrinterMotion(
 
   if (request.action === "jog") {
     assertIdleOrPaused(status);
-    assertHomed(printer);
+    await assertHomed(printer);
     const axis = request.axis;
     if (axis !== "x" && axis !== "y" && axis !== "z") {
       throw new MotionError({

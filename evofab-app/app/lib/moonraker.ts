@@ -4,6 +4,7 @@ import {
   applyMockMoonrakerScript,
   controlMockMoonrakerPrint,
   extrudeMockMoonrakerPellet,
+  getMockMoonrakerState,
   homeMockMoonrakerToolhead,
   listMockMoonrakerFiles,
   jogMockMoonrakerToolhead,
@@ -19,6 +20,11 @@ export {
   normalizeMoonrakerStatus,
   type PrinterStatusConnector,
 } from "./moonraker-client";
+
+export interface ToolheadState {
+  homedAxes: { x: boolean; y: boolean; z: boolean };
+  position: [number, number, number, number] | null;
+}
 
 function base(ip: string, port: number) {
   return resolveMoonrakerBaseUrl({
@@ -116,6 +122,53 @@ export async function runGcodeScript(
     const text = await res.text();
     throw new Error(`Moonraker gcode script failed (${res.status}): ${text}`);
   }
+}
+
+function parseToolheadPosition(
+  value: unknown,
+): [number, number, number, number] | null {
+  if (!Array.isArray(value) || value.length < 4) return null;
+  const position = value.slice(0, 4).map((entry) => Number(entry));
+  if (!position.every((entry) => Number.isFinite(entry))) return null;
+  return position as [number, number, number, number];
+}
+
+export async function readToolheadState(
+  ip: string,
+  port: number,
+): Promise<ToolheadState> {
+  if (getMoonrakerMode() === "mock") {
+    const state = getMockMoonrakerState(mockPrinterKey({ ip, port }));
+    return {
+      homedAxes: state.homedAxes,
+      position: [
+        state.position.x,
+        state.position.y,
+        state.position.z,
+        state.position.e,
+      ],
+    };
+  }
+
+  const res = await fetch(`${base(ip, port)}/printer/objects/query?toolhead`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Moonraker toolhead query failed (${res.status}): ${text}`);
+  }
+
+  const json = await res.json();
+  const toolhead = json?.result?.status?.toolhead;
+  const homedAxesText = String(toolhead?.homed_axes ?? "").toLowerCase();
+  return {
+    homedAxes: {
+      x: homedAxesText.includes("x"),
+      y: homedAxesText.includes("y"),
+      z: homedAxesText.includes("z"),
+    },
+    position: parseToolheadPosition(toolhead?.position),
+  };
 }
 
 export async function homeToolhead(ip: string, port: number): Promise<void> {
