@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { type ChangeEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import type { MaterialProfile } from "@/app/types/job";
@@ -14,8 +14,15 @@ import {
   filterMaterialProfilesForPrinterType,
   settingsFromMaterialProfile,
 } from "@/app/lib/material-profiles";
-import { buildVolumeBlock, parseBuildVolume } from "@/app/lib/printability";
+import {
+  buildVolumeBlock,
+  DEFAULT_FGF_BUILD_VOLUME,
+  parseBuildVolume,
+} from "@/app/lib/printability";
 import { layerTotalFromGcode } from "@/app/lib/gcode-layer-parser";
+import { displaySlicerEngine } from "@/app/lib/slicer-display";
+import type { SlicerFace } from "@/app/lib/slicer-client";
+import type { Printer } from "@/app/types/printer";
 
 const MAX_STL_BYTES = 100 * 1024 * 1024;
 const EXTRUDING_G1_RE = /^G1\b(?=[^\n]*\bE[-+]?\d*\.?\d+)/m;
@@ -23,15 +30,31 @@ const SliceViewer = dynamic(
   () => import("./SliceViewer").then((module) => module.SliceViewer),
   { ssr: false },
 );
+const PrepareScene = dynamic(
+  () => import("./PrepareScene").then((module) => module.PrepareScene),
+  { ssr: false },
+);
 
 type SliceStatus =
   "idle" | "queued" | "slicing" | "done" | "failed" | "printing";
+type PrepareStep = "upload" | "material" | "supports" | "slice";
+type OrientationState = "uploaded" | "user-picked" | "auto" | null;
+
+const PREPARE_STEPS: Array<{ id: PrepareStep; label: string }> = [
+  { id: "upload", label: "Upload" },
+  { id: "material", label: "Material" },
+  { id: "supports", label: "Supports" },
+  { id: "slice", label: "Slice" },
+];
+const NEXT_READY_CLASS =
+  "border-[var(--color-green)]/70 bg-[var(--color-green)]/10 text-[var(--color-green)] shadow-[0_0_18px_rgba(34,197,94,0.28)]";
 
 interface SlicerJobResult {
   gcode_url: string;
   print_time_s: number;
   material_used_mm3: number;
   material_used_g: number;
+  layer_count?: number | null;
   engine: string;
   profile_id: string;
   rotation?: number[] | null;
@@ -56,10 +79,12 @@ interface InspectResult {
   is_watertight: boolean;
   overhang_ratio: number;
   triangle_count: number;
+  faces?: SlicerFace[];
 }
 
 interface CloudSlicerClientProps {
   materialProfiles: MaterialProfile[];
+  printers: Printer[];
 }
 
 function formatBytes(bytes: number): string {
@@ -91,17 +116,20 @@ async function readJsonOrThrow<T>(response: Response): Promise<T> {
 
 export function CloudSlicerClient({
   materialProfiles,
+  printers,
 }: CloudSlicerClientProps) {
   const router = useRouter();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [selectedProfileId, setSelectedProfileId] = useState(
-    materialProfiles[0]?.id ?? "",
-  );
+  const [selectedProfileId, setSelectedProfileId] = useState("");
+  const [activeStep, setActiveStep] = useState<PrepareStep>("upload");
+  const [highestStepIndex, setHighestStepIndex] = useState(0);
   const [status, setStatus] = useState<SliceStatus>("idle");
   const [job, setJob] = useState<SlicerJob | null>(null);
   const [gcode, setGcode] = useState<string | null>(null);
   const [notice, setNotice] = useState<SliceNotice | null>(null);
   const [rotation, setRotation] = useState<number[] | null>(null);
+  const [orientationState, setOrientationState] =
+    useState<OrientationState>(null);
   const [supports, setSupports] = useState(false);
   const [inspectResult, setInspectResult] = useState<InspectResult | null>(
     null,
@@ -116,7 +144,7 @@ export function CloudSlicerClient({
     (profile) => profile.id === selectedProfileId,
   )
     ? selectedProfileId
-    : (filteredProfiles[0]?.id ?? "");
+    : "";
   const selectedProfile = useMemo(
     () =>
       filteredProfiles.find((profile) => profile.id === effectiveProfileId) ??
@@ -126,13 +154,27 @@ export function CloudSlicerClient({
   const canSlice =
     selectedFile !== null &&
     selectedProfile !== null &&
+    orientationState !== null &&
     status !== "queued" &&
     status !== "slicing";
   const layerCount = useMemo(
-    () => (gcode ? layerTotalFromGcode(gcode) : null),
-    [gcode],
+    () =>
+      job?.result?.layer_count ?? (gcode ? layerTotalFromGcode(gcode) : null),
+    [gcode, job?.result?.layer_count],
   );
-  const buildVolume = useMemo(() => parseBuildVolume(null), []);
+  const defaultPrinter = useMemo(
+    () =>
+      printers.find((printer) => printer.type === "FGF") ??
+      printers.find((printer) => printer.build_volume) ??
+      null,
+    [printers],
+  );
+  const buildVolume = useMemo(
+    () =>
+      parseBuildVolume(defaultPrinter?.build_volume) ??
+      DEFAULT_FGF_BUILD_VOLUME,
+    [defaultPrinter?.build_volume],
+  );
   const buildBlock = useMemo(
     () => buildVolumeBlock(inspectResult?.bounding_box_mm ?? null, buildVolume),
     [buildVolume, inspectResult?.bounding_box_mm],
@@ -144,11 +186,118 @@ export function CloudSlicerClient({
     gcode !== null &&
     selectedProfile !== null &&
     !buildBlock;
+  const hasCompletedSliceResult =
+    activeStep === "slice" &&
+    status === "done" &&
+    gcode !== null &&
+    !!job?.result;
+  const hasSliceViewerOutcome =
+    activeStep === "slice" &&
+    ((status === "done" && gcode !== null) || status === "failed");
+  const activeStepIndex = PREPARE_STEPS.findIndex(
+    (step) => step.id === activeStep,
+  );
+  const canGoNext = useMemo(() => {
+    if (activeStep === "upload") {
+      return (
+        selectedFile !== null && orientationState !== null && !inspectPending
+      );
+    }
+    if (activeStep === "material") return selectedProfile !== null;
+    if (activeStep === "supports") {
+      return (
+        selectedFile !== null &&
+        selectedProfile !== null &&
+        orientationState !== null &&
+        !inspectPending
+      );
+    }
+    return false;
+  }, [
+    activeStep,
+    inspectPending,
+    orientationState,
+    selectedFile,
+    selectedProfile,
+  ]);
+  const sliceDisabledReason = useMemo(() => {
+    if (!selectedFile) return "Upload an STL before slicing.";
+    if (!selectedProfile) return "Select a material profile before slicing.";
+    if (!orientationState)
+      return "Choose or confirm an orientation before slicing.";
+    if (status === "queued" || status === "slicing")
+      return "The current slice job is still running.";
+    return null;
+  }, [orientationState, selectedFile, selectedProfile, status]);
+  const printerDisabledReason = useMemo(() => {
+    if (status !== "done") return "Slice the part before selecting a printer.";
+    if (!gcode) return "Downloadable G-code is not ready yet.";
+    if (!selectedProfile)
+      return "Select a material profile before printer handoff.";
+    if (buildBlock)
+      return `Part exceeds build volume on ${buildBlock.axis.toUpperCase()} by ${buildBlock.overageMm.toFixed(1)} mm.`;
+    return null;
+  }, [buildBlock, gcode, selectedProfile, status]);
+  const visibleNotice = useMemo<SliceNotice | null>(() => {
+    if (
+      notice?.tone === "error" ||
+      status === "queued" ||
+      status === "slicing" ||
+      status === "done"
+    ) {
+      return notice;
+    }
+    if (activeStep === "upload" && selectedFile) {
+      return {
+        tone: "info",
+        message:
+          orientationState === "auto"
+            ? `${selectedFile.name} is auto-oriented. Continue when the placement looks right.`
+            : orientationState === "user-picked"
+              ? `${selectedFile.name} is oriented from your selected face. Continue when the placement looks right.`
+              : `${selectedFile.name} is using the uploaded pose. Auto-orient is available if you want it.`,
+      };
+    }
+    if (activeStep === "material" && selectedProfile) {
+      return {
+        tone: "success",
+        message: `Material selected: ${selectedProfile.name}. Review the settings, then continue.`,
+      };
+    }
+    if (activeStep === "supports") {
+      return {
+        tone: "info",
+        message: supports
+          ? "Supports enabled. The preview highlights the planned support volume; final support toolpaths appear after slicing."
+          : "Supports disabled. Turn them on to compare the support preview before slicing.",
+      };
+    }
+    return notice;
+  }, [
+    activeStep,
+    notice,
+    orientationState,
+    selectedFile,
+    selectedProfile,
+    status,
+    supports,
+  ]);
 
   function validateFile(file: File): string | null {
-    if (!file.name.toLowerCase().endsWith(".stl")) return "Upload an STL file.";
     if (file.size > MAX_STL_BYTES) return "STL must be 100 MB or smaller.";
+    const name = file.name.trim();
+    const hasExtension = /\.[^./\\]+$/.test(name);
+    if (hasExtension && !name.toLowerCase().endsWith(".stl")) {
+      return "Upload an STL file.";
+    }
     return null;
+  }
+
+  function uploadFilename(file: File): string {
+    const name = file.name.trim();
+    if (name.toLowerCase().endsWith(".stl")) return name;
+    const stem = name ? name.replace(/\.[^/.\\]+$/, "") : "mobile-upload";
+    return `${stem || "mobile-upload"}.stl`;
   }
 
   function handleFile(file: File | null) {
@@ -157,7 +306,9 @@ export function CloudSlicerClient({
     setGcode(null);
     setStatus("idle");
     setRotation(null);
+    setOrientationState(null);
     setInspectResult(null);
+    setHighestStepIndex(0);
 
     if (!file) {
       setSelectedFile(null);
@@ -176,10 +327,50 @@ export function CloudSlicerClient({
     }
 
     setSelectedFile(file);
+    setOrientationState("uploaded");
     setNotice({
       tone: "info",
-      message: `${file.name} accepted. Ready to slice with the selected material profile.`,
+      message: `${uploadFilename(file)} accepted. Choose auto-orient or keep the uploaded pose, then continue.`,
     });
+  }
+
+  function handleFileInput(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const file = input.files?.[0] ?? null;
+    if (!file) return;
+    handleFile(file);
+  }
+
+  function goToStep(step: PrepareStep) {
+    const nextIndex = PREPARE_STEPS.findIndex((item) => item.id === step);
+    setActiveStep(step);
+    setHighestStepIndex((current) => Math.max(current, nextIndex));
+  }
+
+  function goNext() {
+    if (!canGoNext) return;
+    const nextStep = PREPARE_STEPS[activeStepIndex + 1];
+    if (nextStep) goToStep(nextStep.id);
+  }
+
+  function handleOrientationChange(
+    nextRotation: number[] | null,
+    nextState: Exclude<OrientationState, null> = nextRotation
+      ? "user-picked"
+      : "uploaded",
+  ) {
+    setRotation(nextRotation);
+    setOrientationState(nextState);
+  }
+
+  function handleFacePick(face: SlicerFace) {
+    handleOrientationChange(face.quaternion_xyzw, "user-picked");
+  }
+
+  function handleAutoOrient() {
+    const face = inspectResult?.faces?.[0];
+    if (!face) return;
+    handleOrientationChange(face.quaternion_xyzw, "auto");
   }
 
   useEffect(() => {
@@ -190,14 +381,21 @@ export function CloudSlicerClient({
       setInspectPending(true);
       try {
         const form = new FormData();
-        form.append("model", selectedFile as File);
+        form.append(
+          "model",
+          selectedFile as File,
+          uploadFilename(selectedFile as File),
+        );
         if (rotation) form.append("rotation", JSON.stringify(rotation));
+        form.append("include_faces", "true");
         const response = await fetch("/api/slicer/inspect", {
           method: "POST",
           body: form,
         });
         const body = await readJsonOrThrow<{ result: InspectResult }>(response);
-        if (!cancelled) setInspectResult(body.result);
+        if (!cancelled) {
+          setInspectResult(body.result);
+        }
       } catch (error) {
         if (!cancelled) {
           setInspectResult(null);
@@ -249,7 +447,7 @@ export function CloudSlicerClient({
   }
 
   async function handleSlice() {
-    if (!selectedFile || !selectedProfile) return;
+    if (!selectedFile || !selectedProfile || !orientationState) return;
 
     setNotice({
       tone: "info",
@@ -260,7 +458,7 @@ export function CloudSlicerClient({
 
     try {
       const form = new FormData();
-      form.append("model", selectedFile);
+      form.append("model", selectedFile, uploadFilename(selectedFile));
       form.append("profile_id", selectedProfile.id);
       if (rotation) form.append("rotation", JSON.stringify(rotation));
       form.append("supports", String(supports));
@@ -319,7 +517,7 @@ export function CloudSlicerClient({
   }
 
   async function handleSelectPrinter() {
-    if (!canPrint || !selectedProfile || !gcode) return;
+    if (!canPrint || !selectedProfile || !gcode || !orientationState) return;
 
     setNotice({
       tone: "info",
@@ -339,7 +537,7 @@ export function CloudSlicerClient({
         prepareSettings: {
           supports,
           rotation,
-          orientation: rotation ? "custom" : "uploaded",
+          orientation: orientationState,
         },
         experimentParams: {},
         createdAt: new Date().toISOString(),
@@ -362,7 +560,14 @@ export function CloudSlicerClient({
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col gap-6 animate-fade-up">
-      <div className="grid lg:grid-cols-[1.2fr_0.8fr] gap-6">
+      <div
+        className={cn(
+          "grid gap-6",
+          activeStep === "slice"
+            ? "lg:grid-cols-[1.2fr_0.8fr]"
+            : "lg:grid-cols-1",
+        )}
+      >
         <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
           <div className="flex items-center justify-between gap-4">
             <div>
@@ -391,204 +596,452 @@ export function CloudSlicerClient({
             </span>
           </div>
 
-          <label className="relative mt-5 flex min-h-44 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-lg border border-dashed border-[var(--color-border-2)] bg-[var(--color-surface-2)] px-4 text-center transition-colors hover:border-[var(--color-teal)]">
-            <input
-              type="file"
-              accept=".stl,model/stl"
-              className="absolute inset-0 z-10 cursor-pointer opacity-0"
-              onClick={(event) => {
-                event.currentTarget.value = "";
-              }}
-              onChange={(event) => handleFile(event.target.files?.[0] ?? null)}
-            />
-            <span className="text-2xl">{selectedFile ? "✓" : "+"}</span>
-            <span className="mt-2 text-sm font-medium text-[var(--color-text)]">
-              {selectedFile ? selectedFile.name : "Select STL"}
-            </span>
-            <span className="mt-1 text-xs text-[var(--color-muted)]">
-              {selectedFile ? formatBytes(selectedFile.size) : "100 MB max"}
-            </span>
-          </label>
-
-          <div className="mt-5 grid gap-4">
-            <label className="flex flex-col gap-2">
-              <span className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                Material
-              </span>
-              <select
-                value={effectiveProfileId}
-                onChange={(event) => setSelectedProfileId(event.target.value)}
-                className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-teal)]"
-              >
-                {filteredProfiles.map((profile) => (
-                  <option key={profile.id} value={profile.id}>
-                    {profile.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
-            <label className="flex items-center gap-3 text-sm font-medium text-[var(--color-text)]">
-              <input
-                type="checkbox"
-                checked={supports}
-                onChange={(event) => setSupports(event.target.checked)}
-                className="h-4 w-4 accent-[var(--color-teal)]"
-              />
-              Add supports
-            </label>
-            {supportsRecommended && (
+          <div className="mt-5 grid grid-cols-4 gap-2">
+            {PREPARE_STEPS.map((step, index) => (
               <button
+                key={step.id}
                 type="button"
-                onClick={() => setSupports(true)}
-                className="rounded-md border border-[var(--color-amber)]/40 px-3 py-1.5 text-xs font-semibold text-[var(--color-amber)]"
+                disabled={index > highestStepIndex}
+                onClick={() => setActiveStep(step.id)}
+                className={cn(
+                  "min-h-12 rounded-md border px-2 py-2 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                  activeStep === step.id
+                    ? "border-[var(--color-teal)] bg-[var(--color-teal)]/10 text-[var(--color-text)]"
+                    : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-muted)] hover:border-[var(--color-border-2)]",
+                )}
               >
-                This part has overhangs — supports recommended
+                <span className="block font-mono text-[10px]">{index + 1}</span>
+                <span>{step.label}</span>
               </button>
-            )}
+            ))}
           </div>
 
-          {(inspectPending || inspectResult || buildBlock) && (
-            <div className="mt-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 text-sm text-[var(--color-text)]">
-              <div className="flex flex-wrap gap-3 font-mono text-xs text-[var(--color-muted)]">
-                <span>
-                  {inspectPending ? "Inspecting STL" : "Inspect ready"}
-                </span>
-                {inspectResult && (
-                  <>
-                    <span>
-                      {inspectResult.bounding_box_mm.x.toFixed(1)} x{" "}
-                      {inspectResult.bounding_box_mm.y.toFixed(1)} x{" "}
-                      {inspectResult.bounding_box_mm.z.toFixed(1)} mm
-                    </span>
-                    <span>{inspectResult.triangle_count} triangles</span>
-                  </>
-                )}
-              </div>
-              {buildBlock && (
-                <p className="mt-2 text-[var(--color-red)]">
-                  Part exceeds printer build volume on{" "}
-                  {buildBlock.axis.toUpperCase()} by{" "}
-                  {buildBlock.overageMm.toFixed(1)} mm.
-                </p>
-              )}
-              {inspectResult && !inspectResult.is_watertight && (
-                <p className="mt-2 text-[var(--color-amber)]">
-                  Mesh is not watertight; slicing can continue, but inspect the
-                  first layer carefully.
-                </p>
+          {activeStep === "upload" && (
+            <div className="mt-5">
+              {selectedFile ? (
+                <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[#111927]">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+                    <div>
+                      <p className="text-sm font-semibold text-white">
+                        {selectedFile.name}
+                      </p>
+                      <p className="mt-1 font-mono text-xs text-white/60">
+                        {formatBytes(selectedFile.size)}
+                      </p>
+                    </div>
+                    <label className="relative cursor-pointer rounded-md border border-white/15 px-3 py-2 text-xs font-semibold text-white transition-colors hover:border-[var(--color-teal)]">
+                      <input
+                        type="file"
+                        className="absolute inset-0 cursor-pointer opacity-0"
+                        onChange={handleFileInput}
+                      />
+                      Replace STL
+                    </label>
+                  </div>
+                  <PrepareScene
+                    file={selectedFile}
+                    rotation={rotation}
+                    buildVolume={buildVolume}
+                    bounds={inspectResult?.bounding_box_mm ?? null}
+                    faces={inspectResult?.faces ?? []}
+                    onFacePick={handleFacePick}
+                  />
+                  <div className="border-t border-white/10 px-4 py-3">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-white/10 bg-black/25 p-3">
+                      <div>
+                        <p className="text-sm font-semibold text-white">
+                          {orientationState === "auto"
+                            ? "Auto-oriented — largest flat face down"
+                            : orientationState === "user-picked"
+                              ? "User-picked face down"
+                              : "Uploaded pose"}
+                        </p>
+                        <p className="mt-1 text-xs text-white/60">
+                          {inspectPending
+                            ? "Inspecting planar faces."
+                            : "Use auto-orient, keep the uploaded pose, or click a highlighted face on the model."}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={!inspectResult?.faces?.length}
+                          onClick={handleAutoOrient}
+                          className="rounded-md border border-[var(--color-green)]/50 px-3 py-2 text-xs font-semibold text-[var(--color-green)] transition-colors hover:bg-[var(--color-green)]/10 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Auto-orient
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleOrientationChange(null, "uploaded")
+                          }
+                          className="rounded-md border border-white/15 px-3 py-2 text-xs font-semibold text-white transition-colors hover:border-[var(--color-teal)]"
+                        >
+                          Keep uploaded
+                        </button>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={!canGoNext}
+                      onClick={goNext}
+                      className={cn(
+                        "rounded-lg border px-4 py-2 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40",
+                        canGoNext
+                          ? NEXT_READY_CLASS
+                          : "border-[var(--color-border-2)] text-[var(--color-text)]",
+                      )}
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <label className="relative flex min-h-44 w-full cursor-pointer flex-col items-center justify-center overflow-hidden rounded-lg border border-dashed border-[var(--color-border-2)] bg-[var(--color-surface-2)] px-4 text-center transition-colors hover:border-[var(--color-teal)]">
+                  <input
+                    type="file"
+                    className="absolute inset-0 z-10 cursor-pointer opacity-0"
+                    onChange={handleFileInput}
+                  />
+                  <span className="text-2xl">+</span>
+                  <span className="mt-2 text-sm font-medium text-[var(--color-text)]">
+                    Select STL
+                  </span>
+                  <span className="mt-1 text-xs text-[var(--color-muted)]">
+                    100 MB max
+                  </span>
+                </label>
               )}
             </div>
           )}
 
-          {notice && (
+          {activeStep === "material" && (
+            <div className="mt-5 grid gap-4">
+              <label className="flex flex-col gap-2">
+                <span className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                  Material
+                </span>
+                <select
+                  value={effectiveProfileId}
+                  onChange={(event) => setSelectedProfileId(event.target.value)}
+                  className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-teal)]"
+                >
+                  <option value="">Select a material profile</option>
+                  {filteredProfiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {selectedProfile && (
+                <div className="grid gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 sm:grid-cols-3">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                      Printer
+                    </p>
+                    <p className="mt-1 font-mono text-sm text-[var(--color-text)]">
+                      {selectedProfile.printer_type}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                      Nozzle / Bed
+                    </p>
+                    <p className="mt-1 font-mono text-sm text-[var(--color-text)]">
+                      {selectedProfile.nozzle_temp}°C /{" "}
+                      {selectedProfile.bed_temp}°C
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                      Speed
+                    </p>
+                    <p className="mt-1 font-mono text-sm text-[var(--color-text)]">
+                      {selectedProfile.speed} mm/s
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                      Flow
+                    </p>
+                    <p className="mt-1 font-mono text-sm text-[var(--color-text)]">
+                      {selectedProfile.flow_rate}%
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                      Fan
+                    </p>
+                    <p className="mt-1 font-mono text-sm text-[var(--color-text)]">
+                      {selectedProfile.fan_speed}%
+                    </p>
+                  </div>
+                  <div className="sm:col-span-3">
+                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                      Notes
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--color-text)]">
+                      {selectedProfile.notes || "No notes recorded."}
+                    </p>
+                  </div>
+                </div>
+              )}
+              <button
+                type="button"
+                disabled={!canGoNext}
+                onClick={goNext}
+                className={cn(
+                  "w-fit rounded-lg border px-4 py-2 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40",
+                  canGoNext
+                    ? NEXT_READY_CLASS
+                    : "border-[var(--color-border-2)] text-[var(--color-text)]",
+                )}
+              >
+                Next
+              </button>
+            </div>
+          )}
+
+          {activeStep === "supports" && (
+            <div className="mt-5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <label className="flex items-center gap-3 text-sm font-medium text-[var(--color-text)]">
+                  <input
+                    type="checkbox"
+                    checked={supports}
+                    onChange={(event) => setSupports(event.target.checked)}
+                    className="h-4 w-4 accent-[var(--color-teal)]"
+                  />
+                  Add supports
+                </label>
+                {supportsRecommended && (
+                  <button
+                    type="button"
+                    onClick={() => setSupports(true)}
+                    className="rounded-md border border-[var(--color-amber)]/40 px-3 py-1.5 text-xs font-semibold text-[var(--color-amber)]"
+                  >
+                    Supports recommended
+                  </button>
+                )}
+              </div>
+              <div className="mt-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm text-[var(--color-text)]">
+                <p className="font-semibold">
+                  {supports
+                    ? "Support generation is on"
+                    : "Support generation is off"}
+                </p>
+                <p className="mt-1 text-xs text-[var(--color-muted)]">
+                  {inspectResult
+                    ? `${(inspectResult.overhang_ratio * 100).toFixed(1)}% overhang area detected. ${
+                        supports
+                          ? "The slicer will include support toolpaths in the G-code preview."
+                          : "Turn supports on if this part needs temporary structure under overhangs."
+                      }`
+                    : "Inspect data is still loading for this model."}
+                </p>
+              </div>
+              {selectedFile && (
+                <div className="mt-3 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[#111927]">
+                  <PrepareScene
+                    file={selectedFile}
+                    rotation={rotation}
+                    buildVolume={buildVolume}
+                    bounds={inspectResult?.bounding_box_mm ?? null}
+                    faces={[]}
+                    showSupportPreview={supports}
+                    onFacePick={handleFacePick}
+                  />
+                </div>
+              )}
+              <button
+                type="button"
+                disabled={!canGoNext}
+                onClick={goNext}
+                className={cn(
+                  "mt-3 rounded-md border px-3 py-2 text-xs font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40",
+                  canGoNext
+                    ? NEXT_READY_CLASS
+                    : "border-[var(--color-border-2)] text-[var(--color-text)]",
+                )}
+              >
+                Next
+              </button>
+            </div>
+          )}
+
+          {activeStep === "slice" &&
+            (inspectPending || inspectResult || buildBlock) && (
+              <div className="mt-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 text-sm text-[var(--color-text)]">
+                <div className="flex flex-wrap gap-3 font-mono text-xs text-[var(--color-muted)]">
+                  <span>
+                    {inspectPending ? "Inspecting STL" : "Inspect ready"}
+                  </span>
+                  {inspectResult && (
+                    <>
+                      <span>
+                        {inspectResult.bounding_box_mm.x.toFixed(1)} x{" "}
+                        {inspectResult.bounding_box_mm.y.toFixed(1)} x{" "}
+                        {inspectResult.bounding_box_mm.z.toFixed(1)} mm
+                      </span>
+                      <span>{inspectResult.triangle_count} triangles</span>
+                    </>
+                  )}
+                </div>
+                {buildBlock && (
+                  <p className="mt-2 text-[var(--color-red)]">
+                    Part exceeds printer build volume on{" "}
+                    {buildBlock.axis.toUpperCase()} by{" "}
+                    {buildBlock.overageMm.toFixed(1)} mm.
+                  </p>
+                )}
+                {inspectResult && !inspectResult.is_watertight && (
+                  <p className="mt-2 text-[var(--color-amber)]">
+                    Mesh is not watertight; slicing can continue, but inspect
+                    the first layer carefully.
+                  </p>
+                )}
+              </div>
+            )}
+
+          {visibleNotice && (
             <p
               className={cn(
                 "mt-4 rounded-lg border px-3 py-2 text-sm",
-                notice.tone === "error"
+                visibleNotice.tone === "error"
                   ? "border-[var(--color-red)]/30 bg-[var(--color-red)]/10 text-[var(--color-red)]"
-                  : notice.tone === "success"
+                  : visibleNotice.tone === "success"
                     ? "border-[var(--color-green)]/30 bg-[var(--color-green)]/10 text-[var(--color-green)]"
                     : "border-[var(--color-teal)]/30 bg-[var(--color-teal)]/10 text-[var(--color-text)]",
               )}
             >
-              {notice.code && (
+              {visibleNotice.code && (
                 <span className="mr-2 font-mono text-xs uppercase">
-                  {notice.code}
+                  {visibleNotice.code}
                 </span>
               )}
-              {notice.message}
+              {visibleNotice.message}
             </p>
           )}
 
-          <div className="mt-5 flex flex-wrap gap-3">
-            <button
-              onClick={handleSlice}
-              disabled={!canSlice}
-              className="rounded-lg bg-[var(--color-teal)] px-5 py-2.5 text-sm font-semibold text-[var(--color-bg)] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Slice
-            </button>
-            <button
-              onClick={handleSelectPrinter}
-              disabled={!canPrint}
-              className="rounded-lg border border-[var(--color-border-2)] px-5 py-2.5 text-sm font-semibold text-[var(--color-text)] transition-all hover:border-[var(--color-teal)] disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Select a printer
-            </button>
-          </div>
+          {activeStep === "slice" && (
+            <div className="mt-5 flex flex-wrap items-start gap-3">
+              <div>
+                <button
+                  onClick={handleSlice}
+                  disabled={!canSlice}
+                  className={cn(
+                    "rounded-lg px-5 py-2.5 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40",
+                    canSlice
+                      ? "bg-[var(--color-green)] text-[var(--color-bg)] shadow-[0_0_20px_rgba(34,197,94,0.3)] hover:brightness-110"
+                      : "bg-[var(--color-teal)] text-[var(--color-bg)]",
+                  )}
+                >
+                  Slice
+                </button>
+                {sliceDisabledReason && (
+                  <p className="mt-2 max-w-xs text-xs text-[var(--color-muted)]">
+                    {sliceDisabledReason}
+                  </p>
+                )}
+              </div>
+              <div>
+                <button
+                  onClick={handleSelectPrinter}
+                  disabled={!canPrint}
+                  className="rounded-lg border border-[var(--color-border-2)] px-5 py-2.5 text-sm font-semibold text-[var(--color-text)] transition-all hover:border-[var(--color-teal)] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Select a printer
+                </button>
+                {printerDisabledReason && (
+                  <p className="mt-2 max-w-xs text-xs text-[var(--color-muted)]">
+                    {printerDisabledReason}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
         </section>
 
-        <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-          <h2 className="text-sm font-semibold text-[var(--color-text)]">
-            Slice Result
-          </h2>
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
-              <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                Print Time
-              </p>
-              <p className="mt-2 font-mono text-lg text-[var(--color-text)]">
-                {job?.result?.print_time_s
-                  ? formatDuration(job.result.print_time_s)
-                  : "—"}
-              </p>
+        {hasCompletedSliceResult && (
+          <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+            <h2 className="text-sm font-semibold text-[var(--color-text)]">
+              Slice Result
+            </h2>
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
+                <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                  Print Time
+                </p>
+                <p className="mt-2 font-mono text-lg text-[var(--color-text)]">
+                  {job?.result?.print_time_s
+                    ? formatDuration(job.result.print_time_s)
+                    : "—"}
+                </p>
+              </div>
+              <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
+                <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                  Material
+                </p>
+                <p className="mt-2 font-mono text-lg text-[var(--color-text)]">
+                  {job?.result?.material_used_g
+                    ? `${job.result.material_used_g.toFixed(2)} g`
+                    : "—"}
+                </p>
+              </div>
+              <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
+                <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                  Engine
+                </p>
+                <p className="mt-2 truncate font-mono text-sm text-[var(--color-text)]">
+                  {displaySlicerEngine(job?.result?.engine)}
+                </p>
+              </div>
+              <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
+                <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                  G-code
+                </p>
+                <p className="mt-2 font-mono text-sm text-[var(--color-text)]">
+                  {gcode ? formatBytes(new Blob([gcode]).size) : "—"}
+                </p>
+              </div>
+              <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
+                <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                  Layers
+                </p>
+                <p className="mt-2 font-mono text-lg text-[var(--color-text)]">
+                  {layerCount ?? "—"}
+                </p>
+              </div>
+              <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
+                <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                  Prepare
+                </p>
+                <p className="mt-2 font-mono text-xs text-[var(--color-text)]">
+                  {orientationState === "user-picked"
+                    ? "user-picked side down"
+                    : orientationState === "auto"
+                      ? "auto-oriented"
+                      : "uploaded orientation"}{" "}
+                  · {supports ? "supports on" : "supports off"}
+                </p>
+              </div>
             </div>
-            <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
-              <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                Material
-              </p>
-              <p className="mt-2 font-mono text-lg text-[var(--color-text)]">
-                {job?.result?.material_used_g
-                  ? `${job.result.material_used_g.toFixed(2)} g`
-                  : "—"}
-              </p>
-            </div>
-            <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
-              <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                Engine
-              </p>
-              <p className="mt-2 truncate font-mono text-sm text-[var(--color-text)]">
-                {job?.result?.engine ?? "—"}
-              </p>
-            </div>
-            <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
-              <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                G-code
-              </p>
-              <p className="mt-2 font-mono text-sm text-[var(--color-text)]">
-                {gcode ? formatBytes(new Blob([gcode]).size) : "—"}
-              </p>
-            </div>
-            <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
-              <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                Layers
-              </p>
-              <p className="mt-2 font-mono text-lg text-[var(--color-text)]">
-                {layerCount ?? "—"}
-              </p>
-            </div>
-            <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
-              <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                Prepare
-              </p>
-              <p className="mt-2 font-mono text-xs text-[var(--color-text)]">
-                {rotation ? "custom side down" : "uploaded orientation"} ·{" "}
-                {supports ? "supports on" : "supports off"}
-              </p>
-            </div>
-          </div>
-        </section>
+          </section>
+        )}
       </div>
-      <SliceViewer
-        file={selectedFile}
-        gcode={gcode}
-        status={status}
-        rotation={rotation}
-        onOrientationChange={setRotation}
-      />
+      {hasSliceViewerOutcome && (
+        <SliceViewer
+          key={job?.job_id ?? "pending-preview"}
+          file={selectedFile}
+          gcode={gcode}
+          status={status}
+          rotation={rotation}
+          buildVolume={buildVolume}
+          reportedLayerCount={job?.result?.layer_count ?? null}
+        />
+      )}
     </div>
   );
 }

@@ -20,6 +20,7 @@ export interface SlicerJobResult {
   print_time_s: number;
   material_used_mm3: number;
   material_used_g: number;
+  layer_count?: number | null;
   engine: string;
   profile_id: string;
   rotation?: number[] | null;
@@ -61,11 +62,23 @@ export interface SlicerInspectResult {
   is_watertight: boolean;
   overhang_ratio: number;
   triangle_count: number;
+  faces?: SlicerFace[];
+}
+
+export interface SlicerFace {
+  id: string;
+  rank: number;
+  normal: [number, number, number];
+  area_mm2: number;
+  centroid_mm: [number, number, number];
+  triangle_indices: number[];
+  quaternion_xyzw: [number, number, number, number];
 }
 
 export interface InspectModelInput {
   model: File;
   rotation?: number[] | null;
+  includeFaces?: boolean;
 }
 
 export interface SlicerClientOptions {
@@ -150,6 +163,7 @@ const MOCK_RESULT: SlicerJobResult = {
   print_time_s: 1039,
   material_used_mm3: 14032.26,
   material_used_g: 17.42,
+  layer_count: MOCK_TOTAL_LAYERS,
   engine: "mock",
   profile_id: "pla-fgf",
   rotation: null,
@@ -161,7 +175,7 @@ const MOCK_RESULT: SlicerJobResult = {
 function mockInspectResult(input: InspectModelInput): SlicerInspectResult {
   const name = input.model.name.toLowerCase();
   const rotated = Boolean(input.rotation);
-  return {
+  const result: SlicerInspectResult = {
     bounding_box_mm: name.includes("oversize")
       ? { x: 999, y: 24, z: 40 }
       : rotated
@@ -175,6 +189,65 @@ function mockInspectResult(input: InspectModelInput): SlicerInspectResult {
         : 0.2,
     triangle_count: 12,
   };
+  if (input.includeFaces) {
+    result.faces = [
+      {
+        id: "face-0",
+        rank: 1,
+        normal: [0, 0, -1],
+        area_mm2: 576,
+        centroid_mm: [12, 12, 0],
+        triangle_indices: [0, 1],
+        quaternion_xyzw: [0, 0, 0, 1],
+      },
+      {
+        id: "face-1",
+        rank: 2,
+        normal: [0, 0, 1],
+        area_mm2: 576,
+        centroid_mm: [12, 12, 24],
+        triangle_indices: [2, 3],
+        quaternion_xyzw: [1, 0, 0, 0],
+      },
+      {
+        id: "face-2",
+        rank: 3,
+        normal: [1, 0, 0],
+        area_mm2: 576,
+        centroid_mm: [24, 12, 12],
+        triangle_indices: [4, 5],
+        quaternion_xyzw: [0, 0.707107, 0, 0.707107],
+      },
+      {
+        id: "face-3",
+        rank: 4,
+        normal: [-1, 0, 0],
+        area_mm2: 576,
+        centroid_mm: [0, 12, 12],
+        triangle_indices: [6, 7],
+        quaternion_xyzw: [0, -0.707107, 0, 0.707107],
+      },
+      {
+        id: "face-4",
+        rank: 5,
+        normal: [0, 1, 0],
+        area_mm2: 576,
+        centroid_mm: [12, 24, 12],
+        triangle_indices: [8, 9],
+        quaternion_xyzw: [0.707107, 0, 0, 0.707107],
+      },
+      {
+        id: "face-5",
+        rank: 6,
+        normal: [0, -1, 0],
+        area_mm2: 576,
+        centroid_mm: [12, 0, 12],
+        triangle_indices: [10, 11],
+        quaternion_xyzw: [-0.707107, 0, 0, 0.707107],
+      },
+    ];
+  }
+  return result;
 }
 
 async function parseJsonSafely(text: string): Promise<unknown> {
@@ -291,7 +364,8 @@ export class SlicerClient {
     form.append("model", input.model, input.model.name);
     form.append("profile_id", input.profileId);
     if (input.rotation) form.append("rotation", JSON.stringify(input.rotation));
-    if (input.supports !== undefined) form.append("supports", String(input.supports));
+    if (input.supports !== undefined)
+      form.append("supports", String(input.supports));
 
     try {
       const response = await this.fetchImpl(`${this.config.url}/slice`, {
@@ -378,6 +452,7 @@ export class SlicerClient {
     const form = new FormData();
     form.append("model", input.model, input.model.name);
     if (input.rotation) form.append("rotation", JSON.stringify(input.rotation));
+    if (input.includeFaces) form.append("include_faces", "true");
 
     try {
       const response = await this.fetchImpl(`${this.config.url}/inspect`, {

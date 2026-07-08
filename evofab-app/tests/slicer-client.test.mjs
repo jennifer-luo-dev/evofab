@@ -88,6 +88,7 @@ test("mock slicer completes STL submit, poll, and G-code fetch", async () => {
   assert.ok(job.result);
   assert.deepEqual(job.result.rotation, [0, 0, 0, 1]);
   assert.equal(job.result.supports, true);
+  assert.equal(job.result.layer_count, 48);
   assert.match(gcode, /START_PRINT/);
   assert.match(gcode, /SET_PRINT_STATS_INFO TOTAL_LAYER=/);
   assert.match(gcode, /^G1\b(?=[^\n]*\bE[-+]?\d*\.?\d+)/m);
@@ -145,6 +146,17 @@ test("inspectModel posts STL and optional rotation in real mode", async () => {
         is_watertight: true,
         overhang_ratio: 0.2,
         triangle_count: 12,
+        faces: [
+          {
+            id: "face-0",
+            rank: 1,
+            normal: [0, 0, -1],
+            area_mm2: 400,
+            centroid_mm: [10, 10, 0],
+            triangle_indices: [0, 1],
+            quaternion_xyzw: [0, 0, 0, 1],
+          },
+        ],
       }),
       { status: 200 },
     );
@@ -163,12 +175,32 @@ test("inspectModel posts STL and optional rotation in real mode", async () => {
       type: "model/stl",
     }),
     rotation: [0, 0, 0, 1],
+    includeFaces: true,
   });
 
   assert.equal(seenRequest.url, "http://slicer.test/inspect");
   assert.equal(seenRequest.init.headers.Authorization, "Bearer secret");
   assert.equal(seenRequest.init.body.get("rotation"), "[0,0,0,1]");
+  assert.equal(seenRequest.init.body.get("include_faces"), "true");
   assert.deepEqual(result.bounding_box_mm, { x: 10, y: 20, z: 30 });
+  assert.equal(result.faces.length, 1);
+});
+
+test("mock inspect can return deterministic ranked faces", async () => {
+  const client = new SlicerClient({
+    env: { SLICER_MODE: "mock" },
+  });
+
+  const result = await client.inspectModel({
+    model: new File(["solid cube\nendsolid cube\n"], "cube.stl", {
+      type: "model/stl",
+    }),
+    includeFaces: true,
+  });
+
+  assert.equal(result.faces.length, 6);
+  assert.equal(result.faces[0].rank, 1);
+  assert.deepEqual(result.faces[0].quaternion_xyzw, [0, 0, 0, 1]);
 });
 
 test("pollJob follows queued to slicing to done", async () => {

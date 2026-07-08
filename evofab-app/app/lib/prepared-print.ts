@@ -12,7 +12,7 @@ export interface PreparedPrintDraft {
   prepareSettings: {
     supports: boolean;
     rotation: number[] | null;
-    orientation: "custom" | "uploaded";
+    orientation: "auto" | "user-picked" | "uploaded";
   };
   experimentParams: Record<string, unknown>;
   createdAt: string;

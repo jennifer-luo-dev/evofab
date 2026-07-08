@@ -8,13 +8,16 @@ import {
   type GcodeLineType,
   type GcodeSegment,
 } from "@/app/lib/gcode-layer-parser";
+import { GCODE_PREVIEW_TUBE_OPTIONS } from "@/app/lib/gcode-preview-adapter";
+import type { BuildVolumeMm } from "@/app/lib/printability";
 
 interface SliceViewerProps {
   file: File | null;
   gcode: string | null;
   status: string;
   rotation: number[] | null;
-  onOrientationChange: (rotation: number[] | null) => void;
+  buildVolume: BuildVolumeMm;
+  reportedLayerCount: number | null;
 }
 
 const LINE_TYPES: Array<{
@@ -23,21 +26,29 @@ const LINE_TYPES: Array<{
   color: number;
   swatch: string;
 }> = [
+  {
+    id: "external_perimeter",
+    label: "External perimeter",
+    color: 0xff8a3d,
+    swatch: "#ff8a3d",
+  },
+  { id: "perimeter", label: "Perimeter", color: 0xffb347, swatch: "#ffb347" },
   { id: "outer_wall", label: "Outer wall", color: 0xff8a3d, swatch: "#ff8a3d" },
   { id: "inner_wall", label: "Inner wall", color: 0xffde59, swatch: "#ffde59" },
+  { id: "infill", label: "Infill", color: 0xc53030, swatch: "#c53030" },
   {
     id: "sparse_infill",
     label: "Sparse infill",
     color: 0xc53030,
     swatch: "#c53030",
   },
+  { id: "support", label: "Support", color: 0x22c55e, swatch: "#22c55e" },
   {
     id: "top_surface",
     label: "Top surface",
     color: 0xff4141,
     swatch: "#ff4141",
   },
-  { id: "travel", label: "Travel", color: 0x4654b8, swatch: "#4654b8" },
   { id: "unknown", label: "Other", color: 0xe5e7eb, swatch: "#e5e7eb" },
 ];
 
@@ -59,6 +70,7 @@ function lineStats(layers: GcodeLayer[]) {
   const totals = new Map<GcodeLineType, number>();
   for (const layer of layers) {
     for (const segment of layer.segments) {
+      if (segment.type === "travel") continue;
       totals.set(
         segment.type,
         (totals.get(segment.type) ?? 0) + segmentLength(segment),
@@ -81,9 +93,17 @@ function lineStats(layers: GcodeLayer[]) {
 function gcodePreviewLines(gcode: string | null, layerIndex: number): string[] {
   if (!gcode) return [];
   const lines = gcode.split(/\r?\n/);
-  const marker = lines.findIndex((line) =>
-    new RegExp(`^;\\s*LAYER[:_]\\s*${layerIndex}\\b`, "i").test(line),
-  );
+  let implicitLayer = -1;
+  const marker = lines.findIndex((line) => {
+    if (new RegExp(`^;\\s*LAYER[:_]\\s*${layerIndex}\\b`, "i").test(line)) {
+      return true;
+    }
+    if (/^;\s*LAYER_CHANGE\b/i.test(line)) {
+      implicitLayer += 1;
+      return implicitLayer === layerIndex;
+    }
+    return false;
+  });
   const start = Math.max(0, (marker >= 0 ? marker : 0) - 3);
   return lines.slice(start, start + 13).map((line, offset) => {
     const lineNo = start + offset + 1;
@@ -96,7 +116,7 @@ function modelBounds(layers: GcodeLayer[]) {
     layer.segments.flatMap((segment) => [segment.from, segment.to]),
   );
   if (points.length === 0) {
-    return { centerX: 0, centerY: 0, sizeX: 30, sizeY: 30 };
+    return { centerX: 0, centerY: 0, minZ: 0, maxZ: 30, sizeX: 30, sizeY: 30 };
   }
   const xs = points.map((point) => point.x);
   const ys = points.map((point) => point.y);
@@ -107,6 +127,8 @@ function modelBounds(layers: GcodeLayer[]) {
   return {
     centerX: (minX + maxX) / 2,
     centerY: (minY + maxY) / 2,
+    minZ: Math.min(...points.map((point) => point.z)),
+    maxZ: Math.max(...points.map((point) => point.z)),
     sizeX: Math.max(1, maxX - minX),
     sizeY: Math.max(1, maxY - minY),
   };
@@ -117,22 +139,32 @@ export function SliceViewer({
   gcode,
   status,
   rotation,
-  onOrientationChange,
+  buildVolume,
+  reportedLayerCount,
 }: SliceViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [layerIndex, setLayerIndex] = useState(0);
+  const [layerProgress, setLayerProgress] = useState(100);
   const [showInfo, setShowInfo] = useState(true);
-  const [orientationMode, setOrientationMode] = useState(false);
   const layers = useMemo(() => (gcode ? parseGcodeLayers(gcode) : []), [gcode]);
   const reportedTotal = useMemo(
-    () => (gcode ? layerTotalFromGcode(gcode) : null),
-    [gcode],
+    () => reportedLayerCount ?? (gcode ? layerTotalFromGcode(gcode) : null),
+    [gcode, reportedLayerCount],
   );
-  const safeLayerIndex = Math.min(layerIndex, Math.max(0, layers.length - 1));
+  const safeLayerIndex = Math.max(0, layers.length - 1);
   const activeLayer = layers[safeLayerIndex] ?? null;
   const visibleLayers = useMemo(
     () => layers.slice(0, safeLayerIndex + 1),
     [layers, safeLayerIndex],
+  );
+  const activeLayerSegments = useMemo(
+    () =>
+      activeLayer
+        ? activeLayer.segments.slice(
+            0,
+            Math.ceil(activeLayer.segments.length * (layerProgress / 100)),
+          )
+        : [],
+    [activeLayer, layerProgress],
   );
   const stats = useMemo(() => lineStats(layers), [layers]);
   const codePreview = useMemo(
@@ -155,7 +187,8 @@ export function SliceViewer({
       const THREE = await import("three");
       const { OrbitControls } =
         await import("three/examples/jsm/controls/OrbitControls.js");
-      const { STLLoader } = await import("three/examples/jsm/loaders/STLLoader.js");
+      const { STLLoader } =
+        await import("three/examples/jsm/loaders/STLLoader.js");
       if (cancelled) return;
 
       const renderer = new THREE.WebGLRenderer({
@@ -164,39 +197,51 @@ export function SliceViewer({
         alpha: true,
       });
       const scene = new THREE.Scene();
-      const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 1000);
+      const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 5000);
       const controls = new OrbitControls(camera, renderer.domElement);
       const bounds = modelBounds(layers);
-      const bedSize = Math.max(
-        80,
-        Math.ceil(Math.max(bounds.sizeX, bounds.sizeY) / 10) * 20,
-      );
+      const bedX = buildVolume.x;
+      const bedY = buildVolume.y;
       const disposables: Array<{ dispose: () => void }> = [];
 
-      const bedGeometry = new THREE.PlaneGeometry(bedSize, bedSize);
+      const bedGeometry = new THREE.PlaneGeometry(bedX, bedY);
       const bedMaterial = new THREE.MeshBasicMaterial({
         color: 0x2b3033,
         transparent: true,
-        opacity: 0.86,
+        opacity: 0.72,
         side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1,
       });
       const bed = new THREE.Mesh(bedGeometry, bedMaterial);
       bed.rotation.x = -Math.PI / 2;
       scene.add(bed);
       disposables.push(bedGeometry, bedMaterial);
 
-      const grid = new THREE.GridHelper(
-        bedSize,
-        Math.max(8, bedSize / 4),
-        0x7a858e,
-        0x4b5560,
+      const gridSpacing = Math.max(bedX, bedY) > 500 ? 50 : 20;
+      const gridVertices: number[] = [];
+      for (let x = -bedX / 2; x <= bedX / 2 + 0.001; x += gridSpacing) {
+        gridVertices.push(x, 0.12, -bedY / 2, x, 0.12, bedY / 2);
+      }
+      for (let z = -bedY / 2; z <= bedY / 2 + 0.001; z += gridSpacing) {
+        gridVertices.push(-bedX / 2, 0.12, z, bedX / 2, 0.12, z);
+      }
+      const gridGeometry = new THREE.BufferGeometry();
+      gridGeometry.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(gridVertices, 3),
       );
-      grid.position.y = 0.01;
+      const gridMaterial = new THREE.LineBasicMaterial({
+        color: 0x323b43,
+        transparent: true,
+        opacity: 0.68,
+      });
+      const grid = new THREE.LineSegments(gridGeometry, gridMaterial);
       scene.add(grid);
-      disposables.push(grid.geometry, grid.material);
+      disposables.push(gridGeometry, gridMaterial);
 
-      let modelMesh: import("three").Mesh | null = null;
-      if (file) {
+      if (file && !hasRenderableSlice) {
         const stlBuffer = await file.arrayBuffer();
         if (cancelled) return;
         const geometry = new STLLoader().parse(stlBuffer);
@@ -215,84 +260,85 @@ export function SliceViewer({
           transparent: true,
           opacity: hasRenderableSlice ? 0.24 : 0.82,
         });
-        modelMesh = new THREE.Mesh(geometry, material);
+        const modelMesh = new THREE.Mesh(geometry, material);
         modelMesh.rotation.x = -Math.PI / 2;
         if (rotation) {
           modelMesh.quaternion.multiply(
-            new THREE.Quaternion(rotation[0], rotation[1], rotation[2], rotation[3]),
+            new THREE.Quaternion(
+              rotation[0],
+              rotation[1],
+              rotation[2],
+              rotation[3],
+            ),
           );
         }
         scene.add(modelMesh);
         disposables.push(geometry, material);
       }
 
-      function appendPositions(positions: number[], segments: GcodeSegment[]) {
-        for (const segment of segments) {
-          positions.push(
-            segment.from.x - bounds.centerX,
-            segment.from.z + 0.04,
-            segment.from.y - bounds.centerY,
-          );
-          positions.push(
-            segment.to.x - bounds.centerX,
-            segment.to.z + 0.04,
-            segment.to.y - bounds.centerY,
-          );
-        }
+      function pointFromGcode(point: GcodeSegment["from"]) {
+        return new THREE.Vector3(
+          point.x - bounds.centerX,
+          point.z + 0.04,
+          point.y - bounds.centerY,
+        );
       }
 
-      function addLines(
+      function addTubeSegment(
+        segment: GcodeSegment,
+        material: import("three").Material,
+        radius: number,
+      ) {
+        const from = pointFromGcode(segment.from);
+        const to = pointFromGcode(segment.to);
+        const delta = new THREE.Vector3().subVectors(to, from);
+        const length = delta.length();
+        if (length <= 0.001) return;
+        const geometry = new THREE.CylinderGeometry(radius, radius, length, 8);
+        const tube = new THREE.Mesh(geometry, material);
+        tube.position.copy(from).addScaledVector(delta, 0.5);
+        tube.quaternion.setFromUnitVectors(
+          new THREE.Vector3(0, 1, 0),
+          delta.normalize(),
+        );
+        scene.add(tube);
+        disposables.push(geometry);
+      }
+
+      function addTubes(
         selectedLayers: GcodeLayer[],
         type: GcodeLineType,
         color: number,
         opacity: number,
       ) {
-        const positions: number[] = [];
-        for (const layer of selectedLayers) {
-          appendPositions(
-            positions,
-            layer.segments.filter((segment) => segment.type === type),
-          );
-        }
-        if (positions.length === 0) return;
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute(
-          "position",
-          new THREE.Float32BufferAttribute(positions, 3),
-        );
-        const material = new THREE.LineBasicMaterial({
+        if (type === "travel") return;
+        const material = new THREE.MeshBasicMaterial({
           color,
           transparent: opacity < 1,
           opacity,
         });
-        scene.add(new THREE.LineSegments(geometry, material));
-        disposables.push(geometry, material);
+        disposables.push(material);
+        const radius = GCODE_PREVIEW_TUBE_OPTIONS.renderTubes ? 0.22 : 0.12;
+        for (const layer of selectedLayers) {
+          for (const segment of layer.segments.filter(
+            (item) => item.type === type,
+          )) {
+            addTubeSegment(segment, material, radius);
+          }
+        }
       }
 
       const previousLayers = visibleLayers.slice(0, -1);
       if (activeLayer) {
         for (const type of LINE_TYPES) {
-          addLines(previousLayers, type.id, type.color, 0.22);
-          addLines([activeLayer], type.id, type.color, 1);
+          addTubes(previousLayers, type.id, type.color, 0.22);
+          addTubes(
+            [{ ...activeLayer, segments: activeLayerSegments }],
+            type.id,
+            type.color,
+            1,
+          );
         }
-      }
-
-      if (activeLayer) {
-        const layerPlaneGeometry = new THREE.PlaneGeometry(
-          Math.max(1, bounds.sizeX + 4),
-          Math.max(1, bounds.sizeY + 4),
-        );
-        const layerPlaneMaterial = new THREE.MeshBasicMaterial({
-          color: 0xfff2a6,
-          transparent: true,
-          opacity: 0.045,
-          side: THREE.DoubleSide,
-        });
-        const layerPlane = new THREE.Mesh(layerPlaneGeometry, layerPlaneMaterial);
-        layerPlane.rotation.x = -Math.PI / 2;
-        layerPlane.position.y = activeLayer.z;
-        scene.add(layerPlane);
-        disposables.push(layerPlaneGeometry, layerPlaneMaterial);
       }
 
       scene.add(new THREE.AmbientLight(0xffffff, 0.78));
@@ -300,10 +346,28 @@ export function SliceViewer({
       keyLight.position.set(0, 40, 35);
       scene.add(keyLight);
 
-      const span = Math.max(bounds.sizeX, bounds.sizeY, 40);
-      camera.position.set(span * 0.95, span * 0.85, span * 1.35);
+      const height = Math.max(1, bounds.maxZ - bounds.minZ);
+      const target = new THREE.Vector3(0, height * 0.45, 0);
+      const fitWidth = Math.max(bounds.sizeX, 20);
+      const fitDepth = Math.max(bounds.sizeY, 20);
+      const fitHeight = Math.max(height, 12);
+      const fitRadius =
+        Math.sqrt(fitWidth * fitWidth + fitDepth * fitDepth) * 0.5;
+      const distance = Math.max(
+        45,
+        (Math.max(fitRadius, fitHeight) * 1.12) /
+          Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5)),
+      );
+      camera.position.copy(
+        target
+          .clone()
+          .add(new THREE.Vector3(distance * 0.48, distance * 0.68, distance)),
+      );
       controls.enableDamping = true;
-      controls.target.set(0, (activeLayer?.z ?? 0) * 0.38, 0);
+      controls.enablePan = true;
+      controls.minDistance = distance * 0.2;
+      controls.maxDistance = distance * 3;
+      controls.target.copy(target);
       controls.update();
 
       function resize() {
@@ -323,30 +387,8 @@ export function SliceViewer({
         frameId = window.requestAnimationFrame(animate);
       }
 
-      function chooseFace(event: PointerEvent) {
-        if (!orientationMode || !modelMesh) return;
-        const rect = renderer.domElement.getBoundingClientRect();
-        const pointer = new THREE.Vector2(
-          ((event.clientX - rect.left) / rect.width) * 2 - 1,
-          -((event.clientY - rect.top) / rect.height) * 2 + 1,
-        );
-        const raycaster = new THREE.Raycaster();
-        raycaster.setFromCamera(pointer, camera);
-        const hit = raycaster.intersectObject(modelMesh, false)[0];
-        if (!hit?.face) return;
-        const normal = hit.face.normal.clone().normalize();
-        const quaternion = new THREE.Quaternion().setFromUnitVectors(
-          normal,
-          new THREE.Vector3(0, 0, -1),
-        );
-        onOrientationChange([quaternion.x, quaternion.y, quaternion.z, quaternion.w]);
-        setOrientationMode(false);
-      }
-
       animate();
-      renderer.domElement.addEventListener("pointerdown", chooseFace);
       cleanup = () => {
-        renderer.domElement.removeEventListener("pointerdown", chooseFace);
         window.cancelAnimationFrame(frameId);
         controls.dispose();
         for (const disposable of disposables) disposable.dispose();
@@ -362,13 +404,14 @@ export function SliceViewer({
     };
   }, [
     activeLayer,
+    buildVolume.x,
+    buildVolume.y,
     file,
     hasRenderableScene,
     hasRenderableSlice,
     layers,
-    onOrientationChange,
-    orientationMode,
     rotation,
+    activeLayerSegments,
     visibleLayers,
   ]);
 
@@ -391,28 +434,23 @@ export function SliceViewer({
           {reportedTotal ? `${reportedTotal} reported` : "no layers"}
         </span>
       </div>
-      {file && (
-        <div className="mt-4 flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => setOrientationMode((current) => !current)}
-            className="rounded-lg border border-[var(--color-border-2)] px-3 py-2 text-xs font-semibold text-[var(--color-text)] transition-colors hover:border-[var(--color-teal)]"
-          >
-            This side down
-          </button>
-          <button
-            type="button"
-            onClick={() => onOrientationChange(null)}
-            className="rounded-lg border border-[var(--color-border-2)] px-3 py-2 text-xs font-semibold text-[var(--color-text)] transition-colors hover:border-[var(--color-teal)]"
-          >
-            Reset
-          </button>
-          <span className="self-center font-mono text-xs text-[var(--color-muted)]">
-            {rotation ? "custom orientation" : "uploaded orientation"}
-          </span>
+      {hasRenderableSlice && (
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <label className="flex min-w-56 flex-1 items-center gap-2 text-xs text-[var(--color-muted)]">
+            <span>Layer progress</span>
+            <input
+              aria-label="Within-layer progress"
+              type="range"
+              min={1}
+              max={100}
+              value={layerProgress}
+              onChange={(event) => setLayerProgress(Number(event.target.value))}
+              className="flex-1 accent-[var(--color-teal)]"
+            />
+            <span className="font-mono">{layerProgress}%</span>
+          </label>
         </div>
       )}
-
       <div className="mt-4">
         <div className="relative min-h-[620px] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[#111927]">
           {hasRenderableScene ? (
@@ -423,38 +461,15 @@ export function SliceViewer({
                 <button
                   type="button"
                   onClick={() => setShowInfo((current) => !current)}
-                  className="absolute right-24 top-5 rounded-lg border border-white/15 bg-black/60 px-3 py-2 text-xs font-semibold text-white shadow-xl backdrop-blur transition-colors hover:border-[var(--color-teal)]"
+                  className="absolute right-5 top-5 rounded-lg border border-white/15 bg-black/60 px-3 py-2 text-xs font-semibold text-white shadow-xl backdrop-blur transition-colors hover:border-[var(--color-teal)]"
                 >
                   {showInfo ? "Hide Info" : "Show Info"}
                 </button>
               )}
 
-              {hasRenderableSlice && (
-                <div className="absolute bottom-5 right-5 top-5 flex w-14 flex-col items-center justify-between rounded-lg border border-white/15 bg-black/55 px-2 py-3 backdrop-blur">
-                <span className="text-[10px] uppercase tracking-wider text-white/70">
-                  {layers.length}
-                </span>
-                <input
-                  aria-label="Layer"
-                  type="range"
-                  min={0}
-                  max={Math.max(0, layers.length - 1)}
-                  value={safeLayerIndex}
-                  disabled={layers.length === 0}
-                  onChange={(event) =>
-                    setLayerIndex(Number(event.target.value))
-                  }
-                  className="h-80 w-8 accent-[var(--color-teal)] [direction:rtl] [writing-mode:vertical-lr]"
-                />
-                <span className="rounded bg-white/90 px-1.5 py-0.5 font-mono text-xs text-black">
-                  {safeLayerIndex + 1}
-                </span>
-                </div>
-              )}
-
               {showInfo && hasRenderableSlice && (
                 <>
-                  <div className="absolute right-24 top-16 w-[300px] rounded-lg border border-white/10 bg-black/55 p-4 text-sm text-white shadow-xl backdrop-blur">
+                  <div className="absolute right-5 top-16 w-[300px] rounded-lg border border-white/10 bg-black/55 p-4 text-sm text-white shadow-xl backdrop-blur">
                     <div className="grid grid-cols-[1fr_52px_42px_58px] gap-2 border-b border-white/20 pb-2 text-xs font-semibold text-white/80">
                       <span>Line Type</span>
                       <span>Time</span>
@@ -500,7 +515,7 @@ export function SliceViewer({
                     </div>
                   </div>
 
-                  <div className="absolute bottom-20 right-24 w-[300px] rounded-lg border border-white/10 bg-black/55 p-3 font-mono text-xs text-white/80 shadow-xl backdrop-blur">
+                  <div className="absolute bottom-5 right-5 w-[300px] rounded-lg border border-white/10 bg-black/55 p-3 font-mono text-xs text-white/80 shadow-xl backdrop-blur">
                     {codePreview.map((line) => (
                       <div
                         key={line}

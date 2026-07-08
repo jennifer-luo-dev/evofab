@@ -23,6 +23,7 @@ export async function POST(req: NextRequest) {
     const form = await req.formData();
     const model = form.get("model");
     const rotationValue = form.get("rotation");
+    const includeFacesValue = form.get("include_faces");
 
     if (!(model instanceof File)) {
       return NextResponse.json(
@@ -59,7 +60,11 @@ export async function POST(req: NextRequest) {
       typeof rotationValue === "string" && rotationValue
         ? JSON.parse(rotationValue)
         : null;
-    const result = await new SlicerClient().inspectModel({ model, rotation });
+    const result = await new SlicerClient().inspectModel({
+      model,
+      rotation,
+      includeFaces: includeFacesValue === "true",
+    });
     return NextResponse.json({ result });
   } catch (error) {
     if (error instanceof SlicerError) return slicerErrorResponse(error);

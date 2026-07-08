@@ -5,9 +5,13 @@ export interface GcodePoint {
 }
 
 export type GcodeLineType =
+  | "external_perimeter"
+  | "perimeter"
   | "outer_wall"
   | "inner_wall"
+  | "infill"
   | "sparse_infill"
+  | "support"
   | "top_surface"
   | "travel"
   | "unknown";
@@ -27,9 +31,12 @@ export interface GcodeLayer {
 }
 
 const LAYER_RE = /^;\s*LAYER[:_]\s*(\d+)/i;
+const LAYER_CHANGE_RE = /^;\s*LAYER_CHANGE\b/i;
+const Z_COMMENT_RE = /^;\s*Z:\s*([-+]?\d*\.?\d+)/i;
 const TYPE_RE = /^;\s*TYPE[:_]\s*(.+)$/i;
 const COMMAND_RE = /^(G0|G1)\b/i;
 const AXIS_RE = /([XYZE])([-+]?\d*\.?\d+)/gi;
+const G92_E_RE = /^G92\b(?=.*\bE([-+]?\d*\.?\d+))/i;
 
 function parseAxes(
   line: string,
@@ -49,9 +56,14 @@ function makeLayer(index: number, z: number): GcodeLayer {
 
 function normalizeLineType(value: string): GcodeLineType {
   const normalized = value.trim().toLowerCase().replaceAll(" ", "_");
+  if (normalized.includes("external")) return "external_perimeter";
+  if (normalized === "perimeter" || normalized.includes("perimeter"))
+    return "perimeter";
+  if (normalized.includes("support")) return "support";
   if (normalized.includes("outer")) return "outer_wall";
   if (normalized.includes("inner") || normalized.includes("wall"))
     return "inner_wall";
+  if (normalized === "infill") return "infill";
   if (normalized.includes("infill")) return "sparse_infill";
   if (normalized.includes("top")) return "top_surface";
   if (normalized.includes("travel")) return "travel";
@@ -65,6 +77,8 @@ export function parseGcodeLayers(gcode: string): GcodeLayer[] {
   let position: GcodePoint = { x: 0, y: 0, z: 0 };
   let lastE = 0;
   let currentType: GcodeLineType = "unknown";
+  let relativeExtrusion = false;
+  let nextImplicitLayerIndex = 0;
 
   function commitLayer() {
     if (hasLayerContent || current.segments.length > 0) {
@@ -88,6 +102,39 @@ export function parseGcodeLayers(gcode: string): GcodeLayer[] {
       commitLayer();
       current = makeLayer(Number(layerMatch[1]), position.z);
       hasLayerContent = false;
+      nextImplicitLayerIndex = current.index + 1;
+      continue;
+    }
+
+    if (LAYER_CHANGE_RE.test(line)) {
+      commitLayer();
+      current = makeLayer(nextImplicitLayerIndex, position.z);
+      hasLayerContent = false;
+      nextImplicitLayerIndex += 1;
+      continue;
+    }
+
+    const zCommentMatch = line.match(Z_COMMENT_RE);
+    if (zCommentMatch) {
+      const z = Number(zCommentMatch[1]);
+      if (Number.isFinite(z)) current.z = z;
+      continue;
+    }
+
+    if (/^M83\b/i.test(line)) {
+      relativeExtrusion = true;
+      continue;
+    }
+
+    if (/^M82\b/i.test(line)) {
+      relativeExtrusion = false;
+      continue;
+    }
+
+    const g92Match = line.match(G92_E_RE);
+    if (g92Match) {
+      const e = Number(g92Match[1]);
+      if (Number.isFinite(e)) lastE = e;
       continue;
     }
 
@@ -99,7 +146,9 @@ export function parseGcodeLayers(gcode: string): GcodeLayer[] {
       z: axes.Z ?? position.z,
     };
     const nextE = axes.E ?? lastE;
-    const isExtruding = typeof axes.E === "number" && nextE > lastE;
+    const isExtruding =
+      typeof axes.E === "number" &&
+      (relativeExtrusion ? axes.E > 0 : nextE > lastE);
 
     if (typeof axes.Z === "number") {
       current.z = axes.Z;
@@ -116,10 +165,21 @@ export function parseGcodeLayers(gcode: string): GcodeLayer[] {
         lineNumber: lineIndex + 1,
       });
       hasLayerContent = true;
+    } else if (
+      (axes.X !== undefined || axes.Y !== undefined) &&
+      (nextPosition.x !== position.x || nextPosition.y !== position.y)
+    ) {
+      current.segments.push({
+        from: position,
+        to: nextPosition,
+        type: "travel",
+        sourceLine: line,
+        lineNumber: lineIndex + 1,
+      });
     }
 
     position = nextPosition;
-    lastE = nextE;
+    if (!relativeExtrusion) lastE = nextE;
   }
 
   commitLayer();
@@ -127,7 +187,9 @@ export function parseGcodeLayers(gcode: string): GcodeLayer[] {
 }
 
 export function layerTotalFromGcode(gcode: string): number | null {
-  const match = gcode.match(/SET_PRINT_STATS_INFO\b[^\n]*\bTOTAL_LAYER=(\d+)/i);
+  const match =
+    gcode.match(/SET_PRINT_STATS_INFO\b[^\n]*\bTOTAL_LAYER=(\d+)/i) ??
+    gcode.match(/^;\s*total layer number:\s*(\d+)/im);
   if (!match) return null;
   const total = Number(match[1]);
   return Number.isInteger(total) && total > 0 ? total : null;
