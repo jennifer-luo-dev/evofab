@@ -193,8 +193,18 @@ export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
         </div>
       )}
 
-      <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {printers.map((printer) => {
+      {printers.length === 0 ? (
+        <div className="mt-6 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-8 text-center">
+          <p className="text-sm font-semibold text-[var(--color-text)]">
+            No active printers registered
+          </p>
+          <p className="mt-1 text-xs text-[var(--color-muted)]">
+            Onboard your first printer using the form below.
+          </p>
+        </div>
+      ) : (
+        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {printers.map((printer) => {
           const status = printer.printer_status;
           const statusValue = status?.status ?? "offline";
           const canHome =
@@ -304,6 +314,7 @@ export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
           );
         })}
       </div>
+      )}
     </>
   );
 }
