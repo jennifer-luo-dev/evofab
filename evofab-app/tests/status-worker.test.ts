@@ -7,7 +7,9 @@ import {
 import { MoonrakerError } from "../app/lib/moonraker-errors";
 import type { Printer, PrinterStatus } from "../app/types/printer";
 
-function printer(input: Partial<Printer> & Pick<Printer, "id" | "name">): Printer {
+function printer(
+  input: Partial<Printer> & Pick<Printer, "id" | "name">,
+): Printer {
   return {
     id: input.id,
     name: input.name,

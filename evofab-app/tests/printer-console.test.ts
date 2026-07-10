@@ -5,10 +5,7 @@ import {
   mockPrinterKey,
   resetMockMoonrakerState,
 } from "../app/lib/mock-moonraker";
-import {
-  ConsoleError,
-  sendConsoleCommand,
-} from "../app/lib/printer-console";
+import { ConsoleError, sendConsoleCommand } from "../app/lib/printer-console";
 
 const printer = { ip: "127.0.0.1", port: 7125 };
 
@@ -29,14 +26,12 @@ test("console rejects guarded and malformed commands", async () => {
   await assert.rejects(
     () => sendConsoleCommand(printer, "M112"),
     (error) =>
-      error instanceof ConsoleError &&
-      error.code === "CONSOLE_DENIED_COMMAND",
+      error instanceof ConsoleError && error.code === "CONSOLE_DENIED_COMMAND",
   );
 
   await assert.rejects(
     () => sendConsoleCommand(printer, "123 bad"),
     (error) =>
-      error instanceof ConsoleError &&
-      error.code === "CONSOLE_INVALID_COMMAND",
+      error instanceof ConsoleError && error.code === "CONSOLE_INVALID_COMMAND",
   );
 });
