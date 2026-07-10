@@ -25,8 +25,7 @@ test("bed leveling requires idle, confirmation, and homed axes", async () => {
         { confirmed: true, autoHome: true },
       ),
     (error) =>
-      error instanceof LevelingError &&
-      error.code === "LEVELING_REQUIRES_IDLE",
+      error instanceof LevelingError && error.code === "LEVELING_REQUIRES_IDLE",
   );
 
   await assert.rejects(
@@ -39,8 +38,7 @@ test("bed leveling requires idle, confirmation, and homed axes", async () => {
   await assert.rejects(
     () => runBedLeveling(printer, idleStatus, { confirmed: true }),
     (error) =>
-      error instanceof LevelingError &&
-      error.code === "LEVELING_REQUIRES_HOME",
+      error instanceof LevelingError && error.code === "LEVELING_REQUIRES_HOME",
   );
 });
 
