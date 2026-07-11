@@ -47,6 +47,7 @@ export async function POST(req: NextRequest) {
   const experiment_params = JSON.parse(
     (form.get("experiment_params") as string) || "{}",
   );
+  const startAfterUpload = form.get("start_after_upload") !== "false";
 
   const [{ data: printer, error: printerError }, { data: printerStatus }] =
     await Promise.all([
@@ -169,6 +170,23 @@ export async function POST(req: NextRequest) {
       if (verify.outcome !== "succeeded")
         throw new Error("PRUSALINK_FILE_NOT_VERIFIED");
       const fileKey = `${storage}/${file.name}`;
+      if (!startAfterUpload) {
+        const { data: uploadedJob } = await supabase
+          .from("jobs")
+          .update({
+            file_key: fileKey,
+            command_outcome: "succeeded",
+            last_command: "upload",
+            last_command_code: null,
+          })
+          .eq("id", job.id)
+          .select()
+          .single();
+        return NextResponse.json(
+          { job: uploadedJob ?? job, uploaded_only: true },
+          { status: 201 },
+        );
+      }
       await supabase
         .from("jobs")
         .update({

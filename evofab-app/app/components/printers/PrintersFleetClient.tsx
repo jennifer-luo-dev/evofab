@@ -118,6 +118,7 @@ export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
       form.append("settings", JSON.stringify(draft.settings));
       form.append("prepare_settings", JSON.stringify(draft.prepareSettings));
       form.append("experiment_params", JSON.stringify(draft.experimentParams));
+      form.append("start_after_upload", "true");
 
       const response = await fetch("/api/jobs", {
         method: "POST",
