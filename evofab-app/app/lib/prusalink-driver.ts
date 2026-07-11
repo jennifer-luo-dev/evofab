@@ -153,8 +153,9 @@ export class PrusaLinkDriver implements PrinterDriver {
       path: "/api/v1/storage",
     });
     const entries = response.data?.storage_list ?? response.data?.storage ?? [];
-    const storage =
-      entries.find((entry) => entry.available !== false) ?? entries[0];
+    const storage = entries.find((entry) => entry.available !== false);
+    if (!storage)
+      throw new PrusaLinkClientError("PRUSALINK_STORAGE_UNAVAILABLE");
     const path = storage?.path ?? storage?.name;
     if (!path) throw new PrusaLinkClientError("PRUSALINK_MALFORMED_RESPONSE");
     return path.replace(/^\/+|\/+$/g, "");
