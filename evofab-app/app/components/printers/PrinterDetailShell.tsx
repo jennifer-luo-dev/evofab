@@ -11,6 +11,7 @@ import { PrinterMacroPanel } from "@/app/components/printers/PrinterMacroPanel";
 import { PrinterMotionPanel } from "@/app/components/printers/PrinterMotionPanel";
 import { PrinterPreheatPanel } from "@/app/components/printers/PrinterPreheatPanel";
 import { PrinterQueuePanel } from "@/app/components/printers/PrinterQueuePanel";
+import { PrusaControlPanel } from "@/app/components/printers/PrusaControlPanel";
 import { StatusDot } from "@/app/components/ui/StatusDot";
 import type { Job, MaterialProfile } from "@/app/types/job";
 import type { PrinterWithStatus } from "@/app/types/printer";
@@ -149,10 +150,7 @@ export function PrinterDetailShell({
             </section>
 
             {readOnly ? (
-              <section className="rounded-lg border border-border bg-surface p-4 text-sm text-muted">
-                Status monitoring only. Printer controls and job dispatch are
-                disabled.
-              </section>
+              <PrusaControlPanel job={activeJob} status={status} />
             ) : (
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="md:col-span-2">

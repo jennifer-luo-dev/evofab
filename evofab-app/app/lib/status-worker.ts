@@ -6,6 +6,7 @@ import type { PrinterDriver } from "@/app/lib/printer-driver";
 import { PrusaLinkDriver } from "@/app/lib/prusalink-driver";
 import { MoonrakerError } from "@/app/lib/moonraker-errors";
 import type { Printer, PrinterStatus } from "@/app/types/printer";
+import { prusaLifecyclePatch } from "@/app/lib/prusalink-job-lifecycle";
 
 export const DEFAULT_STATUS_POLL_INTERVAL_MS = 2_000;
 export const MIN_STATUS_POLL_INTERVAL_MS = 250;
@@ -129,6 +130,54 @@ export async function writeStatusWorkerTick(
       const status = await connector.readStatus(printer);
       backoffState.delete(printer.id);
       statuses.push(status);
+      if (!options.connector && printer.driver_type === "prusalink") {
+        const jobs = options.supabase.from("jobs") as {
+          select(columns: string): {
+            eq(
+              column: string,
+              value: unknown,
+            ): {
+              in(
+                column: string,
+                values: string[],
+              ): {
+                order(
+                  column: string,
+                  options: { ascending: boolean },
+                ): {
+                  limit(count: number): {
+                    maybeSingle(): Promise<
+                      SupabaseQueryResult<{
+                        id: string;
+                        status: string;
+                        command_outcome?: string | null;
+                        last_command?: string | null;
+                      }>
+                    >;
+                  };
+                };
+              };
+            };
+          };
+          update(values: Record<string, unknown>): {
+            eq(
+              column: string,
+              value: unknown,
+            ): Promise<SupabaseQueryResult<unknown>>;
+          };
+        };
+        const { data: activeJob } = await jobs
+          .select("id, status, command_outcome, last_command")
+          .eq("printer_id", printer.id)
+          .in("status", ["queued", "printing"])
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (activeJob) {
+          const patch = prusaLifecyclePatch(status, activeJob, now);
+          if (patch) await jobs.update({ ...patch }).eq("id", activeJob.id);
+        }
+      }
       results.push({
         printerId: printer.id,
         printerName: printer.name,

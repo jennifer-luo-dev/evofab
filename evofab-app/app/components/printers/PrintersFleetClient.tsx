@@ -237,7 +237,7 @@ export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
                       {printer.model}
                     </p>
                     <p className="mt-1 text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                      {readOnly ? "PrusaLink · read-only" : "Moonraker"}
+                      {readOnly ? "PrusaLink · control enabled" : "Moonraker"}
                     </p>
                   </div>
                   <StatusDot status={statusValue} />
@@ -321,16 +321,18 @@ export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
                   onClick={(event) => event.stopPropagation()}
                 >
                   <button
-                    disabled={readOnly || !draft || busyPrinterId !== null}
+                    disabled={
+                      !draft ||
+                      busyPrinterId !== null ||
+                      (readOnly && statusValue !== "idle")
+                    }
                     onClick={() => startPreparedPrint(printer)}
                     title={printButtonLabel}
                     className="w-full truncate rounded-md bg-[var(--color-teal)] px-2 py-1.5 text-xs font-semibold text-[var(--color-bg)] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    {readOnly
-                      ? "Read-only status"
-                      : busyPrinterId === printer.id
-                        ? "Starting"
-                        : printButtonLabel}
+                    {busyPrinterId === printer.id
+                      ? "Starting"
+                      : printButtonLabel}
                   </button>
                 </div>
               </section>

@@ -72,3 +72,30 @@ If you prefer not to use `--key-file`, you can set the `PRUSALINK_KEY_FILE` envi
 export PRUSALINK_KEY_FILE="/path/to/your/secret.key"
 npx tsx scripts/prusalink-probe.ts --host <PRUSA_IP>
 ```
+
+## 5. v0.8 supervised control acceptance
+
+The dashboard dispatches PrusaLink commands only from the lab host. Vercel remains monitoring-only. The browser and Supabase must never receive the printer host, API key, or key-file path.
+
+Before acceptance, apply the additive Prusa job-lifecycle migration, rebuild the dashboard, and restart the dashboard and status-worker scheduled tasks. Confirm exactly one status worker is emitting a monotonic tick sequence at the configured 2-second interval.
+
+Stage B requires William's explicit approval in the active session:
+
+1. Select one approved G-code file.
+2. Create the job row.
+3. Discover storage with `/api/v1/storage`.
+4. Upload with `Print-After-Upload: ?0` and `Overwrite: ?0`.
+5. Verify the stored file and confirm the printer remains idle.
+
+Stage C requires a separate explicit approval:
+
+1. Start the verified file with an explicit POST.
+2. Record the observed PrusaLink job ID without recording connection details.
+3. Pause, resume, and allow natural completion.
+4. Record sanitized response codes, job/status transitions, and terminal-detection timing below.
+
+Cancel is not part of this acceptance run and is not an emergency stop. Use the physical emergency procedure when required.
+
+### Acceptance evidence
+
+Pending supervised Stage B/C. Do not populate this section from fixture tests or inferred behavior.

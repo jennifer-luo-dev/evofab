@@ -14,6 +14,8 @@ import {
 } from "@/app/lib/material-profiles";
 import { startNextQueuedJob } from "@/app/lib/print-queue";
 import type { MaterialProfile, PrintSettings } from "@/app/types/job";
+import { PrusaLinkDriver } from "@/app/lib/prusalink-driver";
+import type { Printer } from "@/app/types/printer";
 
 export async function GET() {
   const supabase = await createClient();
@@ -48,11 +50,7 @@ export async function POST(req: NextRequest) {
 
   const [{ data: printer, error: printerError }, { data: printerStatus }] =
     await Promise.all([
-      supabase
-        .from("printers")
-        .select("ip, port, type, driver_type")
-        .eq("id", printer_id)
-        .single(),
+      supabase.from("printers").select("*").eq("id", printer_id).single(),
       supabase
         .from("printer_status")
         .select("status")
@@ -62,12 +60,6 @@ export async function POST(req: NextRequest) {
 
   if (printerError || !printer) {
     return NextResponse.json({ error: "Printer not found" }, { status: 404 });
-  }
-  if (printer.driver_type === "prusalink") {
-    return NextResponse.json(
-      { error: "PrusaLink printers are read-only." },
-      { status: 403 },
-    );
   }
 
   let settings: PrintSettings = mergePrintSettings(
@@ -104,6 +96,151 @@ export async function POST(req: NextRequest) {
   }
 
   const shouldStartNow = printerStatus?.status === "idle";
+
+  if (printer.driver_type === "prusalink") {
+    if (!shouldStartNow) {
+      return NextResponse.json(
+        {
+          error: {
+            code: "PRUSALINK_NOT_IDLE",
+            message: "Printer 9 must be idle before upload.",
+            retryable: true,
+          },
+        },
+        { status: 409 },
+      );
+    }
+
+    const { data: job, error: createError } = await supabase
+      .from("jobs")
+      .insert({
+        printer_id,
+        experiment_id,
+        material_profile_id,
+        filename: file.name,
+        file_key: null,
+        print_settings: { ...settings, prepare: prepareSettings },
+        experiment_params,
+        status: "queued",
+        pipeline_step: "upload",
+        command_outcome: "pending",
+        last_command: "upload",
+      })
+      .select()
+      .single();
+    if (createError || !job)
+      return NextResponse.json(
+        { error: createError?.message ?? "Unable to create job" },
+        { status: 500 },
+      );
+
+    const driver = new PrusaLinkDriver();
+    const device = printer as Printer;
+    try {
+      const storage = await driver.discoverStorage(device);
+      const upload = await driver.uploadFile(device, storage, file);
+      if (upload.outcome !== "succeeded") {
+        await supabase
+          .from("jobs")
+          .update({
+            status: upload.outcome === "failed" ? "failed" : "queued",
+            command_outcome: upload.outcome,
+            last_command_code: upload.code,
+            completed_at:
+              upload.outcome === "failed" ? new Date().toISOString() : null,
+          })
+          .eq("id", job.id);
+        return NextResponse.json(
+          {
+            error: {
+              code: upload.code,
+              message:
+                upload.outcome === "outcome_unknown"
+                  ? "Upload outcome is unknown; status reconciliation is required."
+                  : "PrusaLink upload failed.",
+              retryable: upload.retryable,
+            },
+            job_id: job.id,
+          },
+          { status: upload.outcome === "outcome_unknown" ? 504 : 502 },
+        );
+      }
+      const verify = await driver.verifyStoredFile(device, storage, file.name);
+      if (verify.outcome !== "succeeded")
+        throw new Error("PRUSALINK_FILE_NOT_VERIFIED");
+      const fileKey = `${storage}/${file.name}`;
+      await supabase
+        .from("jobs")
+        .update({
+          file_key: fileKey,
+          last_command: "start",
+          command_outcome: "pending",
+          last_command_code: null,
+        })
+        .eq("id", job.id);
+      const start = await driver.startPrint(device, storage, file.name);
+      if (start.outcome !== "succeeded") {
+        await supabase
+          .from("jobs")
+          .update({
+            command_outcome: start.outcome,
+            last_command_code: start.code,
+          })
+          .eq("id", job.id);
+        return NextResponse.json(
+          {
+            error: {
+              code: start.code,
+              message:
+                start.outcome === "outcome_unknown"
+                  ? "Start outcome is unknown; status reconciliation is required."
+                  : "PrusaLink start failed.",
+              retryable: start.retryable,
+            },
+            job_id: job.id,
+          },
+          { status: start.outcome === "outcome_unknown" ? 504 : 502 },
+        );
+      }
+      const observed = await driver.observeJob(device);
+      const { data: startedJob } = await supabase
+        .from("jobs")
+        .update({
+          status: "printing",
+          pipeline_step: "printing",
+          started_at: new Date().toISOString(),
+          command_outcome: "succeeded",
+          prusalink_job_id: observed?.id ?? null,
+        })
+        .eq("id", job.id)
+        .select()
+        .single();
+      return NextResponse.json({ job: startedJob ?? job }, { status: 201 });
+    } catch (error) {
+      const code =
+        error instanceof Error ? error.message : "PRUSALINK_DISPATCH_FAILED";
+      await supabase
+        .from("jobs")
+        .update({
+          status: "failed",
+          command_outcome: "failed",
+          last_command_code: code,
+          completed_at: new Date().toISOString(),
+        })
+        .eq("id", job.id);
+      return NextResponse.json(
+        {
+          error: {
+            code,
+            message: "PrusaLink dispatch failed.",
+            retryable: false,
+          },
+          job_id: job.id,
+        },
+        { status: 502 },
+      );
+    }
+  }
 
   // Upload file to Moonraker; busy printers keep the job queued until idle.
   let fileKey: string;
