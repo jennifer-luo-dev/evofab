@@ -1,0 +1,5 @@
+Name,Provider,Base Chemistry,Nominal Hardness,Source Status,Airtightness,Ogden Mu
+TF2ATL,Kraiburg TPE,Thermolast K,42A,verified,pass,0.31
+TF3ATL,Kraiburg TPE,Thermolast K,52A,verified,pass,0.46
+Literature TPU,Research source,TPU,70A,literature,,
+Excluded trial,Example supplier,TPE,30A,excluded,fail,

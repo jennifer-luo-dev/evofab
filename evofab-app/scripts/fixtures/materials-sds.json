@@ -1,0 +1,6 @@
+[
+  ["Material type", "Provider", "Material name/ID", "SDS links"],
+  ["Filament", "Polymaker", "PLA", "https://example.invalid/polymaker-pla-sds.pdf"],
+  ["Pellet", "Kraiburg TPE", "TF2ATL", "https://example.invalid/tf2atl-sds"],
+  ["Resin", "Formlabs", "Elastic 50A V2", "https://example.invalid/elastic-50a-sds.pdf"]
+]

@@ -1,0 +1,5 @@
+[
+  { "id": "pla-fgf", "name": "PLA FGF", "printer_type": "FGF" },
+  { "id": "pla-fdm", "name": "PLA FDM", "printer_type": "FDM" },
+  { "id": "cool-flex", "name": "Flexible Polymer", "printer_type": "BOTH" }
+]

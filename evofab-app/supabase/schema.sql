@@ -223,6 +223,9 @@ CREATE INDEX IF NOT EXISTS idx_results_created_at ON results(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_logs_job_id        ON logs(job_id);
 CREATE INDEX IF NOT EXISTS idx_logs_created_at    ON logs(created_at DESC);
 
+-- Materials Foundations is maintained as an additive rollout migration:
+-- supabase/migrations/20260712010000_materials_foundations.sql
+
 -- ============================================================
 -- REALTIME
 -- Phase F migrations add jobs, logs, and printer_status to the
