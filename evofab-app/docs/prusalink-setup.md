@@ -98,4 +98,25 @@ Cancel is not part of this acceptance run and is not an emergency stop. Use the 
 
 ### Acceptance evidence
 
-Pending supervised Stage B/C. Do not populate this section from fixture tests or inferred behavior.
+#### Stage B attempt — 07/11
+
+William approved upload-only Stage B. Stage C was not approved and no print-start request was sent.
+
+- Approved file: `evofab_printer9_stageb-20260711.gcode`
+- Size: 130,200 bytes
+- SHA-256: `EF107E274828EF2BF4BDCE5C50D640AB001EEB2E34BF21918161354AAB9B65FF`
+- Dashboard upload result: HTTP 502 after 1.241 seconds
+- Reconciled raw upload result: HTTP 507 after 0.129 seconds; 130,200 bytes transmitted
+- `/api/v1/storage`: `usb`, path `/usb/`, `available: false`, `read_only: false`, with no capacity figures reported
+- Final printer state: `IDLE`; hotend and bed targets both `0.0 C`; `/api/v1/job` returned HTTP 204; the exact stored-file path returned HTTP 404
+- Availability guard: PR #20, merged as `b908f0a`, rejects dispatch with `PRUSALINK_STORAGE_UNAVAILABLE` when no reported storage is available
+
+The evidence establishes that the approved file was not stored and the printer did not start or heat. Hardware work is blocked until the Monday lab visit.
+
+#### Monday reverify checklist
+
+1. Confirm `/api/v1/storage` reports the USB storage as `available: true`.
+2. In an elevated Windows session, restart `EvoFab-Dashboard` and `EvoFab-Status-Worker` through Task Scheduler; do not serve either process manually. This deploys the merged availability guard.
+3. Reverify storage available, printer `IDLE`, hotend and bed targets `0`, `/api/v1/job` HTTP 204, and the exact Stage B file path HTTP 404.
+4. Repeat upload-only Stage B with the approved file and both no-start/no-overwrite headers.
+5. Do not begin Stage C until William gives a separate explicit go in that session.
