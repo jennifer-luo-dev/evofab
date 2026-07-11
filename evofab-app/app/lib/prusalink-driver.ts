@@ -14,7 +14,13 @@ import type {
 } from "@/app/types/printer";
 
 interface PrusaStatusResponse {
-  printer?: { state?: string };
+  printer?: {
+    state?: string;
+    temp_nozzle?: number;
+    temp_bed?: number;
+    target_nozzle?: number;
+    target_bed?: number;
+  };
   temp?: {
     nozzle?: number;
     bed?: number;
@@ -59,10 +65,11 @@ export function normalizePrusaLinkStatus(
     progress: Number.isFinite(progress) ? progress : 0,
     layer_current: null,
     layer_total: null,
-    hotend_temp: status.temp?.nozzle ?? null,
-    hotend_target: status.temp?.target_nozzle ?? null,
-    bed_temp: status.temp?.bed ?? null,
-    bed_target: status.temp?.target_bed ?? null,
+    hotend_temp: status.printer?.temp_nozzle ?? status.temp?.nozzle ?? null,
+    hotend_target:
+      status.printer?.target_nozzle ?? status.temp?.target_nozzle ?? null,
+    bed_temp: status.printer?.temp_bed ?? status.temp?.bed ?? null,
+    bed_target: status.printer?.target_bed ?? status.temp?.target_bed ?? null,
     eta_seconds: job?.time_remaining ?? null,
     progress_source: job ? "exact" : "unknown",
     layer_source: "unknown",
