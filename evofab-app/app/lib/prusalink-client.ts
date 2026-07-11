@@ -53,6 +53,11 @@ export async function requestPrusaLink<T>(options: {
   host: string;
   path: string;
   key: string;
+  method?: "GET" | "PUT" | "POST" | "DELETE";
+  body?: BodyInit;
+  headers?: Record<string, string>;
+  expectedStatuses?: number[];
+  parseJson?: boolean;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
 }): Promise<PrusaLinkResponse<T>> {
@@ -60,22 +65,38 @@ export async function requestPrusaLink<T>(options: {
   const fetchImpl = options.fetchImpl ?? fetch;
   try {
     const response = await fetchImpl(`http://${options.host}${options.path}`, {
-      method: "GET",
-      headers: { "X-Api-Key": options.key, Accept: "application/json" },
+      method: options.method ?? "GET",
+      headers: {
+        "X-Api-Key": options.key,
+        Accept: "application/json",
+        ...options.headers,
+      },
+      body: options.body,
       cache: "no-store",
       signal: AbortSignal.timeout(
         options.timeoutMs ?? DEFAULT_PRUSALINK_TIMEOUT_MS,
       ),
     });
     const latencyMs = Date.now() - startedAt;
-    if (response.status === 204) return { status: 204, latencyMs, data: null };
+    const expected = options.expectedStatuses ?? [200, 204];
+    if (
+      expected.includes(response.status) &&
+      (response.status === 204 || options.parseJson === false)
+    ) {
+      return { status: response.status, latencyMs, data: null };
+    }
     if (response.status === 401 || response.status === 403) {
       throw new PrusaLinkClientError("PRUSALINK_AUTH");
     }
     if (response.status >= 500) {
       throw new PrusaLinkClientError("PRUSALINK_SERVER");
     }
-    if (!response.ok) throw new PrusaLinkClientError("PRUSALINK_NETWORK");
+    if (response.status === 404)
+      throw new PrusaLinkClientError("PRUSALINK_NOT_FOUND");
+    if (response.status === 409)
+      throw new PrusaLinkClientError("PRUSALINK_CONFLICT");
+    if (!expected.includes(response.status))
+      throw new PrusaLinkClientError("PRUSALINK_NETWORK");
     try {
       return {
         status: response.status,

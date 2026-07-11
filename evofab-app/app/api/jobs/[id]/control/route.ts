@@ -6,6 +6,8 @@ import {
   runPrinterControl,
   type PrinterControlAction,
 } from "@/app/lib/printer-control";
+import { PrusaLinkDriver } from "@/app/lib/prusalink-driver";
+import type { Printer } from "@/app/types/printer";
 
 const ACTIONS = new Set<PrinterControlAction>([
   "pause",
@@ -30,7 +32,9 @@ function errorResponse(
 }
 
 function isAction(value: unknown): value is PrinterControlAction {
-  return typeof value === "string" && ACTIONS.has(value as PrinterControlAction);
+  return (
+    typeof value === "string" && ACTIONS.has(value as PrinterControlAction)
+  );
 }
 
 function terminalJobPatch(action: PrinterControlAction) {
@@ -95,7 +99,7 @@ export async function POST(
   const supabase = await createClient();
   const { data: job, error: jobError } = await supabase
     .from("jobs")
-    .select("id, printer_id, status")
+    .select("id, printer_id, status, prusalink_job_id")
     .eq("id", id)
     .single();
 
@@ -123,7 +127,7 @@ export async function POST(
 
   const { data: printer, error: printerError } = await supabase
     .from("printers")
-    .select("ip, port")
+    .select("*")
     .eq("id", job.printer_id)
     .single();
 
@@ -135,6 +139,71 @@ export async function POST(
       false,
       printerError?.message,
     );
+  }
+
+  if (printer.driver_type === "prusalink") {
+    if (!(["pause", "resume", "cancel"] as string[]).includes(action)) {
+      return errorResponse(
+        403,
+        "PRUSALINK_CAPABILITY_UNSUPPORTED",
+        "This control is not supported by PrusaLink.",
+      );
+    }
+    const driver = new PrusaLinkDriver();
+    const observed = await driver
+      .observeJob(printer as Printer)
+      .catch(() => null);
+    if (
+      !observed ||
+      (job.prusalink_job_id && observed.id !== job.prusalink_job_id)
+    ) {
+      return errorResponse(
+        409,
+        "PRUSALINK_STALE_JOB_ID",
+        "The observed PrusaLink job no longer matches this job.",
+      );
+    }
+    if (!job.prusalink_job_id) {
+      await supabase
+        .from("jobs")
+        .update({ prusalink_job_id: observed.id })
+        .eq("id", id);
+    }
+    await supabase
+      .from("jobs")
+      .update({
+        last_command: action,
+        command_outcome: "pending",
+        last_command_code: null,
+      })
+      .eq("id", id);
+    const result =
+      action === "pause"
+        ? await driver.pause(printer as Printer, observed.id)
+        : action === "resume"
+          ? await driver.resume(printer as Printer, observed.id)
+          : await driver.cancel(printer as Printer, observed.id);
+    await supabase
+      .from("jobs")
+      .update({
+        command_outcome: result.outcome,
+        last_command_code: result.code ?? null,
+        ...(result.outcome === "succeeded" && action === "cancel"
+          ? { status: "aborted", completed_at: new Date().toISOString() }
+          : {}),
+      })
+      .eq("id", id);
+    if (result.outcome !== "succeeded") {
+      return errorResponse(
+        result.outcome === "outcome_unknown" ? 504 : 502,
+        result.code ?? "PRUSALINK_CONTROL_FAILED",
+        result.outcome === "outcome_unknown"
+          ? "Command outcome is unknown; status reconciliation is required."
+          : "PrusaLink control failed.",
+        result.retryable,
+      );
+    }
+    return NextResponse.json({ ok: true, outcome: result.outcome });
   }
 
   try {

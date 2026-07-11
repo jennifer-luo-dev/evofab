@@ -79,3 +79,76 @@ test("missing key configuration becomes offline", async () => {
   const row = await driver.readStatus({ ...printer, prusalink_key_file: null });
   assert.equal(row.fault_message, "PRUSALINK_CONFIG");
 });
+
+test("discovers storage, uploads without printing, verifies, and explicitly starts", async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  const responses = [
+    new Response(
+      JSON.stringify({ storage_list: [{ path: "usb", available: true }] }),
+    ),
+    new Response(null, { status: 201 }),
+    new Response(null, { status: 200 }),
+    new Response(null, { status: 204 }),
+  ];
+  const driver = new PrusaLinkDriver({
+    readKey: async () => "fixture-key",
+    fetchImpl: async (input, init) => {
+      requests.push({ url: String(input), init });
+      return responses.shift()!;
+    },
+  });
+  const storage = await driver.discoverStorage(printer);
+  const file = new File(["G1 X1"], "cube.gcode", { type: "text/plain" });
+  assert.equal(
+    (await driver.uploadFile(printer, storage, file)).outcome,
+    "succeeded",
+  );
+  assert.equal(
+    (await driver.verifyStoredFile(printer, storage, file.name)).outcome,
+    "succeeded",
+  );
+  assert.equal(
+    (await driver.startPrint(printer, storage, file.name)).outcome,
+    "succeeded",
+  );
+  assert.equal(requests[1].init?.method, "PUT");
+  assert.equal(
+    (requests[1].init?.headers as Record<string, string>)["Print-After-Upload"],
+    "?0",
+  );
+  assert.equal(
+    (requests[1].init?.headers as Record<string, string>).Overwrite,
+    "?0",
+  );
+  assert.equal(requests[3].init?.method, "POST");
+});
+
+test("normalizes conflict, stale job, and non-idempotent timeout outcomes", async () => {
+  const conflict = new PrusaLinkDriver({
+    readKey: async () => "key",
+    fetchImpl: async () => new Response(null, { status: 409 }),
+  });
+  const file = new File(["x"], "cube.gcode");
+  const conflictResult = await conflict.uploadFile(printer, "usb", file);
+  assert.equal(conflictResult.code, "PRUSALINK_CONFLICT");
+  assert.equal(conflictResult.outcome, "failed");
+
+  const stale = new PrusaLinkDriver({
+    readKey: async () => "key",
+    fetchImpl: async () => new Response(null, { status: 404 }),
+  });
+  assert.equal(
+    (await stale.pause(printer, "old-id")).code,
+    "PRUSALINK_NOT_FOUND",
+  );
+
+  const timeout = new PrusaLinkDriver({
+    readKey: async () => "key",
+    fetchImpl: async () => {
+      throw new DOMException("timeout", "TimeoutError");
+    },
+  });
+  const timedOut = await timeout.startPrint(printer, "usb", "cube.gcode");
+  assert.equal(timedOut.outcome, "outcome_unknown");
+  assert.equal(timedOut.retryable, false);
+});

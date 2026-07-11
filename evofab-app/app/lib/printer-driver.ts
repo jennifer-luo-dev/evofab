@@ -4,11 +4,23 @@ export interface PrinterDriver {
   readStatus(printer: Printer): Promise<PrinterStatus>;
 }
 
+export type PrinterControlOutcome = "succeeded" | "failed" | "outcome_unknown";
+
+export interface PrinterCommandResult {
+  outcome: PrinterControlOutcome;
+  status: number | null;
+  retryable: boolean;
+  code?:
+    PrinterDriverErrorCategory | "PRUSALINK_NOT_FOUND" | "PRUSALINK_CONFLICT";
+}
+
 export type PrinterDriverErrorCategory =
   | "PRUSALINK_AUTH"
   | "PRUSALINK_CONFIG"
   | "PRUSALINK_MALFORMED_RESPONSE"
   | "PRUSALINK_NETWORK"
+  | "PRUSALINK_NOT_FOUND"
+  | "PRUSALINK_CONFLICT"
   | "PRUSALINK_SERVER"
   | "PRUSALINK_TIMEOUT";
 

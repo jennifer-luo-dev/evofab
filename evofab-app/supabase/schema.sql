@@ -150,12 +150,24 @@ CREATE TABLE IF NOT EXISTS jobs (
   print_progress      NUMERIC(5,2) DEFAULT 0   CHECK (print_progress BETWEEN 0 AND 100),
   layer_current       INTEGER,
   layer_total         INTEGER,
+  prusalink_job_id    TEXT,
+  command_outcome     TEXT CHECK (command_outcome IN (
+                                  'pending', 'succeeded', 'failed', 'outcome_unknown'
+                                )),
+  last_command        TEXT CHECK (last_command IN (
+                                  'upload', 'start', 'pause', 'resume', 'cancel'
+                                )),
+  last_command_code   TEXT,
 
   -- timestamps
   created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
   started_at          TIMESTAMPTZ,
   completed_at        TIMESTAMPTZ
 );
+
+CREATE INDEX IF NOT EXISTS idx_jobs_prusalink_job_id
+  ON jobs (printer_id, prusalink_job_id)
+  WHERE prusalink_job_id IS NOT NULL;
 
 -- ============================================================
 -- RESULTS

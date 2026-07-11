@@ -50,6 +50,11 @@ export interface Job {
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
+  prusalink_job_id?: string | null;
+  command_outcome?:
+    "pending" | "succeeded" | "failed" | "outcome_unknown" | null;
+  last_command?: "upload" | "start" | "pause" | "resume" | "cancel" | null;
+  last_command_code?: string | null;
 }
 
 export interface LogEntry {
