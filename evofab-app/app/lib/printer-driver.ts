@@ -22,6 +22,7 @@ export type PrinterDriverErrorCategory =
   | "PRUSALINK_NOT_FOUND"
   | "PRUSALINK_CONFLICT"
   | "PRUSALINK_SERVER"
+  | "PRUSALINK_STORAGE_UNAVAILABLE"
   | "PRUSALINK_TIMEOUT";
 
 export function offlinePrinterStatus(

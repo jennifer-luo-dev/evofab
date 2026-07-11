@@ -157,3 +157,21 @@ test("normalizes conflict, stale job, and non-idempotent timeout outcomes", asyn
   assert.equal(timedOut.outcome, "outcome_unknown");
   assert.equal(timedOut.retryable, false);
 });
+
+test("refuses upload planning when all reported storage is unavailable", async () => {
+  const driver = new PrusaLinkDriver({
+    readKey: async () => "key",
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          storage_list: [{ name: "usb", path: "/usb/", available: false }],
+        }),
+      ),
+  });
+  await assert.rejects(
+    () => driver.discoverStorage(printer),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message === "PRUSALINK_STORAGE_UNAVAILABLE",
+  );
+});
