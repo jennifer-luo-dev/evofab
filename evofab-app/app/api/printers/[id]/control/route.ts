@@ -30,7 +30,9 @@ function errorResponse(
 }
 
 function isAction(value: unknown): value is PrinterControlAction {
-  return typeof value === "string" && ACTIONS.has(value as PrinterControlAction);
+  return (
+    typeof value === "string" && ACTIONS.has(value as PrinterControlAction)
+  );
 }
 
 export async function POST(
@@ -66,7 +68,7 @@ export async function POST(
   const supabase = await createClient();
   const { data: printer, error } = await supabase
     .from("printers")
-    .select("ip, port")
+    .select("ip, port, driver_type")
     .eq("id", id)
     .single();
 
@@ -79,6 +81,12 @@ export async function POST(
       error?.message,
     );
   }
+  if (printer.driver_type === "prusalink")
+    return errorResponse(
+      403,
+      "PRINTER_READ_ONLY",
+      "PrusaLink printers are read-only.",
+    );
 
   try {
     await runPrinterControl(printer, action);

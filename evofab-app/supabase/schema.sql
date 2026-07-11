@@ -15,6 +15,12 @@ CREATE TABLE IF NOT EXISTS printers (
   model        TEXT        NOT NULL,                 -- "Custom FGF · Klipper"
   ip           TEXT        NOT NULL UNIQUE,          -- "10.247.137.89"
   port         INTEGER     NOT NULL DEFAULT 80,
+  driver_type  TEXT        NOT NULL DEFAULT 'moonraker'
+                            CHECK (driver_type IN ('moonraker', 'prusalink')),
+  moonraker_host TEXT,
+  moonraker_port INTEGER,
+  prusalink_host TEXT,
+  prusalink_key_file TEXT,
   type         TEXT        NOT NULL CHECK (type IN ('FGF', 'FDM')),
   material     TEXT,                                 -- default material for this printer
   build_volume TEXT,                                 -- "300x300x400mm"
@@ -281,6 +287,20 @@ INSERT INTO printers (name, model, ip, port, type, material, build_volume, webca
   ('EvoFab Mock Alpha', 'Mock FDM', '127.0.0.1', 7125, 'FDM', 'PLA Standard', '220x220x250mm', NULL),
   ('EvoFab Mock Beta', 'Mock FGF', '127.0.0.2', 7125, 'FGF', 'Shore 40A TPE', '300x300x400mm', NULL),
   ('EvoFab Mock Gamma', 'Mock FDM', '127.0.0.3', 7125, 'FDM', 'PETG Standard', '250x250x300mm', NULL)
+ON CONFLICT (name) DO NOTHING;
+
+UPDATE printers
+SET moonraker_host = COALESCE(moonraker_host, ip),
+    moonraker_port = COALESCE(moonraker_port, port)
+WHERE driver_type = 'moonraker';
+
+INSERT INTO printers (
+  name, model, ip, port, type, material, build_volume, webcam_url,
+  driver_type, prusalink_host, prusalink_key_file
+) VALUES (
+  'Printer 9', 'Prusa MINI+', '<PRUSA_IP>', 80, 'FDM', 'PLA Standard',
+  '180x180x180mm', NULL, 'prusalink', '<PRUSA_IP>', '.secrets/prusalink.key'
+)
 ON CONFLICT (name) DO NOTHING;
 
 -- Initialize printer_status rows for each seeded printer

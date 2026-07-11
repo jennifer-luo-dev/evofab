@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  ConsoleError,
-  sendConsoleCommand,
-} from "@/app/lib/printer-console";
+import { ConsoleError, sendConsoleCommand } from "@/app/lib/printer-console";
 import { createClient } from "@/app/lib/supabase-server";
 
 function errorResponse(
@@ -27,7 +24,7 @@ export async function POST(
   const supabase = await createClient();
   const { data: printer, error } = await supabase
     .from("printers")
-    .select("ip, port")
+    .select("ip, port, driver_type")
     .eq("id", id)
     .single();
 
@@ -40,6 +37,12 @@ export async function POST(
       error?.message,
     );
   }
+  if (printer.driver_type === "prusalink")
+    return errorResponse(
+      403,
+      "PRINTER_READ_ONLY",
+      "PrusaLink printers are read-only.",
+    );
 
   try {
     const consoleResult = await sendConsoleCommand(printer, body?.command);

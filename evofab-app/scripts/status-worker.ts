@@ -16,6 +16,7 @@ const intervalMs = readStatusWorkerIntervalMs();
 const backoffState = createStatusWorkerBackoffState();
 let tick = 0;
 let stopped = false;
+let tickInFlight = false;
 
 function logTick(result: Awaited<ReturnType<typeof writeStatusWorkerTick>>) {
   console.log(
@@ -31,16 +32,34 @@ function logTick(result: Awaited<ReturnType<typeof writeStatusWorkerTick>>) {
 }
 
 async function runTick(): Promise<void> {
-  const result = await writeStatusWorkerTick({
-    supabase,
-    connector,
-    tick,
-    now: new Date(),
-    intervalMs,
-    backoffState,
-  });
-  logTick(result);
-  tick += 1;
+  if (tickInFlight) {
+    console.log(
+      JSON.stringify({
+        event: "status-worker.skip",
+        tick,
+        reason: "in-flight",
+      }),
+    );
+    return;
+  }
+  tickInFlight = true;
+  try {
+    const result = await writeStatusWorkerTick({
+      supabase,
+      connector:
+        process.env.STATUS_WORKER_FORCE_MOONRAKER === "1"
+          ? connector
+          : undefined,
+      tick,
+      now: new Date(),
+      intervalMs,
+      backoffState,
+    });
+    logTick(result);
+    tick += 1;
+  } finally {
+    tickInFlight = false;
+  }
 }
 
 async function loop(): Promise<void> {

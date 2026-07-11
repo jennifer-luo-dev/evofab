@@ -29,7 +29,11 @@ export async function POST(
 
   const [{ data: printer, error: printerError }, { data: status }] =
     await Promise.all([
-      supabase.from("printers").select("id, ip, port").eq("id", id).single(),
+      supabase
+        .from("printers")
+        .select("id, ip, port, driver_type")
+        .eq("id", id)
+        .single(),
       supabase
         .from("printer_status")
         .select("status, hotend_temp")
@@ -46,6 +50,12 @@ export async function POST(
       printerError?.message,
     );
   }
+  if (printer.driver_type === "prusalink")
+    return errorResponse(
+      403,
+      "PRINTER_READ_ONLY",
+      "PrusaLink printers are read-only.",
+    );
 
   try {
     const result = await runPrinterMotion(

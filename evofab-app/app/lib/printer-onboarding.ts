@@ -17,6 +17,11 @@ export interface PrinterInsert {
   model: string;
   ip: string;
   port: number;
+  driver_type: "moonraker";
+  moonraker_host: string;
+  moonraker_port: number;
+  prusalink_host: null;
+  prusalink_key_file: null;
   type: PrinterType;
   material: string | null;
   build_volume: string | null;
@@ -84,11 +89,18 @@ function normalizeType(value: unknown): PrinterType {
 export function normalizePrinterOnboardingInput(
   input: PrinterOnboardingInput,
 ): PrinterInsert {
+  const ip = requiredText(input.ip, "ip");
+  const port = normalizePort(input.port);
   return {
     name: requiredText(input.name, "name"),
     model: requiredText(input.model, "model"),
-    ip: requiredText(input.ip, "ip"),
-    port: normalizePort(input.port),
+    ip,
+    port,
+    driver_type: "moonraker",
+    moonraker_host: ip,
+    moonraker_port: port,
+    prusalink_host: null,
+    prusalink_key_file: null,
     type: normalizeType(input.type),
     material: optionalText(input.material),
     build_volume: optionalText(input.build_volume),

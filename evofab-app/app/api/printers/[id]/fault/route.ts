@@ -28,7 +28,7 @@ export async function POST(
   const supabase = await createClient();
   const { data: printer, error } = await supabase
     .from("printers")
-    .select("id, ip, port")
+    .select("id, ip, port, driver_type")
     .eq("id", id)
     .single();
 
@@ -43,6 +43,18 @@ export async function POST(
         },
       },
       { status: 404 },
+    );
+  }
+  if (printer.driver_type === "prusalink") {
+    return NextResponse.json(
+      {
+        error: {
+          code: "PRINTER_READ_ONLY",
+          message: "PrusaLink printers are read-only.",
+          retryable: false,
+        },
+      },
+      { status: 403 },
     );
   }
 

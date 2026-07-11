@@ -5,10 +5,8 @@ import type {
 } from "@/app/types/printer";
 import { resolveMoonrakerBaseUrl } from "./moonraker-config";
 import { MoonrakerError, normalizeMoonrakerError } from "./moonraker-errors";
-
-export interface PrinterStatusConnector {
-  readStatus(printer: Printer): Promise<PrinterStatus>;
-}
+import type { PrinterDriver } from "./printer-driver";
+export type PrinterStatusConnector = PrinterDriver;
 
 export interface MoonrakerServerInfo {
   moonrakerVersion: string;
@@ -213,7 +211,7 @@ export function normalizeMoonrakerServerInfo(
   };
 }
 
-export class MoonrakerStatusConnector implements PrinterStatusConnector {
+export class MoonrakerStatusConnector implements PrinterDriver {
   private readonly timeoutMs: number;
   private readonly mockBaseUrl?: string;
 
