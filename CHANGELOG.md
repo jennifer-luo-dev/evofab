@@ -1,5 +1,7 @@
 # Changelog
 
+- 07/10: Fleet: Prusa Phases 2-3 pulled forward from v0.8 by William; read-only status only; Bambu unchanged.
+
 ## v0.5.0 - Stabilize
 
 - Landed demo-day dashboard fixes: topbar printer indicators now read active printers plus `printer_status`, lab printer names are preserved, hardware jog reads Moonraker toolhead homing before motion, and the live-demo runbook uses the FGF Printer name.
