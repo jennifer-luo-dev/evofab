@@ -8,6 +8,7 @@ import { useJob } from '@/app/contexts/JobContext'
 const TABS = [
   { label: 'Cloud Slicer', href: '/cloud-slicer' },
   { label: 'Printers',     href: '/printers' },
+  { label: 'Materials',    href: '/materials' },
   { label: 'Setup',        href: '/setup' },
   { label: 'Monitor',      href: '/monitor' },
   { label: 'Results',      href: '/results' },
