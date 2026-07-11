@@ -252,6 +252,13 @@ export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
                       {status?.hotend_temp != null
                         ? `${status.hotend_temp.toFixed(1)}°C`
                         : "—"}
+                      {status?.hotend_temp != null &&
+                        status?.hotend_target != null && (
+                          <span className="text-xs text-[var(--color-muted)]">
+                            {" / "}
+                            {status.hotend_target.toFixed(0)}°C
+                          </span>
+                        )}
                     </p>
                   </div>
                   <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
@@ -262,6 +269,13 @@ export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
                       {status?.bed_temp != null
                         ? `${status.bed_temp.toFixed(1)}°C`
                         : "—"}
+                      {status?.bed_temp != null &&
+                        status?.bed_target != null && (
+                          <span className="text-xs text-[var(--color-muted)]">
+                            {" / "}
+                            {status.bed_target.toFixed(0)}°C
+                          </span>
+                        )}
                     </p>
                   </div>
                 </div>
