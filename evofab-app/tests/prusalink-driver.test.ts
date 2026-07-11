@@ -26,7 +26,10 @@ const printer: Printer = {
 test("normalizes PrusaLink status and job telemetry", () => {
   const row = normalizePrusaLinkStatus(
     printer.id,
-    { printer: { state: "PRINTING" }, temp: { nozzle: 205, bed: 60 } },
+    {
+      printer: { state: "PRINTING" },
+      temp: { nozzle: 205, target_nozzle: 210, bed: 60, target_bed: 65 },
+    },
     { state: "PRINTING", progress: 42, file: { display_name: "cube.gcode" } },
     new Date(0),
   );
@@ -34,6 +37,9 @@ test("normalizes PrusaLink status and job telemetry", () => {
   assert.equal(row.progress, 42);
   assert.equal(row.filename, "cube.gcode");
   assert.equal(row.hotend_temp, 205);
+  assert.equal(row.hotend_target, 210);
+  assert.equal(row.bed_temp, 60);
+  assert.equal(row.bed_target, 65);
 });
 
 test("204 job response is valid idle telemetry", async () => {
