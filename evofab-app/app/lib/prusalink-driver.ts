@@ -179,7 +179,7 @@ export class PrusaLinkDriver implements PrinterDriver {
           method: "PUT",
           body: file,
           headers: {
-            "Content-Type": file.type || "application/octet-stream",
+            "Content-Type": "application/octet-stream",
             "Content-Length": String(file.size),
             "Print-After-Upload": "?0",
             Overwrite: "?0",
@@ -284,9 +284,11 @@ export class PrusaLinkDriver implements PrinterDriver {
           ? error.category
           : "PRUSALINK_NETWORK";
       const unknown = code === "PRUSALINK_TIMEOUT" && !idempotent;
+      const status =
+        error instanceof PrusaLinkClientError ? error.status : null;
       return {
         outcome: unknown ? "outcome_unknown" : "failed",
-        status: null,
+        status,
         retryable:
           idempotent &&
           ["PRUSALINK_NETWORK", "PRUSALINK_TIMEOUT"].includes(code),

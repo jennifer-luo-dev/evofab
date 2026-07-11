@@ -4,7 +4,10 @@ import type { PrinterDriverErrorCategory } from "@/app/lib/printer-driver";
 export const DEFAULT_PRUSALINK_TIMEOUT_MS = 5_000;
 
 export class PrusaLinkClientError extends Error {
-  constructor(readonly category: PrinterDriverErrorCategory) {
+  constructor(
+    readonly category: PrinterDriverErrorCategory,
+    readonly status: number | null = null,
+  ) {
     super(category);
     this.name = "PrusaLinkClientError";
   }
@@ -86,15 +89,15 @@ export async function requestPrusaLink<T>(options: {
       return { status: response.status, latencyMs, data: null };
     }
     if (response.status === 401 || response.status === 403) {
-      throw new PrusaLinkClientError("PRUSALINK_AUTH");
+      throw new PrusaLinkClientError("PRUSALINK_AUTH", response.status);
     }
     if (response.status >= 500) {
-      throw new PrusaLinkClientError("PRUSALINK_SERVER");
+      throw new PrusaLinkClientError("PRUSALINK_SERVER", response.status);
     }
     if (response.status === 404)
-      throw new PrusaLinkClientError("PRUSALINK_NOT_FOUND");
+      throw new PrusaLinkClientError("PRUSALINK_NOT_FOUND", response.status);
     if (response.status === 409)
-      throw new PrusaLinkClientError("PRUSALINK_CONFLICT");
+      throw new PrusaLinkClientError("PRUSALINK_CONFLICT", response.status);
     if (!expected.includes(response.status))
       throw new PrusaLinkClientError("PRUSALINK_NETWORK");
     try {

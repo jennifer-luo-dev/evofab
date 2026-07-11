@@ -117,6 +117,10 @@ test("discovers storage, uploads without printing, verifies, and explicitly star
     "?0",
   );
   assert.equal(
+    (requests[1].init?.headers as Record<string, string>)["Content-Type"],
+    "application/octet-stream",
+  );
+  assert.equal(
     (requests[1].init?.headers as Record<string, string>).Overwrite,
     "?0",
   );
@@ -131,6 +135,7 @@ test("normalizes conflict, stale job, and non-idempotent timeout outcomes", asyn
   const file = new File(["x"], "cube.gcode");
   const conflictResult = await conflict.uploadFile(printer, "usb", file);
   assert.equal(conflictResult.code, "PRUSALINK_CONFLICT");
+  assert.equal(conflictResult.status, 409);
   assert.equal(conflictResult.outcome, "failed");
 
   const stale = new PrusaLinkDriver({
