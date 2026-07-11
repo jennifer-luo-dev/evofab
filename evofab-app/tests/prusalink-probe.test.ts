@@ -13,7 +13,7 @@ test("PrusaLink probe: parses args correctly with default fallbacks", () => {
 test("PrusaLink probe: parses custom flags", () => {
   const parsed = parseArgs([
     "--host",
-    "130.64.84.129",
+    "192.168.1.100",
     "--key-file",
     ".secrets/test.key",
     "--samples",
@@ -21,14 +21,14 @@ test("PrusaLink probe: parses custom flags", () => {
     "--interval",
     "3.5",
   ]);
-  assert.equal(parsed.host, "130.64.84.129");
+  assert.equal(parsed.host, "192.168.1.100");
   assert.equal(parsed.keyFile, ".secrets/test.key");
   assert.equal(parsed.samples, 5);
   assert.equal(parsed.interval, 3.5);
 });
 
 test("PrusaLink probe: sanitizer removes sensitive data", () => {
-  const ipLog = "Connecting to printer at 130.64.84.129 ...";
+  const ipLog = "Connecting to printer at 192.168.1.100 ...";
   assert.equal(sanitizeOutput(ipLog), "Connecting to printer at <IP_ADDRESS> ...");
 
   const hostLog = "Tufts domain resolves to buddy-mini.tufts.edu host.";
