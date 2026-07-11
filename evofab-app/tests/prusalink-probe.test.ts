@@ -29,24 +29,37 @@ test("PrusaLink probe: parses custom flags", () => {
 
 test("PrusaLink probe: sanitizer removes sensitive data", () => {
   const ipLog = "Connecting to printer at 192.168.1.100 ...";
-  assert.equal(sanitizeOutput(ipLog), "Connecting to printer at <IP_ADDRESS> ...");
+  assert.equal(
+    sanitizeOutput(ipLog),
+    "Connecting to printer at <IP_ADDRESS> ...",
+  );
 
   const hostLog = "Tufts domain resolves to buddy-mini.tufts.edu host.";
-  assert.equal(sanitizeOutput(hostLog), "Tufts domain resolves to <TUFTS_HOST> host.");
+  assert.equal(
+    sanitizeOutput(hostLog),
+    "Tufts domain resolves to <TUFTS_HOST> host.",
+  );
 
   const headerLog = "Sending headers: { X-Api-Key: my-api-key-value-123 }";
-  assert.equal(sanitizeOutput(headerLog), "Sending headers: { X-Api-Key: <API_KEY> }");
+  assert.equal(
+    sanitizeOutput(headerLog),
+    "Sending headers: { X-Api-Key: <API_KEY> }",
+  );
 
   const authLog = "Authorization: Bearer secret-auth-token-abc";
   assert.equal(sanitizeOutput(authLog), "Authorization: Bearer <TOKEN>");
 
   const serialLog = "Buddy Board Serial: CZPX1234567890123456";
-  assert.equal(sanitizeOutput(serialLog), "Buddy Board Serial: <SERIAL_NUMBER>");
+  assert.equal(
+    sanitizeOutput(serialLog),
+    "Buddy Board Serial: <SERIAL_NUMBER>",
+  );
 
   const unixPathLog = "Reading file /var/lib/prusalink/gcode/cube.gcode now";
   assert.equal(sanitizeOutput(unixPathLog), "Reading file <FILE_PATH> now");
 
-  const winPathLog = "Reading file C:\\Users\\William\\Documents\\test.gcode now";
+  const winPathLog =
+    "Reading file C:\\Users\\William\\Documents\\test.gcode now";
   assert.equal(sanitizeOutput(winPathLog), "Reading file <FILE_PATH> now");
 });
 
@@ -55,6 +68,12 @@ test("PrusaLink probe: sanitizer strips custom sentinel secret", () => {
   const logLine = `Failed connection with API Key: ${sentinel}`;
   const sanitized = sanitizeOutput(logLine, [sentinel]);
 
-  assert.ok(!sanitized.includes(sentinel), "Sentinel secret must not survive in output");
-  assert.ok(sanitized.includes("<SECRET>"), "Sentinel secret must be replaced with placeholder");
+  assert.ok(
+    !sanitized.includes(sentinel),
+    "Sentinel secret must not survive in output",
+  );
+  assert.ok(
+    sanitized.includes("<SECRET>"),
+    "Sentinel secret must be replaced with placeholder",
+  );
 });

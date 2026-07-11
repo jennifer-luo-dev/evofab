@@ -48,7 +48,11 @@ export async function POST(req: NextRequest) {
 
   const [{ data: printer, error: printerError }, { data: printerStatus }] =
     await Promise.all([
-      supabase.from("printers").select("ip, port, type").eq("id", printer_id).single(),
+      supabase
+        .from("printers")
+        .select("ip, port, type, driver_type")
+        .eq("id", printer_id)
+        .single(),
       supabase
         .from("printer_status")
         .select("status")
@@ -58,6 +62,12 @@ export async function POST(req: NextRequest) {
 
   if (printerError || !printer) {
     return NextResponse.json({ error: "Printer not found" }, { status: 404 });
+  }
+  if (printer.driver_type === "prusalink") {
+    return NextResponse.json(
+      { error: "PrusaLink printers are read-only." },
+      { status: 403 },
+    );
   }
 
   let settings: PrintSettings = mergePrintSettings(

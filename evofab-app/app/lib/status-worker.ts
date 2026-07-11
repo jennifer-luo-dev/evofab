@@ -1,10 +1,9 @@
 // File purpose: Polls real/mock Moonraker status into Supabase printer_status.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import {
-  MoonrakerStatusConnector,
-  type PrinterStatusConnector,
-} from "@/app/lib/moonraker-client";
+import { MoonrakerStatusConnector } from "@/app/lib/moonraker-client";
+import type { PrinterDriver } from "@/app/lib/printer-driver";
+import { PrusaLinkDriver } from "@/app/lib/prusalink-driver";
 import { MoonrakerError } from "@/app/lib/moonraker-errors";
 import type { Printer, PrinterStatus } from "@/app/types/printer";
 
@@ -59,7 +58,7 @@ export interface StatusWorkerTickResult {
 
 export interface StatusWorkerOptions {
   supabase: StatusWorkerSupabaseClient;
-  connector?: PrinterStatusConnector;
+  connector?: PrinterDriver;
   tick?: number;
   now?: Date;
   intervalMs?: number;
@@ -76,8 +75,14 @@ export function readStatusWorkerIntervalMs(): number {
   return Math.max(MIN_STATUS_POLL_INTERVAL_MS, Math.floor(value));
 }
 
-export function createStatusWorkerConnector(): PrinterStatusConnector {
+export function createStatusWorkerConnector(): PrinterDriver {
   return new MoonrakerStatusConnector();
+}
+
+export function createPrinterDriver(printer: Printer): PrinterDriver {
+  return printer.driver_type === "prusalink"
+    ? new PrusaLinkDriver()
+    : createStatusWorkerConnector();
 }
 
 export function createStatusWorkerBackoffState(): Map<string, number> {
@@ -91,7 +96,6 @@ export async function writeStatusWorkerTick(
   const now = options.now ?? new Date();
   const intervalMs = options.intervalMs ?? DEFAULT_STATUS_POLL_INTERVAL_MS;
   const backoffState = options.backoffState ?? createStatusWorkerBackoffState();
-  const connector = options.connector ?? createStatusWorkerConnector();
   const printerReader = options.supabase.from("printers") as PrinterReader;
   const { data: printers, error: printersError } = await printerReader
     .select("*")
@@ -121,6 +125,7 @@ export async function writeStatusWorkerTick(
     }
 
     try {
+      const connector = options.connector ?? createPrinterDriver(printer);
       const status = await connector.readStatus(printer);
       backoffState.delete(printer.id);
       statuses.push(status);

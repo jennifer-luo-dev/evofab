@@ -29,7 +29,7 @@ async function loadPrinterStatusAndProfiles(id: string) {
   ] = await Promise.all([
     supabase
       .from("printers")
-      .select("id, ip, port, type")
+      .select("id, ip, port, type, driver_type")
       .eq("id", id)
       .single(),
     supabase
@@ -46,6 +46,13 @@ async function loadPrinterStatusAndProfiles(id: string) {
       message: "Printer not found.",
       status: 404,
       details: printerError?.message,
+    });
+  }
+  if (printer.driver_type === "prusalink") {
+    throw new PreheatError({
+      code: "PRINTER_READ_ONLY",
+      message: "PrusaLink printers are read-only.",
+      status: 403,
     });
   }
 

@@ -23,7 +23,7 @@ export async function GET(
   const supabase = await createClient();
   const { data: printer, error } = await supabase
     .from("printers")
-    .select("id, ip, port")
+    .select("id, ip, port, driver_type")
     .eq("id", id)
     .single();
 
@@ -36,6 +36,12 @@ export async function GET(
       error?.message,
     );
   }
+  if (printer.driver_type === "prusalink")
+    return errorResponse(
+      403,
+      "PRINTER_READ_ONLY",
+      "PrusaLink printers are read-only.",
+    );
 
   try {
     const mesh = await readBedMesh(printer);

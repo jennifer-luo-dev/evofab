@@ -7,6 +7,25 @@ import type {
 
 export const STALE_STATUS_MS = 30_000;
 
+export function toClientSafePrinter(
+  printer: Printer,
+  printerStatus: PrinterStatus,
+): PrinterWithStatus {
+  return {
+    id: printer.id,
+    name: printer.name,
+    model: printer.model,
+    type: printer.type,
+    material: printer.material,
+    build_volume: printer.build_volume,
+    webcam_url: printer.webcam_url,
+    driver_type: printer.driver_type ?? "moonraker",
+    is_active: printer.is_active,
+    created_at: printer.created_at,
+    printer_status: printerStatus,
+  };
+}
+
 export function createOfflinePrinterStatus(printerId: string): PrinterStatus {
   return {
     printer_id: printerId,
@@ -69,7 +88,7 @@ export async function getActivePrintersWithStatus(): Promise<
       created_at: "2026-07-08T00:00:00.000Z",
     };
     return [
-      { ...printer, printer_status: createOfflinePrinterStatus(printer.id) },
+      toClientSafePrinter(printer, createOfflinePrinterStatus(printer.id)),
     ];
   }
 
@@ -98,8 +117,10 @@ export async function getActivePrintersWithStatus(): Promise<
     ]),
   );
 
-  return ((printers as Printer[] | null) ?? []).map((printer) => ({
-    ...printer,
-    printer_status: statusForPrinter(printer.id, statusMap.get(printer.id)),
-  }));
+  return ((printers as Printer[] | null) ?? []).map((printer) =>
+    toClientSafePrinter(
+      printer,
+      statusForPrinter(printer.id, statusMap.get(printer.id)),
+    ),
+  );
 }

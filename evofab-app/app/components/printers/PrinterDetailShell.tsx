@@ -42,6 +42,7 @@ export function PrinterDetailShell({
   overlay = false,
 }: PrinterDetailShellProps) {
   const status = printer.printer_status;
+  const readOnly = printer.driver_type === "prusalink";
   const searchParams = useSearchParams();
   const preparedJobId = searchParams.get("preparedJob");
 
@@ -73,7 +74,7 @@ export function PrinterDetailShell({
             <StatusDot status={status?.status ?? "offline"} />
           </div>
           <p className="mt-1 font-mono text-xs text-muted">
-            {printer.model} · {printer.ip}:{printer.port}
+            {printer.model} · {readOnly ? "PrusaLink · read-only" : "Moonraker"}
           </p>
         </div>
         <button
@@ -147,35 +148,42 @@ export function PrinterDetailShell({
               )}
             </section>
 
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="md:col-span-2">
-                <PrinterExtruderPanel printer={printer} />
+            {readOnly ? (
+              <section className="rounded-lg border border-border bg-surface p-4 text-sm text-muted">
+                Status monitoring only. Printer controls and job dispatch are
+                disabled.
+              </section>
+            ) : (
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="md:col-span-2">
+                  <PrinterExtruderPanel printer={printer} />
+                </div>
+                <div className="md:col-span-2">
+                  <PrinterLevelingPanel printer={printer} />
+                </div>
+                <div className="md:col-span-2">
+                  <PrinterHistoryPanel jobs={historyJobs} />
+                </div>
+                <div className="md:col-span-2">
+                  <PrinterQueuePanel jobs={historyJobs} />
+                </div>
+                <div className="md:col-span-2">
+                  <PrinterConsolePanel printer={printer} />
+                </div>
+                <PrinterPreheatPanel
+                  printer={printer}
+                  materialProfiles={materialProfiles}
+                />
+                <PrinterMotionPanel printer={printer} />
+                <PrinterMacroPanel printer={printer} />
               </div>
-              <div className="md:col-span-2">
-                <PrinterLevelingPanel printer={printer} />
-              </div>
-              <div className="md:col-span-2">
-                <PrinterHistoryPanel jobs={historyJobs} />
-              </div>
-              <div className="md:col-span-2">
-                <PrinterQueuePanel jobs={historyJobs} />
-              </div>
-              <div className="md:col-span-2">
-                <PrinterConsolePanel printer={printer} />
-              </div>
-              <PrinterPreheatPanel
-                printer={printer}
-                materialProfiles={materialProfiles}
-              />
-              <PrinterMotionPanel printer={printer} />
-              <PrinterMacroPanel printer={printer} />
-            </div>
+            )}
           </div>
 
           <div className="grid content-start gap-4">
             <PrinterCameraPanel
               webcamUrl={printer.webcam_url}
-              printerIp={printer.ip}
+              printerIp={undefined}
             />
             <section className="rounded-lg border border-border bg-surface p-4">
               <h2 className="text-xs font-semibold uppercase tracking-widest text-muted">
