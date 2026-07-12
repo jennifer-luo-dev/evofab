@@ -48,16 +48,18 @@ Five SDS workbook rows merged onto existing FGF CSV rows by exact provider/name 
 
 ### Status distribution (37 rows)
 
-- **verified**: 17 rows (12 FGF pellets, 3 profile seeds, 2 Kraiburg SDS-merged pellets)
+- **verified**: 16 rows
 - **excluded**: 7 rows (4 RECREUS TPU, 2 KRAIBURG ZGO, 1 Yangzhou)
 - **literature**: 4 rows (3 SEBS literature, 1 KRAIBURG EC)
-- **supplier**: 9 rows (6 SDS-only filament/resin, 2 Kraiburg SDS-only pellets, 1 Kuraray)
+- **supplier**: 10 rows
 
 ### Technology/form distribution (37 rows)
 
-- FGF/pellet: 25 rows
-- FDM/filament: 8 rows (6 SDS-sourced + 2 profile seeds)
+- FGF/pellet: 28 rows
+- FDM/filament: 7 rows
 - SLA/resin: 2 rows
+
+These corrected distributions were verified read-only against the live 37-row catalog on 2026-07-12. They do not change the balanced import counts above.
 
 ### Source files
 

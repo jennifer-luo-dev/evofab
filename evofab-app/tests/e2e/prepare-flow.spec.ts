@@ -31,6 +31,144 @@ test.beforeAll(async () => {
             fan_speed: 40,
             notes: "Mock profile",
             created_at: "2026-07-08T00:00:00.000Z",
+            material_id: "material-pla-fgf",
+          },
+          {
+            id: "cool-flex",
+            name: "Flexible Polymer",
+            printer_type: "BOTH",
+            nozzle_temp: 220,
+            bed_temp: 50,
+            speed: 25,
+            flow_rate: 0.95,
+            fan_speed: 35,
+            notes: "Temporary placeholder",
+            created_at: "2026-07-08T00:00:00.000Z",
+            material_id: "material-cool-flex",
+          },
+        ]),
+      );
+      return;
+    }
+
+    if (url.pathname === "/rest/v1/materials") {
+      response.end(
+        JSON.stringify([
+          {
+            id: "material-pla-fgf",
+            slug: "pla-pellets",
+            name: "PLA Pellets",
+            technology: "FGF",
+            form: "pellet",
+            provider: "EvoFab",
+            base_chemistry: "PLA",
+            nominal_hardness: null,
+            source_status: "verified",
+            sds_url: "https://example.invalid/pla-sds.pdf",
+            science: {},
+            is_active: true,
+            created_at: "2026-07-08T00:00:00Z",
+            updated_at: "2026-07-08T00:00:00Z",
+          },
+          {
+            id: "material-cool-flex",
+            slug: "cool-flex",
+            name: "Cool Flex",
+            technology: "FGF",
+            form: "pellet",
+            provider: "EvoFab",
+            base_chemistry: "TPE",
+            nominal_hardness: null,
+            source_status: "verified",
+            sds_url: null,
+            science: {},
+            is_active: true,
+            created_at: "2026-07-08T00:00:00Z",
+            updated_at: "2026-07-08T00:00:00Z",
+          },
+          {
+            id: "material-unbound",
+            slug: "unbound",
+            name: "Unbound Pellet",
+            technology: "FGF",
+            form: "pellet",
+            provider: "EvoFab",
+            base_chemistry: "TPU",
+            nominal_hardness: "70A",
+            source_status: "verified",
+            sds_url: null,
+            science: {},
+            is_active: true,
+            created_at: "2026-07-08T00:00:00Z",
+            updated_at: "2026-07-08T00:00:00Z",
+          },
+          {
+            id: "material-elastic-resin",
+            slug: "elastic-resin",
+            name: "Elastic 50A V2",
+            technology: "SLA",
+            form: "resin",
+            provider: "Formlabs",
+            base_chemistry: null,
+            nominal_hardness: "50A",
+            source_status: "verified",
+            sds_url: "https://example.invalid/elastic-sds.pdf",
+            science: {},
+            is_active: true,
+            created_at: "2026-07-08T00:00:00Z",
+            updated_at: "2026-07-08T00:00:00Z",
+          },
+        ]),
+      );
+      return;
+    }
+
+    if (url.pathname === "/rest/v1/material_stock") {
+      response.end(
+        JSON.stringify([
+          {
+            id: "stock-pla",
+            material_id: "material-pla-fgf",
+            lot_label: null,
+            quantity: 2,
+            unit: "kg",
+            location: null,
+            received_at: "2026-07-08T00:00:00Z",
+            received_by: null,
+            status: "in_stock",
+          },
+          {
+            id: "stock-flex",
+            material_id: "material-cool-flex",
+            lot_label: null,
+            quantity: 1,
+            unit: "kg",
+            location: null,
+            received_at: "2026-07-08T00:00:00Z",
+            received_by: null,
+            status: "in_stock",
+          },
+          {
+            id: "stock-unbound",
+            material_id: "material-unbound",
+            lot_label: null,
+            quantity: 0.5,
+            unit: "kg",
+            location: null,
+            received_at: "2026-07-08T00:00:00Z",
+            received_by: null,
+            status: "in_stock",
+          },
+          {
+            id: "stock-resin",
+            material_id: "material-elastic-resin",
+            lot_label: null,
+            quantity: 1,
+            unit: "l",
+            location: null,
+            received_at: "2026-07-08T00:00:00Z",
+            received_by: null,
+            status: "in_stock",
           },
         ]),
       );
@@ -114,7 +252,31 @@ endsolid smoke
   ).toBeVisible();
   await page.getByRole("button", { name: "Next", exact: true }).click();
 
-  await page.locator("select").selectOption("pla-fgf");
+  await page.getByLabel("Print target").selectOption("preform:sla");
+  await expect(page.getByText("Elastic 50A V2")).toBeVisible();
+  await page.getByText("Elastic 50A V2").click();
+  await expect(
+    page.getByText("Prepare in PreForm", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/will not slice or create a printer job/),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Next", exact: true }),
+  ).toHaveCount(0);
+
+  await page.getByLabel("Print target").selectOption("printer:printer-fgf");
+  await expect(page.getByText("Elastic 50A V2")).toHaveCount(0);
+  await expect(page.getByText("Temporary placeholder profile")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Next", exact: true }),
+  ).toBeDisabled();
+  await page.getByText("Unbound Pellet").click();
+  await expect(page.getByText("Profile needed before slicing")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Next", exact: true }),
+  ).toBeDisabled();
+  await page.getByText("PLA Pellets").click();
   await page.getByRole("button", { name: "Next", exact: true }).click();
 
   await page.getByLabel("Add supports").check();

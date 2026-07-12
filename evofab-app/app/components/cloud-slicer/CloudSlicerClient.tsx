@@ -10,10 +10,11 @@ import {
   preparedPrintStorageKey,
   type PreparedPrintDraft,
 } from "@/app/lib/prepared-print";
+import { settingsFromMaterialProfile } from "@/app/lib/material-profiles";
 import {
-  filterMaterialProfilesForPrinterType,
-  settingsFromMaterialProfile,
-} from "@/app/lib/material-profiles";
+  filterMaterialPickerOptionsForTechnology,
+  type MaterialPickerOption,
+} from "@/app/lib/material-picker";
 import {
   buildVolumeBlock,
   DEFAULT_FGF_BUILD_VOLUME,
@@ -81,6 +82,8 @@ interface InspectResult {
 interface CloudSlicerClientProps {
   materialProfiles: MaterialProfile[];
   printers: Printer[];
+  materialOptions: MaterialPickerOption[];
+  materialOptionsError: string | null;
 }
 
 function formatBytes(bytes: number): string {
@@ -106,10 +109,14 @@ async function readJsonOrThrow<T>(response: Response): Promise<T> {
 export function CloudSlicerClient({
   materialProfiles,
   printers,
+  materialOptions,
+  materialOptionsError,
 }: CloudSlicerClientProps) {
   const router = useRouter();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState("");
+  const [selectedTargetId, setSelectedTargetId] = useState("");
+  const [selectedMaterialId, setSelectedMaterialId] = useState("");
   const { activeStep, highestStepIndex, goToStep, resetPrepareSteps } =
     usePrepareStepper();
   const [status, setStatus] = useState<SliceStatus>("idle");
@@ -125,21 +132,45 @@ export function CloudSlicerClient({
   );
   const [inspectPending, setInspectPending] = useState(false);
 
-  const filteredProfiles = useMemo(
-    () => filterMaterialProfilesForPrinterType(materialProfiles, undefined),
-    [materialProfiles],
-  );
-  const effectiveProfileId = filteredProfiles.some(
+  const effectiveProfileId = materialProfiles.some(
     (profile) => profile.id === selectedProfileId,
   )
     ? selectedProfileId
     : "";
   const selectedProfile = useMemo(
     () =>
-      filteredProfiles.find((profile) => profile.id === effectiveProfileId) ??
+      materialProfiles.find((profile) => profile.id === effectiveProfileId) ??
       null,
-    [effectiveProfileId, filteredProfiles],
+    [effectiveProfileId, materialProfiles],
   );
+  const targets = useMemo(
+    () => [
+      ...printers.map((printer) => ({
+        id: `printer:${printer.id}`,
+        label: printer.name,
+        technology: printer.type,
+        kind: "printer" as const,
+        printer,
+      })),
+      {
+        id: "preform:sla",
+        label: "SLA · Prepare in PreForm",
+        technology: "SLA" as const,
+        kind: "preform" as const,
+        printer: null,
+      },
+    ],
+    [printers],
+  );
+  const selectedTarget =
+    targets.find((target) => target.id === selectedTargetId) ?? null;
+  const visibleMaterials = filterMaterialPickerOptionsForTechnology(
+    materialOptions,
+    selectedTarget?.technology,
+  );
+  const selectedMaterial =
+    visibleMaterials.find((option) => option.id === selectedMaterialId) ?? null;
+  const isPreForm = selectedTarget?.kind === "preform";
   const canSlice =
     selectedFile !== null &&
     selectedProfile !== null &&
@@ -153,10 +184,11 @@ export function CloudSlicerClient({
   );
   const defaultPrinter = useMemo(
     () =>
+      selectedTarget?.printer ??
       printers.find((printer) => printer.type === "FGF") ??
       printers.find((printer) => printer.build_volume) ??
       null,
-    [printers],
+    [printers, selectedTarget?.printer],
   );
   const buildVolume = useMemo(
     () =>
@@ -192,7 +224,10 @@ export function CloudSlicerClient({
         selectedFile !== null && orientationState !== null && !inspectPending
       );
     }
-    if (activeStep === "material") return selectedProfile !== null;
+    if (activeStep === "material")
+      return (
+        !isPreForm && selectedMaterial !== null && selectedProfile !== null
+      );
     if (activeStep === "supports") {
       return (
         selectedFile !== null &&
@@ -207,7 +242,9 @@ export function CloudSlicerClient({
     inspectPending,
     orientationState,
     selectedFile,
+    selectedMaterial,
     selectedProfile,
+    isPreForm,
   ]);
   const sliceDisabledReason = useMemo(() => {
     if (!selectedFile) return "Upload an STL before slicing.";
@@ -297,6 +334,9 @@ export function CloudSlicerClient({
     setRotation(null);
     setOrientationState(null);
     setInspectResult(null);
+    setSelectedTargetId("");
+    setSelectedMaterialId("");
+    setSelectedProfileId("");
     resetPrepareSteps();
 
     if (!file) {
@@ -689,87 +729,163 @@ export function CloudSlicerClient({
             <div className="mt-5 grid gap-4">
               <label className="flex flex-col gap-2">
                 <span className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                  Material
+                  Print target
                 </span>
                 <select
-                  value={effectiveProfileId}
-                  onChange={(event) => setSelectedProfileId(event.target.value)}
+                  aria-label="Print target"
+                  value={selectedTargetId}
+                  onChange={(event) => {
+                    setSelectedTargetId(event.target.value);
+                    setSelectedMaterialId("");
+                    setSelectedProfileId("");
+                  }}
                   className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-teal)]"
                 >
-                  <option value="">Select a material profile</option>
-                  {filteredProfiles.map((profile) => (
-                    <option key={profile.id} value={profile.id}>
-                      {profile.name}
+                  <option value="">Select a printer or PreForm</option>
+                  {targets.map((target) => (
+                    <option key={target.id} value={target.id}>
+                      {target.label} · {target.technology}
                     </option>
                   ))}
                 </select>
               </label>
-              {selectedProfile && (
-                <div className="grid gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 sm:grid-cols-3">
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                      Printer
-                    </p>
-                    <p className="mt-1 font-mono text-sm text-[var(--color-text)]">
-                      {selectedProfile.printer_type}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                      Nozzle / Bed
-                    </p>
-                    <p className="mt-1 font-mono text-sm text-[var(--color-text)]">
-                      {selectedProfile.nozzle_temp}°C /{" "}
-                      {selectedProfile.bed_temp}°C
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                      Speed
-                    </p>
-                    <p className="mt-1 font-mono text-sm text-[var(--color-text)]">
-                      {selectedProfile.speed} mm/s
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                      Flow
-                    </p>
-                    <p className="mt-1 font-mono text-sm text-[var(--color-text)]">
-                      {selectedProfile.flow_rate}%
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                      Fan
-                    </p>
-                    <p className="mt-1 font-mono text-sm text-[var(--color-text)]">
-                      {selectedProfile.fan_speed}%
-                    </p>
-                  </div>
-                  <div className="sm:col-span-3">
-                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-                      Notes
-                    </p>
-                    <p className="mt-1 text-sm text-[var(--color-text)]">
-                      {selectedProfile.notes || "No notes recorded."}
-                    </p>
-                  </div>
+              {materialOptionsError && (
+                <div
+                  role="alert"
+                  className="rounded-lg border border-[var(--color-red)]/30 bg-[var(--color-red)]/10 p-4 text-sm text-[var(--color-red)]"
+                >
+                  Unable to load material availability: {materialOptionsError}
                 </div>
               )}
-              <button
-                type="button"
-                disabled={!canGoNext}
-                onClick={goNext}
-                className={cn(
-                  "w-fit rounded-lg border px-4 py-2 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40",
-                  canGoNext
-                    ? NEXT_READY_CLASS
-                    : "border-[var(--color-border-2)] text-[var(--color-text)]",
-                )}
-              >
-                Next
-              </button>
+              {selectedTarget && visibleMaterials.length === 0 && (
+                <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-5 text-sm text-[var(--color-muted)]">
+                  No verified materials with positive, non-depleted stock are
+                  available for {selectedTarget.technology}.
+                </div>
+              )}
+              {visibleMaterials.length > 0 && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  {visibleMaterials.map((material) => {
+                    const selected = material.id === selectedMaterialId;
+                    return (
+                      <div
+                        key={material.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => {
+                          setSelectedMaterialId(material.id);
+                          setSelectedProfileId(material.profile?.id ?? "");
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            setSelectedMaterialId(material.id);
+                            setSelectedProfileId(material.profile?.id ?? "");
+                          }
+                        }}
+                        className={cn(
+                          "rounded-lg border p-4 transition-colors",
+                          selected
+                            ? "border-[var(--color-teal)] bg-[var(--color-teal)]/10"
+                            : "border-[var(--color-border)] bg-[var(--color-surface-2)] hover:border-[var(--color-border-2)]",
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <h3 className="text-sm font-semibold text-[var(--color-text)]">
+                              {material.name}
+                            </h3>
+                            <p className="mt-1 text-xs text-[var(--color-muted)]">
+                              {material.provider ?? "Provider not recorded"}
+                            </p>
+                          </div>
+                          <span className="rounded bg-white/5 px-2 py-1 font-mono text-[10px]">
+                            {material.form}
+                          </span>
+                        </div>
+                        <p className="mt-3 text-xs text-[var(--color-muted)]">
+                          In stock:{" "}
+                          {material.stock
+                            .map((item) => `${item.quantity} ${item.unit}`)
+                            .join(" · ")}
+                        </p>
+                        {(material.baseChemistry ||
+                          material.nominalHardness) && (
+                          <p className="mt-1 text-xs text-[var(--color-muted)]">
+                            {[material.baseChemistry, material.nominalHardness]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </p>
+                        )}
+                        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                          {material.sdsUrl && (
+                            <a
+                              href={material.sdsUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(event) => event.stopPropagation()}
+                              className="text-[var(--color-teal)] underline"
+                            >
+                              SDS
+                            </a>
+                          )}
+                          {material.placeholderProfile && (
+                            <span className="rounded bg-[var(--color-amber)]/15 px-2 py-1 text-[var(--color-amber)]">
+                              Temporary placeholder profile
+                            </span>
+                          )}
+                          {!isPreForm && !material.profile && (
+                            <span className="text-[var(--color-amber)]">
+                              Profile needed before slicing
+                            </span>
+                          )}
+                          {material.profile && !material.placeholderProfile && (
+                            <span className="text-[var(--color-green)]">
+                              Profile: {material.profile.name}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {isPreForm && selectedMaterial && (
+                <div className="rounded-lg border border-[var(--color-teal)]/30 bg-[var(--color-teal)]/10 p-4">
+                  <p className="font-semibold text-[var(--color-text)]">
+                    Prepare in PreForm
+                  </p>
+                  <p className="mt-1 text-sm text-[var(--color-muted)]">
+                    Use Formlabs PreForm for setup and dispatch. EvoFab will not
+                    slice or create a printer job for this resin.
+                  </p>
+                  {selectedMaterial.sdsUrl && (
+                    <a
+                      href={selectedMaterial.sdsUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-3 inline-block text-sm text-[var(--color-teal)] underline"
+                    >
+                      Open safety data sheet
+                    </a>
+                  )}
+                </div>
+              )}
+              {!isPreForm && (
+                <button
+                  type="button"
+                  disabled={!canGoNext}
+                  onClick={goNext}
+                  className={cn(
+                    "w-fit rounded-lg border px-4 py-2 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40",
+                    canGoNext
+                      ? NEXT_READY_CLASS
+                      : "border-[var(--color-border-2)] text-[var(--color-text)]",
+                  )}
+                >
+                  Next
+                </button>
+              )}
             </div>
           )}
 
