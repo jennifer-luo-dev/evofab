@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/app/lib/supabase-server";
+import { isMaterialsAdminEnabled } from "@/app/lib/materials-admin";
 import { getMaterialsSnapshot } from "@/app/lib/materials-source";
 
 const text = (value: unknown) =>
@@ -22,6 +23,8 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  if (!isMaterialsAdminEnabled())
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
   const body = await request.json();
   const action = text(body.action);
   const supabase = await createClient();

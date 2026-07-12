@@ -1,4 +1,6 @@
+import { notFound } from "next/navigation";
 import { MaterialsManager } from "@/app/components/materials/MaterialsManager";
+import { isMaterialsAdminEnabled } from "@/app/lib/materials-admin";
 import { getMaterialsSnapshot } from "@/app/lib/materials-source";
 import type { MaterialsSnapshot } from "@/app/types/material";
 
@@ -9,6 +11,7 @@ const empty: MaterialsSnapshot = {
   profiles: [],
 };
 export default async function MaterialsPage() {
+  if (!isMaterialsAdminEnabled()) notFound();
   let snapshot = empty;
   let error: string | undefined;
   try {

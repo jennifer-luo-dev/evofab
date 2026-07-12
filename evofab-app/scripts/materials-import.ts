@@ -66,9 +66,21 @@ export async function readFgfCsv(file: string): Promise<CatalogRow[]> {
     );
     const name = cell(row.name || row.material || row["material-name-id"]);
     if (!name) return [];
-    const status = slugify(
-      cell(row["source-status"] || row.status || "supplier"),
+    const rawSource = cell(
+      row["source-status"] || row["material-source"] || row.status || "",
     );
+    const statusKeywords: CatalogRow["source_status"][] = [
+      "verified",
+      "excluded",
+      "literature",
+      "supplier",
+    ];
+    // Extract known status keyword from compound values like
+    // "Lab inventory - verified" or "Literature - demonstrated".
+    const extractedStatus =
+      statusKeywords.find((keyword) =>
+        rawSource.toLowerCase().includes(keyword),
+      ) ?? "supplier";
     const provider = cell(row.provider || row.supplier);
     return [
       {
@@ -80,14 +92,7 @@ export async function readFgfCsv(file: string): Promise<CatalogRow[]> {
         base_chemistry:
           cell(row["base-chemistry"] || row.chemistry || row.polymer) || null,
         nominal_hardness: cell(row["nominal-hardness"] || row.hardness) || null,
-        source_status: ([
-          "verified",
-          "excluded",
-          "literature",
-          "supplier",
-        ].includes(status)
-          ? status
-          : "supplier") as CatalogRow["source_status"],
+        source_status: extractedStatus,
         sds_url: cell(row["sds-url"] || row["sds-links"]) || null,
         science: Object.fromEntries(
           Object.entries(row).filter(
@@ -100,12 +105,13 @@ export async function readFgfCsv(file: string): Promise<CatalogRow[]> {
                 "supplier",
                 "status",
                 "source-status",
+                "material-source",
                 "sds-url",
                 "sds-links",
               ].includes(key),
           ),
         ),
-        is_active: status !== "excluded",
+        is_active: extractedStatus !== "excluded",
       },
     ];
   });
