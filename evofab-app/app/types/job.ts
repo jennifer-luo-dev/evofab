@@ -76,6 +76,7 @@ export interface MaterialProfile {
   fan_speed: number;
   notes: string | null;
   created_at: string;
+  material_id?: string | null;
 }
 
 export interface Experiment {
