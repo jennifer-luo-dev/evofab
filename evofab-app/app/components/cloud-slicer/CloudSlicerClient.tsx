@@ -182,23 +182,16 @@ export function CloudSlicerClient({
       job?.result?.layer_count ?? (gcode ? layerTotalFromGcode(gcode) : null),
     [gcode, job?.result?.layer_count],
   );
-  const defaultPrinter = useMemo(
-    () =>
-      selectedTarget?.printer ??
-      printers.find((printer) => printer.type === "FGF") ??
-      printers.find((printer) => printer.build_volume) ??
-      null,
-    [printers, selectedTarget?.printer],
-  );
-  const buildVolume = useMemo(
-    () =>
-      parseBuildVolume(defaultPrinter?.build_volume) ??
-      DEFAULT_FGF_BUILD_VOLUME,
-    [defaultPrinter?.build_volume],
-  );
-  const buildBlock = useMemo(
-    () => buildVolumeBlock(inspectResult?.bounding_box_mm ?? null, buildVolume),
-    [buildVolume, inspectResult?.bounding_box_mm],
+  const defaultPrinter =
+    selectedTarget?.printer ??
+    printers.find((printer) => printer.type === "FGF") ??
+    printers.find((printer) => printer.build_volume) ??
+    null;
+  const buildVolume =
+    parseBuildVolume(defaultPrinter?.build_volume) ?? DEFAULT_FGF_BUILD_VOLUME;
+  const buildBlock = buildVolumeBlock(
+    inspectResult?.bounding_box_mm ?? null,
+    buildVolume,
   );
   const supportsRecommended =
     inspectResult !== null && inspectResult.overhang_ratio > 0.45 && !supports;
@@ -218,7 +211,7 @@ export function CloudSlicerClient({
   const activeStepIndex = PREPARE_STEPS.findIndex(
     (step) => step.id === activeStep,
   );
-  const canGoNext = useMemo(() => {
+  const canGoNext = (() => {
     if (activeStep === "upload") {
       return (
         selectedFile !== null && orientationState !== null && !inspectPending
@@ -237,15 +230,7 @@ export function CloudSlicerClient({
       );
     }
     return false;
-  }, [
-    activeStep,
-    inspectPending,
-    orientationState,
-    selectedFile,
-    selectedMaterial,
-    selectedProfile,
-    isPreForm,
-  ]);
+  })();
   const sliceDisabledReason = useMemo(() => {
     if (!selectedFile) return "Upload an STL before slicing.";
     if (!selectedProfile) return "Select a material profile before slicing.";
@@ -255,7 +240,7 @@ export function CloudSlicerClient({
       return "The current slice job is still running.";
     return null;
   }, [orientationState, selectedFile, selectedProfile, status]);
-  const printerDisabledReason = useMemo(() => {
+  const printerDisabledReason = (() => {
     if (status !== "done") return "Slice the part before selecting a printer.";
     if (!gcode) return "Downloadable G-code is not ready yet.";
     if (!selectedProfile)
@@ -263,7 +248,7 @@ export function CloudSlicerClient({
     if (buildBlock)
       return `Part exceeds build volume on ${buildBlock.axis.toUpperCase()} by ${buildBlock.overageMm.toFixed(1)} mm.`;
     return null;
-  }, [buildBlock, gcode, selectedProfile, status]);
+  })();
   const visibleNotice = useMemo<SliceNotice | null>(() => {
     if (
       notice?.tone === "error" ||
