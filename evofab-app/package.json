@@ -15,7 +15,8 @@
     "test": "tsx --test tests/*.test.ts tests/*.test.mjs",
     "test:integration": "tsx --test tests/integration/*.test.ts",
     "status:mock": "tsx scripts/mock-status-producer.ts",
-    "materials:import": "tsx scripts/materials-import.ts"
+    "materials:import": "tsx scripts/materials-import.ts",
+    "materials:seed-stock": "tsx scripts/materials-seed-stock.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.3",

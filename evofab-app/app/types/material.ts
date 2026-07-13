@@ -25,11 +25,18 @@ export interface MaterialStock {
   material_id: string;
   lot_label: string | null;
   quantity: number;
-  unit: "spool" | "kg" | "l" | "unit";
+  unit: "g" | "l";
+  color: string;
   location: string | null;
   received_at: string;
   received_by: string | null;
   status: MaterialStockStatus;
+}
+export type MaterialAvailability = "in_stock" | "low" | "depleted";
+export interface MaterialDashboardItem extends Material {
+  stock: MaterialStock[];
+  availability: MaterialAvailability;
+  colors: string[];
 }
 export interface MaterialEvent {
   id: string;

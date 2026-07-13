@@ -34,20 +34,26 @@ export async function POST(request: NextRequest) {
       !text(body.material_id) ||
       !Number.isFinite(quantity) ||
       quantity <= 0 ||
-      !["spool", "kg", "l", "unit"].includes(text(body.unit))
+      !["spool", "kg", "l"].includes(text(body.unit)) ||
+      !text(body.color)
     )
       return NextResponse.json(
-        { error: "Material, positive quantity, and valid unit are required" },
+        {
+          error:
+            "Material, color, positive quantity, and valid unit are required",
+        },
         { status: 400 },
       );
     const { data, error } = await supabase.rpc("intake_material_stock", {
       p_material_id: text(body.material_id),
       p_quantity: quantity,
       p_unit: text(body.unit),
+      p_color: text(body.color),
       p_lot_label: text(body.lot_label) || null,
       p_location: text(body.location) || null,
       p_actor: text(body.actor) || null,
       p_note: text(body.note) || null,
+      p_net_weight_grams: number(body.net_weight_grams) || 1000,
     });
     if (error)
       return NextResponse.json({ error: error.message }, { status: 500 });
@@ -76,21 +82,49 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true });
   }
   if (action === "stock") {
-    const quantity = number(body.quantity);
-    if (!text(body.id) || !Number.isFinite(quantity) || quantity < 0)
+    const delta = number(body.delta);
+    if (
+      !text(body.id) ||
+      !Number.isFinite(delta) ||
+      delta === 0 ||
+      !text(body.note)
+    )
       return NextResponse.json(
-        { error: "Stock id and non-negative quantity are required" },
+        { error: "Stock id, non-zero delta, and adjustment note are required" },
         { status: 400 },
       );
     const { error } = await supabase.rpc("adjust_material_stock", {
       p_stock_id: text(body.id),
-      p_quantity: quantity,
-      p_status: text(body.status),
+      p_delta: delta,
       p_actor: text(body.actor) || null,
       p_note: text(body.note) || null,
     });
     if (error)
       return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true });
+  }
+  if (action === "retire") {
+    if (!text(body.id))
+      return NextResponse.json(
+        { error: "Material id is required" },
+        { status: 400 },
+      );
+    const { error } = await supabase
+      .from("materials")
+      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .eq("id", text(body.id));
+    if (error)
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    const { error: eventError } = await supabase
+      .from("material_events")
+      .insert({
+        material_id: text(body.id),
+        event_type: "retired",
+        actor: text(body.actor) || null,
+        note: text(body.note) || "Catalog material retired",
+      });
+    if (eventError)
+      return NextResponse.json({ error: eventError.message }, { status: 500 });
     return NextResponse.json({ ok: true });
   }
   if (action === "profile") {

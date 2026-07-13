@@ -29,7 +29,8 @@ const lot = (overrides: Partial<MaterialStock> = {}): MaterialStock => ({
   material_id: "material-a",
   lot_label: null,
   quantity: 1,
-  unit: "kg",
+  unit: "g",
+  color: "Natural",
   location: null,
   received_at: "2026-07-12T00:00:00Z",
   received_by: null,
@@ -102,7 +103,7 @@ test("picker aggregates positive lots and preserves unbound materials", () => {
     [],
   );
   assert.equal(options.length, 1);
-  assert.deepEqual(options[0].stock, [{ unit: "kg", quantity: 3 }]);
+  assert.deepEqual(options[0].stock, [{ unit: "g", quantity: 3 }]);
   assert.equal(options[0].profile, null);
 });
 
