@@ -191,9 +191,11 @@ export function CloudSlicerClient({
     selectedTarget?.technology === "FDM" ||
     selectedTarget?.technology === "FGF";
   const hardnessOptions = availableHardnessTicks(visibleMaterials);
-  const hardnessTickKey = hardnessOptions.join("|");
+  const effectiveHardness = hardnessOptions.includes(selectedHardness)
+    ? selectedHardness
+    : (hardnessOptions[0] ?? "");
   const hardnessFilteredMaterials = hardnessRequired
-    ? filterMaterialPickerOptionsForHardness(visibleMaterials, selectedHardness)
+    ? filterMaterialPickerOptionsForHardness(visibleMaterials, effectiveHardness)
     : visibleMaterials;
   const selectedMaterial =
     hardnessFilteredMaterials.find(
@@ -202,13 +204,6 @@ export function CloudSlicerClient({
   const selectedLot =
     selectedMaterial?.lots.find((lot) => lot.id === selectedStockId) ?? null;
   const isPreForm = selectedTarget?.kind === "preform";
-
-  useEffect(() => {
-    if (!hardnessRequired) return;
-    if (!hardnessOptions.includes(selectedHardness)) {
-      setSelectedHardness(hardnessOptions[0] ?? "");
-    }
-  }, [hardnessRequired, hardnessOptions, hardnessTickKey, selectedHardness]);
   const canSlice =
     selectedFile !== null &&
     selectedProfile !== null &&
@@ -807,7 +802,7 @@ export function CloudSlicerClient({
                       step="1"
                       value={Math.max(
                         0,
-                        hardnessOptions.indexOf(selectedHardness),
+                        hardnessOptions.indexOf(effectiveHardness),
                       )}
                       disabled={hardnessOptions.length <= 1}
                       onChange={(event) => {
@@ -831,7 +826,7 @@ export function CloudSlicerClient({
                           key={hardness}
                           className={cn(
                             "text-center",
-                            selectedHardness === hardness &&
+                            effectiveHardness === hardness &&
                               "font-semibold text-[var(--color-teal)]",
                           )}
                         >
