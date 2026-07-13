@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildMaterialPickerOptions,
+  availableHardnessBuckets,
+  filterMaterialPickerOptionsForHardness,
+  hardnessBucket,
   filterMaterialPickerOptionsForTechnology,
 } from "../app/lib/material-picker";
 import type { Material, MaterialStock } from "../app/types/material";
@@ -153,4 +156,21 @@ test("technology remains explicit for client target filtering", () => {
     [],
   );
   assert.deepEqual(filterMaterialPickerOptionsForTechnology(options, null), []);
+});
+
+test("picker normalizes Shore-A hardness and uses Rigid for non-elastomers", () => {
+  assert.equal(hardnessBucket("70 A"), "70A");
+  assert.equal(hardnessBucket(null), "Rigid");
+  const options = buildMaterialPickerOptions(
+    [material(), material({ id: "rigid", nominal_hardness: null })],
+    [lot(), lot({ id: "rigid-lot", material_id: "rigid" })],
+    [],
+  );
+  assert.deepEqual(availableHardnessBuckets(options), ["50A", "Rigid"]);
+  assert.deepEqual(
+    filterMaterialPickerOptionsForHardness(options, "Rigid").map(
+      (option) => option.id,
+    ),
+    ["rigid"],
+  );
 });

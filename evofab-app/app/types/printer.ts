@@ -43,6 +43,12 @@ export interface PrinterStatus {
   fault_mcu?: string | null;
   updated_at: string;
 }
+export interface PrinterLoadedMaterial {
+  material_name: string;
+  color: string;
+  quantity: number;
+  unit: "g" | "l";
+}
 
 // Combined view used throughout the UI
 export interface PrinterWithStatus extends Omit<
@@ -55,4 +61,5 @@ export interface PrinterWithStatus extends Omit<
   | "prusalink_key_file"
 > {
   printer_status: PrinterStatus | null;
+  loaded_material: PrinterLoadedMaterial | null;
 }

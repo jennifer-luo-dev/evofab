@@ -127,6 +127,54 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: eventError.message }, { status: 500 });
     return NextResponse.json({ ok: true });
   }
+  if (action === "loadout") {
+    const printerId = text(body.printer_id);
+    const stockId = text(body.stock_id);
+    if (!printerId || !stockId)
+      return NextResponse.json(
+        { error: "Printer and stock lot are required" },
+        { status: 400 },
+      );
+    const { data: lot, error: lotError } = await supabase
+      .from("material_stock")
+      .select("id,quantity,status")
+      .eq("id", stockId)
+      .maybeSingle();
+    if (lotError)
+      return NextResponse.json({ error: lotError.message }, { status: 500 });
+    if (!lot || Number(lot.quantity) <= 0 || lot.status === "depleted")
+      return NextResponse.json(
+        { error: "Only positive, non-depleted lots can be loaded" },
+        { status: 400 },
+      );
+    const { error } = await supabase.from("printer_material_loadout").upsert(
+      {
+        printer_id: printerId,
+        stock_id: stockId,
+        loaded_by: text(body.actor) || null,
+        note: text(body.note) || null,
+        loaded_at: new Date().toISOString(),
+      },
+      { onConflict: "printer_id" },
+    );
+    if (error)
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true });
+  }
+  if (action === "clear_loadout") {
+    if (!text(body.printer_id))
+      return NextResponse.json(
+        { error: "Printer is required" },
+        { status: 400 },
+      );
+    const { error } = await supabase
+      .from("printer_material_loadout")
+      .delete()
+      .eq("printer_id", text(body.printer_id));
+    if (error)
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true });
+  }
   if (action === "profile") {
     if (!text(body.id))
       return NextResponse.json(

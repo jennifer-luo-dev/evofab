@@ -44,3 +44,17 @@ test("gram migration adds lot color and canonical unit conversions", () => {
   assert.match(migration, /p_net_weight_grams NUMERIC DEFAULT 1000/);
   assert.match(migration, /Adjustment note is required/);
 });
+test("loadout migration keeps one current lot per printer and one printer per lot", () => {
+  const migration = fs.readFileSync(
+    path.join(
+      process.cwd(),
+      "supabase/migrations/20260713020000_printer_material_loadout.sql",
+    ),
+    "utf8",
+  );
+  assert.match(migration, /printer_id UUID PRIMARY KEY REFERENCES printers/);
+  assert.match(
+    migration,
+    /stock_id UUID NOT NULL UNIQUE REFERENCES material_stock/,
+  );
+});

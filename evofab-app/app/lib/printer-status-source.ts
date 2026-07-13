@@ -1,6 +1,7 @@
 import { createClient } from "@/app/lib/supabase-server";
 import type {
   Printer,
+  PrinterLoadedMaterial,
   PrinterStatus,
   PrinterWithStatus,
 } from "@/app/types/printer";
@@ -10,6 +11,7 @@ export const STALE_STATUS_MS = 30_000;
 export function toClientSafePrinter(
   printer: Printer,
   printerStatus: PrinterStatus,
+  loadedMaterial: PrinterLoadedMaterial | null = null,
 ): PrinterWithStatus {
   return {
     id: printer.id,
@@ -23,6 +25,7 @@ export function toClientSafePrinter(
     is_active: printer.is_active,
     created_at: printer.created_at,
     printer_status: printerStatus,
+    loaded_material: loadedMaterial,
   };
 }
 
@@ -97,9 +100,11 @@ export async function getActivePrintersWithStatus(): Promise<
   const [
     { data: printers, error: printersError },
     { data: statuses, error: statusesError },
+    { data: loadouts, error: loadoutsError },
   ] = await Promise.all([
     supabase.from("printers").select("*").eq("is_active", true).order("name"),
     supabase.from("printer_status").select("*"),
+    supabase.from("printer_material_loadout").select("printer_id,stock_id"),
   ]);
 
   if (printersError) {
@@ -109,6 +114,52 @@ export async function getActivePrintersWithStatus(): Promise<
   if (statusesError) {
     throw new Error(`Unable to load printer status: ${statusesError.message}`);
   }
+  if (loadoutsError) {
+    throw new Error(
+      `Unable to load printer material loadouts: ${loadoutsError.message}`,
+    );
+  }
+
+  const stockIds = (loadouts ?? []).map((loadout) => loadout.stock_id);
+  const { data: stock, error: stockError } = stockIds.length
+    ? await supabase
+        .from("material_stock")
+        .select("id,material_id,color,quantity,unit")
+        .in("id", stockIds)
+    : { data: [], error: null };
+  if (stockError)
+    throw new Error(`Unable to load material stock: ${stockError.message}`);
+  const materialIds = (stock ?? []).map((lot) => lot.material_id);
+  const { data: materials, error: materialsError } = materialIds.length
+    ? await supabase.from("materials").select("id,name").in("id", materialIds)
+    : { data: [], error: null };
+  if (materialsError)
+    throw new Error(
+      `Unable to load loaded materials: ${materialsError.message}`,
+    );
+  const stockById = new Map((stock ?? []).map((lot) => [lot.id, lot]));
+  const nameById = new Map(
+    (materials ?? []).map((material) => [material.id, material.name]),
+  );
+  const loadoutByPrinter = new Map(
+    (loadouts ?? []).flatMap((loadout) => {
+      const lot = stockById.get(loadout.stock_id);
+      const name = lot ? nameById.get(lot.material_id) : null;
+      return lot && name
+        ? [
+            [
+              loadout.printer_id,
+              {
+                material_name: name,
+                color: lot.color,
+                quantity: Number(lot.quantity),
+                unit: lot.unit,
+              },
+            ],
+          ]
+        : [];
+    }),
+  );
 
   const statusMap = new Map(
     ((statuses as PrinterStatus[] | null) ?? []).map((status) => [
@@ -121,6 +172,7 @@ export async function getActivePrintersWithStatus(): Promise<
     toClientSafePrinter(
       printer,
       statusForPrinter(printer.id, statusMap.get(printer.id)),
+      loadoutByPrinter.get(printer.id) ?? null,
     ),
   );
 }

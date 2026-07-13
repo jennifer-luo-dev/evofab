@@ -11,6 +11,7 @@ type Detail = Material & {
   stock: MaterialStock[];
   events: MaterialEvent[];
   availability: string;
+  printers: Array<{ id: string; name: string; type: string }>;
 };
 
 export function MaterialDetail({
@@ -116,28 +117,62 @@ export function MaterialDetail({
               </span>
               <span className="text-[var(--color-muted)]">{lot.status}</span>
               {adminEnabled && (
-                <form onSubmit={submit} className="ml-auto flex gap-2">
-                  <input type="hidden" name="action" value="stock" />
-                  <input type="hidden" name="id" value={lot.id} />
-                  <input
-                    name="delta"
-                    type="number"
-                    step="0.001"
-                    required
-                    aria-label={`Adjustment for ${lot.id}`}
-                    placeholder={`± ${unit}`}
-                    className="w-24 rounded bg-white/5 px-2 py-1"
-                  />
-                  <input
-                    name="note"
-                    required
-                    placeholder="Required note"
-                    className="rounded bg-white/5 px-2 py-1"
-                  />
-                  <button disabled={busy} className="text-[var(--color-teal)]">
-                    Adjust
-                  </button>
-                </form>
+                <div className="ml-auto flex flex-wrap gap-2">
+                  <form onSubmit={submit} className="flex gap-2">
+                    <input type="hidden" name="action" value="stock" />
+                    <input type="hidden" name="id" value={lot.id} />
+                    <input
+                      name="delta"
+                      type="number"
+                      step="0.001"
+                      required
+                      aria-label={`Adjustment for ${lot.id}`}
+                      placeholder={`± ${unit}`}
+                      className="w-24 rounded bg-white/5 px-2 py-1"
+                    />
+                    <input
+                      name="note"
+                      required
+                      placeholder="Required note"
+                      className="rounded bg-white/5 px-2 py-1"
+                    />
+                    <button
+                      disabled={busy}
+                      className="text-[var(--color-teal)]"
+                    >
+                      Adjust
+                    </button>
+                  </form>
+                  <form onSubmit={submit} className="flex gap-2">
+                    <input type="hidden" name="action" value="loadout" />
+                    <input type="hidden" name="stock_id" value={lot.id} />
+                    <select
+                      name="printer_id"
+                      required
+                      aria-label={`Load ${lot.id} onto printer`}
+                      className="rounded bg-[var(--color-surface-2)] px-2 py-1"
+                      defaultValue=""
+                    >
+                      <option value="">Load on printer</option>
+                      {material.printers.map((printer) => (
+                        <option key={printer.id} value={printer.id}>
+                          {printer.name} · {printer.type}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      name="note"
+                      placeholder="Loadout note"
+                      className="rounded bg-white/5 px-2 py-1"
+                    />
+                    <button
+                      disabled={busy}
+                      className="text-[var(--color-teal)]"
+                    >
+                      Load
+                    </button>
+                  </form>
+                </div>
               )}
             </div>
           ))}
@@ -274,6 +309,31 @@ export function MaterialDetail({
             <input type="hidden" name="id" value={material.id} />
             <button disabled={busy} className="text-sm text-[var(--color-red)]">
               Retire material
+            </button>
+          </form>
+          <form
+            onSubmit={submit}
+            className="lg:col-span-2 flex flex-wrap items-center gap-2"
+          >
+            <input type="hidden" name="action" value="clear_loadout" />
+            <select
+              name="printer_id"
+              required
+              className="rounded bg-[var(--color-surface-2)] px-2 py-1 text-sm"
+              defaultValue=""
+            >
+              <option value="">Clear a printer loadout</option>
+              {material.printers.map((printer) => (
+                <option key={printer.id} value={printer.id}>
+                  {printer.name}
+                </option>
+              ))}
+            </select>
+            <button
+              disabled={busy}
+              className="text-sm text-[var(--color-amber)]"
+            >
+              Clear loadout
             </button>
           </form>
         </section>
