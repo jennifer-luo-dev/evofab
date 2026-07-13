@@ -30,3 +30,17 @@ test("catalog supports SLA without adding an SLA print path", () => {
     /printers_type_check CHECK \(type IN \('FGF', 'FDM', 'SLA'\)\)/,
   );
 });
+test("gram migration adds lot color and canonical unit conversions", () => {
+  const migration = fs.readFileSync(
+    path.join(
+      process.cwd(),
+      "supabase/migrations/20260713010000_materials_gram_stock.sql",
+    ),
+    "utf8",
+  );
+  assert.match(migration, /ADD COLUMN color TEXT/);
+  assert.match(migration, /quantity \* 1000, unit = 'g'/);
+  assert.match(migration, /unit IN \('g', 'l'\)/);
+  assert.match(migration, /p_net_weight_grams NUMERIC DEFAULT 1000/);
+  assert.match(migration, /Adjustment note is required/);
+});

@@ -143,23 +143,13 @@ export function MaterialsManager({
                     {materialName.get(stock.material_id) ?? "Unknown"}
                   </strong>
                   <input
-                    name="quantity"
+                    name="delta"
                     type="number"
-                    min="0"
                     step="0.001"
-                    defaultValue={stock.quantity}
+                    placeholder="± amount"
                     className="w-24 rounded bg-white/5 px-2 py-1"
                   />
                   <span>{stock.unit}</span>
-                  <select
-                    name="status"
-                    defaultValue={stock.status}
-                    className="rounded bg-[var(--color-surface-2)] px-2 py-1"
-                  >
-                    {["in_stock", "low", "depleted"].map((v) => (
-                      <option key={v}>{v}</option>
-                    ))}
-                  </select>
                   <input
                     name="actor"
                     placeholder="Actor"
@@ -167,7 +157,8 @@ export function MaterialsManager({
                   />
                   <input
                     name="note"
-                    placeholder="Adjustment note"
+                    placeholder="Required adjustment note"
+                    required
                     className="min-w-52 flex-1 rounded bg-white/5 px-2 py-1"
                   />
                   <button
@@ -229,16 +220,17 @@ export function MaterialsManager({
               name="unit"
               className="rounded bg-[var(--color-surface-2)] px-2"
             >
-              {["spool", "kg", "l", "unit"].map((v) => (
+              {["spool", "kg", "l"].map((v) => (
                 <option key={v}>{v}</option>
               ))}
             </select>
           </div>
-          {["lot_label", "location", "actor", "note"].map((v) => (
+          {["color", "lot_label", "location", "actor", "note"].map((v) => (
             <input
               key={v}
               name={v}
               placeholder={v.replace("_", " ")}
+              required={v === "color"}
               className="w-full rounded bg-white/5 px-2 py-2"
             />
           ))}

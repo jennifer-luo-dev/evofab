@@ -61,7 +61,7 @@ export default async function CloudSlicerPage() {
             baseChemistry: "PLA",
             nominalHardness: null,
             sdsUrl: "https://example.invalid/pla-sds.pdf",
-            stock: [{ unit: "kg", quantity: 2 }],
+            stock: [{ unit: "g", quantity: 2000 }],
             profile: {
               id: "pla-fgf",
               name: "PLA FGF",
@@ -86,7 +86,7 @@ export default async function CloudSlicerPage() {
             baseChemistry: "TPE",
             nominalHardness: null,
             sdsUrl: null,
-            stock: [{ unit: "kg", quantity: 1 }],
+            stock: [{ unit: "g", quantity: 1000 }],
             profile: {
               id: "cool-flex",
               name: "Flexible Polymer",
@@ -111,7 +111,7 @@ export default async function CloudSlicerPage() {
             baseChemistry: "TPU",
             nominalHardness: "70A",
             sdsUrl: null,
-            stock: [{ unit: "kg", quantity: 0.5 }],
+            stock: [{ unit: "g", quantity: 500 }],
             profile: null,
             placeholderProfile: false,
           },

@@ -33,13 +33,13 @@ test("isMaterialsAdminEnabled returns false when env var is 'TRUE' (case-sensiti
   );
 });
 
-// --- Route-level tests: /materials page ---
+// --- Route-level tests: /materials/admin page ---
 
-test("/materials page returns notFound when admin gate is off", async () => {
+test("/materials/admin page returns notFound when admin gate is off", async () => {
   const saved = process.env.MATERIALS_ADMIN_ENABLED;
   delete process.env.MATERIALS_ADMIN_ENABLED;
   try {
-    const mod = await import("../app/materials/page");
+    const mod = await import("../app/materials/admin/page");
     const page = mod.default;
     await assert.rejects(page(), (error: unknown) => {
       // Next.js notFound() throws NEXT_NOT_FOUND
@@ -69,7 +69,13 @@ test("POST /api/materials returns 404 when admin gate is off", async () => {
     const request = new Request("http://localhost/api/materials", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "intake", material_id: "x", quantity: 1, unit: "spool" }),
+      body: JSON.stringify({
+        action: "intake",
+        material_id: "x",
+        quantity: 1,
+        unit: "spool",
+        color: "Black",
+      }),
     });
     const response = await mod.POST(request as never);
     assert.equal(response.status, 404);
