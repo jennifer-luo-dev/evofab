@@ -12,8 +12,9 @@ import {
 } from "@/app/lib/prepared-print";
 import { settingsFromMaterialProfile } from "@/app/lib/material-profiles";
 import {
-  availableHardnessBuckets,
+  availableHardnessTicks,
   filterMaterialPickerOptionsForHardness,
+  hardnessBucket,
   filterMaterialPickerOptionsForTechnology,
   type MaterialPickerOption,
 } from "@/app/lib/material-picker";
@@ -91,6 +92,20 @@ interface CloudSlicerClientProps {
 function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function swatchColor(color: string): string {
+  return (
+    {
+      natural: "#c8a47e",
+      clear: "#dbeafe",
+      black: "#111827",
+      white: "#f8fafc",
+      blue: "#3b82f6",
+      red: "#ef4444",
+      green: "#22c55e",
+    }[color.trim().toLowerCase()] ?? "#94a3b8"
+  );
 }
 
 async function readJsonOrThrow<T>(response: Response): Promise<T> {
@@ -175,9 +190,12 @@ export function CloudSlicerClient({
   const hardnessRequired =
     selectedTarget?.technology === "FDM" ||
     selectedTarget?.technology === "FGF";
-  const hardnessOptions = availableHardnessBuckets(visibleMaterials);
+  const hardnessOptions = availableHardnessTicks(visibleMaterials);
+  const effectiveHardness = hardnessOptions.includes(selectedHardness)
+    ? selectedHardness
+    : (hardnessOptions[0] ?? "");
   const hardnessFilteredMaterials = hardnessRequired
-    ? filterMaterialPickerOptionsForHardness(visibleMaterials, selectedHardness)
+    ? filterMaterialPickerOptionsForHardness(visibleMaterials, effectiveHardness)
     : visibleMaterials;
   const selectedMaterial =
     hardnessFilteredMaterials.find(
@@ -775,27 +793,47 @@ export function CloudSlicerClient({
                   <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
                     Shore hardness
                   </p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {hardnessOptions.map((hardness) => (
-                      <button
-                        key={hardness}
-                        type="button"
-                        onClick={() => {
-                          setSelectedHardness(hardness);
-                          setSelectedMaterialId("");
-                          setSelectedStockId("");
-                          setSelectedProfileId("");
-                        }}
-                        className={cn(
-                          "rounded-full border px-3 py-1 text-xs",
-                          selectedHardness === hardness
-                            ? "border-[var(--color-teal)] bg-[var(--color-teal)]/10 text-[var(--color-teal)]"
-                            : "border-[var(--color-border)] text-[var(--color-text)]",
-                        )}
-                      >
-                        {hardness}
-                      </button>
-                    ))}
+                  <div className="mt-3">
+                    <input
+                      aria-label="Shore hardness"
+                      type="range"
+                      min="0"
+                      max={Math.max(0, hardnessOptions.length - 1)}
+                      step="1"
+                      value={Math.max(
+                        0,
+                        hardnessOptions.indexOf(effectiveHardness),
+                      )}
+                      disabled={hardnessOptions.length <= 1}
+                      onChange={(event) => {
+                        setSelectedHardness(
+                          hardnessOptions[Number(event.target.value)] ?? "",
+                        );
+                        setSelectedMaterialId("");
+                        setSelectedStockId("");
+                        setSelectedProfileId("");
+                      }}
+                      className="w-full accent-[var(--color-teal)] disabled:cursor-default"
+                    />
+                    <div
+                      className="mt-1 grid text-[10px] text-[var(--color-muted)]"
+                      style={{
+                        gridTemplateColumns: `repeat(${Math.max(1, hardnessOptions.length)}, minmax(0, 1fr))`,
+                      }}
+                    >
+                      {hardnessOptions.map((hardness) => (
+                        <span
+                          key={hardness}
+                          className={cn(
+                            "text-center",
+                            effectiveHardness === hardness &&
+                              "font-semibold text-[var(--color-teal)]",
+                          )}
+                        >
+                          {hardness}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
@@ -869,15 +907,25 @@ export function CloudSlicerClient({
                                   : "border-[var(--color-border)] text-[var(--color-text)]",
                               )}
                             >
-                              {lot.color} · {lot.quantity} {lot.unit}
-                              {lot.lotLabel ? ` · ${lot.lotLabel}` : ""}
+                              <span
+                                className="mr-1 inline-block h-2.5 w-2.5 rounded-full border border-white/25 align-middle"
+                                style={{
+                                  backgroundColor: swatchColor(lot.color),
+                                }}
+                              />
+                              {lot.color}
                             </button>
                           ))}
                         </div>
                         {(material.baseChemistry ||
                           material.nominalHardness) && (
                           <p className="mt-1 text-xs text-[var(--color-muted)]">
-                            {[material.baseChemistry, material.nominalHardness]
+                            {[
+                              material.baseChemistry,
+                              material.nominalHardness
+                                ? hardnessBucket(material.nominalHardness)
+                                : "Rigid",
+                            ]
                               .filter(Boolean)
                               .join(" · ")}
                           </p>
