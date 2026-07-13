@@ -259,9 +259,7 @@ endsolid smoke
   await page.getByLabel("Print target").selectOption("preform:sla");
   await expect(page.getByText("Elastic 50A V2")).toBeVisible();
   await page.getByText("Elastic 50A V2").click();
-  await page
-    .getByRole("button", { name: "Clear · 1 l · mock-resin", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Clear", exact: true }).click();
   await expect(
     page.getByText("Prepare in PreForm", { exact: true }),
   ).toBeVisible();
@@ -272,20 +270,22 @@ endsolid smoke
     page.getByRole("button", { name: "Next", exact: true }),
   ).toHaveCount(0);
 
+  await page.getByLabel("Print target").selectOption("printer:printer-fdm");
+  await expect(page.getByLabel("Shore hardness")).toBeDisabled();
+  await expect(page.getByText("Rigid", { exact: true })).toBeVisible();
+
   await page.getByLabel("Print target").selectOption("printer:printer-fgf");
   await expect(page.getByText("Elastic 50A V2")).toHaveCount(0);
-  await page.getByRole("button", { name: "70A", exact: true }).click();
+  await expect(page.getByLabel("Shore hardness")).toHaveValue("0");
   await page.getByText("Unbound Pellet").click();
   await expect(page.getByText("Profile needed before slicing")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Next", exact: true }),
   ).toBeDisabled();
-  await page.getByRole("button", { name: "Rigid", exact: true }).click();
+  await page.getByLabel("Shore hardness").fill("1");
   await expect(page.getByText("Temporary placeholder profile")).toBeVisible();
   await page.getByText("PLA Pellets").click();
-  await page
-    .getByRole("button", { name: "Natural · 2000 g · mock-pla", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Natural", exact: true }).click();
   await page.getByRole("button", { name: "Next", exact: true }).click();
 
   await page.getByLabel("Add supports").check();

@@ -46,6 +46,8 @@ export function availableHardnessBuckets(
   );
 }
 
+export const availableHardnessTicks = availableHardnessBuckets;
+
 export function filterMaterialPickerOptionsForHardness(
   options: MaterialPickerOption[],
   hardness: string | null | undefined,

@@ -50,6 +50,19 @@ export default async function CloudSlicerPage() {
             is_active: true,
             created_at: "2026-07-08T00:00:00.000Z",
           },
+          {
+            id: "printer-fdm",
+            name: "FDM Printer",
+            model: "FDM Printer",
+            ip: "127.0.0.1",
+            port: 7125,
+            type: "FDM",
+            material: "PLA",
+            build_volume: "220x220x220mm",
+            webcam_url: null,
+            is_active: true,
+            created_at: "2026-07-08T00:00:00.000Z",
+          },
         ]}
         materialOptions={[
           {
@@ -84,6 +97,28 @@ export default async function CloudSlicerPage() {
               created_at: "2026-07-08T00:00:00.000Z",
               material_id: "material-pla-fgf",
             },
+            placeholderProfile: false,
+          },
+          {
+            id: "material-pla-fdm",
+            name: "PLA Filament",
+            technology: "FDM",
+            form: "filament",
+            provider: "EvoFab",
+            baseChemistry: "PLA",
+            nominalHardness: null,
+            sdsUrl: null,
+            stock: [{ unit: "g", quantity: 1000 }],
+            lots: [
+              {
+                id: "stock-pla-fdm",
+                color: "Black",
+                lotLabel: "mock-fdm",
+                quantity: 1000,
+                unit: "g",
+              },
+            ],
+            profile: null,
             placeholderProfile: false,
           },
           {

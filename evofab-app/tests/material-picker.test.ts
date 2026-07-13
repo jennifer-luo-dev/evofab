@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildMaterialPickerOptions,
   availableHardnessBuckets,
+  availableHardnessTicks,
   filterMaterialPickerOptionsForHardness,
   hardnessBucket,
   filterMaterialPickerOptionsForTechnology,
@@ -172,5 +173,35 @@ test("picker normalizes Shore-A hardness and uses Rigid for non-elastomers", () 
       (option) => option.id,
     ),
     ["rigid"],
+  );
+});
+
+test("hardness ticks are technology-scoped, soft-to-hard, with Rigid last", () => {
+  const options = buildMaterialPickerOptions(
+    [
+      material({ id: "soft", technology: "FGF", nominal_hardness: "6A" }),
+      material({ id: "firm", technology: "FGF", nominal_hardness: "50 A" }),
+      material({ id: "rigid", technology: "FGF", nominal_hardness: null }),
+      material({ id: "fdm", technology: "FDM", nominal_hardness: "95A" }),
+    ],
+    [
+      lot({ id: "soft-lot", material_id: "soft" }),
+      lot({ id: "firm-lot", material_id: "firm" }),
+      lot({ id: "rigid-lot", material_id: "rigid" }),
+      lot({ id: "fdm-lot", material_id: "fdm" }),
+    ],
+    [],
+  );
+  assert.deepEqual(
+    availableHardnessTicks(
+      filterMaterialPickerOptionsForTechnology(options, "FGF"),
+    ),
+    ["6A", "50A", "Rigid"],
+  );
+  assert.deepEqual(
+    availableHardnessTicks(
+      filterMaterialPickerOptionsForTechnology(options, "FDM"),
+    ),
+    ["95A"],
   );
 });
