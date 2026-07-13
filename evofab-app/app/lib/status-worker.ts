@@ -2,6 +2,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { MoonrakerStatusConnector } from "@/app/lib/moonraker-client";
+import { MoonrakerDriver } from "@/app/lib/moonraker-driver";
 import type { PrinterDriver } from "@/app/lib/printer-driver";
 import { PrusaLinkDriver } from "@/app/lib/prusalink-driver";
 import { MoonrakerError } from "@/app/lib/moonraker-errors";
@@ -83,7 +84,7 @@ export function createStatusWorkerConnector(): PrinterDriver {
 export function createPrinterDriver(printer: Printer): PrinterDriver {
   return printer.driver_type === "prusalink"
     ? new PrusaLinkDriver()
-    : createStatusWorkerConnector();
+    : new MoonrakerDriver();
 }
 
 export function createStatusWorkerBackoffState(): Map<string, number> {

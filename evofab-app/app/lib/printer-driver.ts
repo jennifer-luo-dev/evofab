@@ -4,6 +4,29 @@ export interface PrinterDriver {
   readStatus(printer: Printer): Promise<PrinterStatus>;
 }
 
+export interface PrinterUploadResult {
+  outcome: PrinterControlOutcome;
+  status: number | null;
+  retryable: boolean;
+  code?: PrinterDriverErrorCategory;
+  path?: string;
+}
+
+export interface PrinterFileDriver extends PrinterDriver {
+  readonly capabilities: ReadonlySet<
+    "upload_file" | "verify_file" | "start_print"
+  >;
+  uploadFile(
+    printer: Printer,
+    file: File,
+    path: string,
+  ): Promise<PrinterUploadResult>;
+  verifyStoredFile(
+    printer: Printer,
+    path: string,
+  ): Promise<PrinterCommandResult>;
+}
+
 export type PrinterControlOutcome = "succeeded" | "failed" | "outcome_unknown";
 
 export interface PrinterCommandResult {
@@ -15,6 +38,13 @@ export interface PrinterCommandResult {
 }
 
 export type PrinterDriverErrorCategory =
+  | "MOONRAKER_CHECKSUM_MISMATCH"
+  | "MOONRAKER_CONFIG"
+  | "MOONRAKER_MALFORMED_RESPONSE"
+  | "MOONRAKER_NETWORK"
+  | "MOONRAKER_NOT_FOUND"
+  | "MOONRAKER_REJECTED"
+  | "MOONRAKER_TIMEOUT"
   | "PRUSALINK_AUTH"
   | "PRUSALINK_CONFIG"
   | "PRUSALINK_MALFORMED_RESPONSE"
