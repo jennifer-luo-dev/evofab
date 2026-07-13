@@ -58,3 +58,22 @@ test("client-safe printer projection excludes connection configuration", () => {
   assert.ok(!json.includes(".secrets/test.key"));
   assert.ok(!("ip" in output));
 });
+
+test("client-safe printer projection carries only display-safe loaded material", () => {
+  const output = toClientSafePrinter(
+    printer("moonraker"),
+    offlinePrinterStatus("printer-1", "PRUSALINK_TIMEOUT"),
+    {
+      material_name: "PLA Pellets",
+      color: "Natural",
+      quantity: 1000,
+      unit: "g",
+    },
+  );
+  assert.deepEqual(output.loaded_material, {
+    material_name: "PLA Pellets",
+    color: "Natural",
+    quantity: 1000,
+    unit: "g",
+  });
+});

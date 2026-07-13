@@ -130,8 +130,9 @@ test.beforeAll(async () => {
             id: "stock-pla",
             material_id: "material-pla-fgf",
             lot_label: null,
-            quantity: 2,
-            unit: "kg",
+            quantity: 2000,
+            unit: "g",
+            color: "Natural",
             location: null,
             received_at: "2026-07-08T00:00:00Z",
             received_by: null,
@@ -141,8 +142,9 @@ test.beforeAll(async () => {
             id: "stock-flex",
             material_id: "material-cool-flex",
             lot_label: null,
-            quantity: 1,
-            unit: "kg",
+            quantity: 1000,
+            unit: "g",
+            color: "Clear",
             location: null,
             received_at: "2026-07-08T00:00:00Z",
             received_by: null,
@@ -152,8 +154,9 @@ test.beforeAll(async () => {
             id: "stock-unbound",
             material_id: "material-unbound",
             lot_label: null,
-            quantity: 0.5,
-            unit: "kg",
+            quantity: 500,
+            unit: "g",
+            color: "Blue",
             location: null,
             received_at: "2026-07-08T00:00:00Z",
             received_by: null,
@@ -165,6 +168,7 @@ test.beforeAll(async () => {
             lot_label: null,
             quantity: 1,
             unit: "l",
+            color: "Clear",
             location: null,
             received_at: "2026-07-08T00:00:00Z",
             received_by: null,
@@ -255,6 +259,9 @@ endsolid smoke
   await page.getByLabel("Print target").selectOption("preform:sla");
   await expect(page.getByText("Elastic 50A V2")).toBeVisible();
   await page.getByText("Elastic 50A V2").click();
+  await page
+    .getByRole("button", { name: "Clear · 1 l · mock-resin", exact: true })
+    .click();
   await expect(
     page.getByText("Prepare in PreForm", { exact: true }),
   ).toBeVisible();
@@ -267,16 +274,18 @@ endsolid smoke
 
   await page.getByLabel("Print target").selectOption("printer:printer-fgf");
   await expect(page.getByText("Elastic 50A V2")).toHaveCount(0);
-  await expect(page.getByText("Temporary placeholder profile")).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Next", exact: true }),
-  ).toBeDisabled();
+  await page.getByRole("button", { name: "70A", exact: true }).click();
   await page.getByText("Unbound Pellet").click();
   await expect(page.getByText("Profile needed before slicing")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Next", exact: true }),
   ).toBeDisabled();
+  await page.getByRole("button", { name: "Rigid", exact: true }).click();
+  await expect(page.getByText("Temporary placeholder profile")).toBeVisible();
   await page.getByText("PLA Pellets").click();
+  await page
+    .getByRole("button", { name: "Natural · 2000 g · mock-pla", exact: true })
+    .click();
   await page.getByRole("button", { name: "Next", exact: true }).click();
 
   await page.getByLabel("Add supports").check();

@@ -294,6 +294,11 @@ export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
                     </div>
                   )}
                 </div>
+                <p className="mt-3 text-xs text-[var(--color-muted)]">
+                  {printer.loaded_material
+                    ? `Loaded: ${printer.loaded_material.material_name} — ${printer.loaded_material.color} · ${printer.loaded_material.quantity} ${printer.loaded_material.unit}`
+                    : "Loaded: none"}
+                </p>
                 <div
                   className="mt-4 grid grid-cols-2 gap-2"
                   onClick={(event) => event.stopPropagation()}

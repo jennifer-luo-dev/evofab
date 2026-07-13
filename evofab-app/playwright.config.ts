@@ -1,19 +1,26 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const hostAcceptance = process.env.EVOFAB_HOST_E2E === "1";
+const e2ePort = process.env.EVOFAB_E2E_PORT ?? "3000";
+const e2eBaseUrl =
+  process.env.EVOFAB_E2E_BASE_URL ?? `http://127.0.0.1:${e2ePort}`;
+const e2eServerCommand =
+  process.env.EVOFAB_E2E_SERVER === "start"
+    ? `npm run start -- --hostname 127.0.0.1 --port ${e2ePort}`
+    : `npm run dev -- --hostname 127.0.0.1 --port ${e2ePort}`;
 
 export default defineConfig({
   testDir: "./tests/e2e",
   timeout: 60_000,
   use: {
-    baseURL: process.env.EVOFAB_E2E_BASE_URL ?? "http://127.0.0.1:3000",
+    baseURL: e2eBaseUrl,
     trace: "on-first-retry",
   },
   webServer: hostAcceptance
     ? undefined
     : {
-        command: "npm run dev -- --hostname 127.0.0.1 --port 3000",
-        url: "http://127.0.0.1:3000",
+        command: e2eServerCommand,
+        url: e2eBaseUrl,
         reuseExistingServer: false,
         env: {
           NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",

@@ -80,6 +80,13 @@ export async function getMaterialDashboardItems(): Promise<
 
 export async function getMaterialBySlug(slug: string) {
   const snapshot = await getMaterialsSnapshot();
+  const supabase = await createClient();
+  const { data: printers, error: printersError } = await supabase
+    .from("printers")
+    .select("id,name,type")
+    .eq("is_active", true)
+    .order("name");
+  if (printersError) throw new Error(printersError.message);
   const material = snapshot.materials.find(
     (candidate) =>
       candidate.slug === slug &&
@@ -94,6 +101,7 @@ export async function getMaterialBySlug(slug: string) {
     events: snapshot.events.filter(
       (event) => event.material_id === material.id,
     ),
+    printers: printers ?? [],
     availability: availabilityForLots(stock),
   };
 }

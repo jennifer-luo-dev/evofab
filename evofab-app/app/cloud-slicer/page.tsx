@@ -62,6 +62,15 @@ export default async function CloudSlicerPage() {
             nominalHardness: null,
             sdsUrl: "https://example.invalid/pla-sds.pdf",
             stock: [{ unit: "g", quantity: 2000 }],
+            lots: [
+              {
+                id: "stock-pla",
+                color: "Natural",
+                lotLabel: "mock-pla",
+                quantity: 2000,
+                unit: "g",
+              },
+            ],
             profile: {
               id: "pla-fgf",
               name: "PLA FGF",
@@ -87,6 +96,15 @@ export default async function CloudSlicerPage() {
             nominalHardness: null,
             sdsUrl: null,
             stock: [{ unit: "g", quantity: 1000 }],
+            lots: [
+              {
+                id: "stock-flex",
+                color: "Clear",
+                lotLabel: "mock-flex",
+                quantity: 1000,
+                unit: "g",
+              },
+            ],
             profile: {
               id: "cool-flex",
               name: "Flexible Polymer",
@@ -112,6 +130,15 @@ export default async function CloudSlicerPage() {
             nominalHardness: "70A",
             sdsUrl: null,
             stock: [{ unit: "g", quantity: 500 }],
+            lots: [
+              {
+                id: "stock-unbound",
+                color: "Blue",
+                lotLabel: "mock-unbound",
+                quantity: 500,
+                unit: "g",
+              },
+            ],
             profile: null,
             placeholderProfile: false,
           },
@@ -125,6 +152,15 @@ export default async function CloudSlicerPage() {
             nominalHardness: "50A",
             sdsUrl: "https://example.invalid/elastic-sds.pdf",
             stock: [{ unit: "l", quantity: 1 }],
+            lots: [
+              {
+                id: "stock-resin",
+                color: "Clear",
+                lotLabel: "mock-resin",
+                quantity: 1,
+                unit: "l",
+              },
+            ],
             profile: null,
             placeholderProfile: false,
           },

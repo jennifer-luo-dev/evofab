@@ -12,6 +12,8 @@ import {
 } from "@/app/lib/prepared-print";
 import { settingsFromMaterialProfile } from "@/app/lib/material-profiles";
 import {
+  availableHardnessBuckets,
+  filterMaterialPickerOptionsForHardness,
   filterMaterialPickerOptionsForTechnology,
   type MaterialPickerOption,
 } from "@/app/lib/material-picker";
@@ -117,6 +119,8 @@ export function CloudSlicerClient({
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [selectedTargetId, setSelectedTargetId] = useState("");
   const [selectedMaterialId, setSelectedMaterialId] = useState("");
+  const [selectedStockId, setSelectedStockId] = useState("");
+  const [selectedHardness, setSelectedHardness] = useState("");
   const { activeStep, highestStepIndex, goToStep, resetPrepareSteps } =
     usePrepareStepper();
   const [status, setStatus] = useState<SliceStatus>("idle");
@@ -168,8 +172,19 @@ export function CloudSlicerClient({
     materialOptions,
     selectedTarget?.technology,
   );
+  const hardnessRequired =
+    selectedTarget?.technology === "FDM" ||
+    selectedTarget?.technology === "FGF";
+  const hardnessOptions = availableHardnessBuckets(visibleMaterials);
+  const hardnessFilteredMaterials = hardnessRequired
+    ? filterMaterialPickerOptionsForHardness(visibleMaterials, selectedHardness)
+    : visibleMaterials;
   const selectedMaterial =
-    visibleMaterials.find((option) => option.id === selectedMaterialId) ?? null;
+    hardnessFilteredMaterials.find(
+      (option) => option.id === selectedMaterialId,
+    ) ?? null;
+  const selectedLot =
+    selectedMaterial?.lots.find((lot) => lot.id === selectedStockId) ?? null;
   const isPreForm = selectedTarget?.kind === "preform";
   const canSlice =
     selectedFile !== null &&
@@ -219,7 +234,10 @@ export function CloudSlicerClient({
     }
     if (activeStep === "material")
       return (
-        !isPreForm && selectedMaterial !== null && selectedProfile !== null
+        !isPreForm &&
+        selectedMaterial !== null &&
+        selectedLot !== null &&
+        selectedProfile !== null
       );
     if (activeStep === "supports") {
       return (
@@ -321,6 +339,8 @@ export function CloudSlicerClient({
     setInspectResult(null);
     setSelectedTargetId("");
     setSelectedMaterialId("");
+    setSelectedStockId("");
+    setSelectedHardness("");
     setSelectedProfileId("");
     resetPrepareSteps();
 
@@ -722,6 +742,8 @@ export function CloudSlicerClient({
                   onChange={(event) => {
                     setSelectedTargetId(event.target.value);
                     setSelectedMaterialId("");
+                    setSelectedStockId("");
+                    setSelectedHardness("");
                     setSelectedProfileId("");
                   }}
                   className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-teal)]"
@@ -748,9 +770,38 @@ export function CloudSlicerClient({
                   available for {selectedTarget.technology}.
                 </div>
               )}
-              {visibleMaterials.length > 0 && (
+              {hardnessRequired && visibleMaterials.length > 0 && (
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                    Shore hardness
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {hardnessOptions.map((hardness) => (
+                      <button
+                        key={hardness}
+                        type="button"
+                        onClick={() => {
+                          setSelectedHardness(hardness);
+                          setSelectedMaterialId("");
+                          setSelectedStockId("");
+                          setSelectedProfileId("");
+                        }}
+                        className={cn(
+                          "rounded-full border px-3 py-1 text-xs",
+                          selectedHardness === hardness
+                            ? "border-[var(--color-teal)] bg-[var(--color-teal)]/10 text-[var(--color-teal)]"
+                            : "border-[var(--color-border)] text-[var(--color-text)]",
+                        )}
+                      >
+                        {hardness}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {hardnessFilteredMaterials.length > 0 && (
                 <div className="grid gap-3 md:grid-cols-2">
-                  {visibleMaterials.map((material) => {
+                  {hardnessFilteredMaterials.map((material) => {
                     const selected = material.id === selectedMaterialId;
                     return (
                       <div
@@ -759,12 +810,14 @@ export function CloudSlicerClient({
                         tabIndex={0}
                         onClick={() => {
                           setSelectedMaterialId(material.id);
+                          setSelectedStockId("");
                           setSelectedProfileId(material.profile?.id ?? "");
                         }}
                         onKeyDown={(event) => {
                           if (event.key === "Enter" || event.key === " ") {
                             event.preventDefault();
                             setSelectedMaterialId(material.id);
+                            setSelectedStockId("");
                             setSelectedProfileId(material.profile?.id ?? "");
                           }
                         }}
@@ -794,6 +847,33 @@ export function CloudSlicerClient({
                             .map((item) => `${item.quantity} ${item.unit}`)
                             .join(" · ")}
                         </p>
+                        <div
+                          className="mt-3 flex flex-wrap gap-2"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          {material.lots.map((lot) => (
+                            <button
+                              key={lot.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedMaterialId(material.id);
+                                setSelectedStockId(lot.id);
+                                setSelectedProfileId(
+                                  material.profile?.id ?? "",
+                                );
+                              }}
+                              className={cn(
+                                "rounded border px-2 py-1 text-xs",
+                                selectedStockId === lot.id
+                                  ? "border-[var(--color-teal)] bg-[var(--color-teal)]/10 text-[var(--color-teal)]"
+                                  : "border-[var(--color-border)] text-[var(--color-text)]",
+                              )}
+                            >
+                              {lot.color} · {lot.quantity} {lot.unit}
+                              {lot.lotLabel ? ` · ${lot.lotLabel}` : ""}
+                            </button>
+                          ))}
+                        </div>
                         {(material.baseChemistry ||
                           material.nominalHardness) && (
                           <p className="mt-1 text-xs text-[var(--color-muted)]">
@@ -835,7 +915,7 @@ export function CloudSlicerClient({
                   })}
                 </div>
               )}
-              {isPreForm && selectedMaterial && (
+              {isPreForm && selectedMaterial && selectedLot && (
                 <div className="rounded-lg border border-[var(--color-teal)]/30 bg-[var(--color-teal)]/10 p-4">
                   <p className="font-semibold text-[var(--color-text)]">
                     Prepare in PreForm
@@ -844,6 +924,14 @@ export function CloudSlicerClient({
                     Use Formlabs PreForm for setup and dispatch. EvoFab will not
                     slice or create a printer job for this resin.
                   </p>
+                  <a
+                    href="https://formlabs.com/software/preform/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-3 inline-block text-sm text-[var(--color-teal)] underline"
+                  >
+                    Download PreForm
+                  </a>
                   {selectedMaterial.sdsUrl && (
                     <a
                       href={selectedMaterial.sdsUrl}
