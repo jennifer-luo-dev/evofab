@@ -20,6 +20,7 @@ export function moonrakerLifecyclePatch(
   },
   now = new Date(),
 ): MoonrakerLifecyclePatch | null {
+  const printState = status.print_state?.toLowerCase() ?? "";
   const common = {
     print_progress: status.progress,
     layer_current: status.layer_current,
@@ -42,6 +43,22 @@ export function moonrakerLifecyclePatch(
       completed_at: now.toISOString(),
     };
   }
+  if (["cancelled", "canceled", "stopped"].includes(printState)) {
+    return {
+      ...common,
+      status: "aborted",
+      command_outcome: "succeeded",
+      completed_at: now.toISOString(),
+    };
+  }
+  if (["complete", "completed", "finished"].includes(printState)) {
+    return {
+      ...common,
+      status: "complete",
+      command_outcome: "succeeded",
+      completed_at: now.toISOString(),
+    };
+  }
   if (status.status === "idle" && job.status === "printing") {
     return job.last_command === "cancel"
       ? {
@@ -51,10 +68,7 @@ export function moonrakerLifecyclePatch(
           completed_at: now.toISOString(),
         }
       : {
-          ...common,
-          status: "complete",
-          command_outcome: "succeeded",
-          completed_at: now.toISOString(),
+          command_outcome: "outcome_unknown",
         };
   }
   return null;
