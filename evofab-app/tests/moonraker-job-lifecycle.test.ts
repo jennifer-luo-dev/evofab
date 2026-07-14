@@ -26,6 +26,10 @@ function status(value: PrinterStatus["status"]): PrinterStatus {
   };
 }
 
+function withPrintState(value: string): PrinterStatus {
+  return { ...status("idle"), print_state: value };
+}
+
 test("Moonraker lifecycle reconciles printing and natural completion", () => {
   const now = new Date("2026-07-14T00:00:00.000Z");
   assert.deepEqual(
@@ -42,10 +46,26 @@ test("Moonraker lifecycle reconciles printing and natural completion", () => {
   );
   assert.equal(
     moonrakerLifecyclePatch(
-      status("idle"),
+      withPrintState("complete"),
       { status: "printing", last_command: "start" },
       now,
     )?.status,
     "complete",
+  );
+  assert.equal(
+    moonrakerLifecyclePatch(
+      withPrintState("cancelled"),
+      { status: "printing", last_command: "start" },
+      now,
+    )?.status,
+    "aborted",
+  );
+  assert.deepEqual(
+    moonrakerLifecyclePatch(
+      withPrintState("standby"),
+      { status: "printing", last_command: "start" },
+      now,
+    ),
+    { command_outcome: "outcome_unknown" },
   );
 });
