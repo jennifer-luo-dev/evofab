@@ -181,4 +181,56 @@ export class MoonrakerDriver
       };
     }
   }
+
+  private async command(
+    printer: Printer,
+    path: string,
+  ): Promise<PrinterCommandResult> {
+    try {
+      const response = await this.request(printer, path, { method: "POST" });
+      if (!response.ok) {
+        return {
+          outcome: "failed",
+          status: response.status,
+          retryable: false,
+          code: "MOONRAKER_REJECTED",
+        };
+      }
+      return {
+        outcome: "succeeded",
+        status: response.status,
+        retryable: false,
+      };
+    } catch (error) {
+      const code = codeFor(error);
+      return {
+        outcome: code === "MOONRAKER_TIMEOUT" ? "outcome_unknown" : "failed",
+        status: null,
+        retryable: false,
+        code,
+      };
+    }
+  }
+
+  async startPrint(
+    printer: Printer,
+    path: string,
+  ): Promise<PrinterCommandResult> {
+    return this.command(
+      printer,
+      `/printer/print/start?filename=${encodeURIComponent(path)}`,
+    );
+  }
+
+  async pausePrint(printer: Printer): Promise<PrinterCommandResult> {
+    return this.command(printer, "/printer/print/pause");
+  }
+
+  async resumePrint(printer: Printer): Promise<PrinterCommandResult> {
+    return this.command(printer, "/printer/print/resume");
+  }
+
+  async cancelPrint(printer: Printer): Promise<PrinterCommandResult> {
+    return this.command(printer, "/printer/print/cancel");
+  }
 }

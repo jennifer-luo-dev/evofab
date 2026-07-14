@@ -183,10 +183,14 @@ export function CloudSlicerClient({
   );
   const selectedTarget =
     targets.find((target) => target.id === selectedTargetId) ?? null;
-  const visibleMaterials = filterMaterialPickerOptionsForTechnology(
+  const technologyMaterials = filterMaterialPickerOptionsForTechnology(
     materialOptions,
     selectedTarget?.technology,
   );
+  const visibleMaterials =
+    selectedTarget?.technology === "FDM"
+      ? technologyMaterials.filter((option) => option.profile?.id === "pla-fdm")
+      : technologyMaterials;
   const hardnessRequired =
     selectedTarget?.technology === "FDM" ||
     selectedTarget?.technology === "FGF";
@@ -195,7 +199,10 @@ export function CloudSlicerClient({
     ? selectedHardness
     : (hardnessOptions[0] ?? "");
   const hardnessFilteredMaterials = hardnessRequired
-    ? filterMaterialPickerOptionsForHardness(visibleMaterials, effectiveHardness)
+    ? filterMaterialPickerOptionsForHardness(
+        visibleMaterials,
+        effectiveHardness,
+      )
     : visibleMaterials;
   const selectedMaterial =
     hardnessFilteredMaterials.find(

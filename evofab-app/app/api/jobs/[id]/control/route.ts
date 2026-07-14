@@ -7,9 +7,11 @@ import {
   type PrinterControlAction,
 } from "@/app/lib/printer-control";
 import { PrusaLinkDriver } from "@/app/lib/prusalink-driver";
+import { MoonrakerDriver } from "@/app/lib/moonraker-driver";
 import type { Printer } from "@/app/types/printer";
 
 const ACTIONS = new Set<PrinterControlAction>([
+  "start",
   "pause",
   "resume",
   "cancel",
@@ -99,7 +101,7 @@ export async function POST(
   const supabase = await createClient();
   const { data: job, error: jobError } = await supabase
     .from("jobs")
-    .select("id, printer_id, status, prusalink_job_id")
+    .select("id, printer_id, status, prusalink_job_id, file_key")
     .eq("id", id)
     .single();
 
@@ -201,6 +203,67 @@ export async function POST(
           ? "Command outcome is unknown; status reconciliation is required."
           : "PrusaLink control failed.",
         result.retryable,
+      );
+    }
+    return NextResponse.json({ ok: true, outcome: result.outcome });
+  }
+
+  if (printer.driver_type === "moonraker") {
+    if (
+      !(["start", "pause", "resume", "cancel"] as string[]).includes(action)
+    ) {
+      return errorResponse(
+        403,
+        "MOONRAKER_CAPABILITY_UNSUPPORTED",
+        "This control is not supported by Moonraker.",
+      );
+    }
+    if (action === "start" && (job.status !== "queued" || !job.file_key)) {
+      return errorResponse(
+        409,
+        "MOONRAKER_START_NOT_READY",
+        "Only an uploaded, queued job can be started.",
+      );
+    }
+    const driver = new MoonrakerDriver();
+    await supabase
+      .from("jobs")
+      .update({
+        last_command: action,
+        command_outcome: "pending",
+        last_command_code: null,
+      })
+      .eq("id", id);
+    const result =
+      action === "start"
+        ? await driver.startPrint(printer as Printer, job.file_key!)
+        : action === "pause"
+          ? await driver.pausePrint(printer as Printer)
+          : action === "resume"
+            ? await driver.resumePrint(printer as Printer)
+            : await driver.cancelPrint(printer as Printer);
+    const patch: Record<string, unknown> = {
+      command_outcome: result.outcome,
+      last_command_code: result.code ?? null,
+    };
+    if (result.outcome === "succeeded" && action === "start") {
+      patch.status = "printing";
+      patch.pipeline_step = "printing";
+      patch.started_at = new Date().toISOString();
+    }
+    if (result.outcome === "succeeded" && action === "cancel") {
+      patch.status = "aborted";
+      patch.completed_at = new Date().toISOString();
+    }
+    await supabase.from("jobs").update(patch).eq("id", id);
+    if (result.outcome !== "succeeded") {
+      return errorResponse(
+        result.outcome === "outcome_unknown" ? 504 : 502,
+        result.code ?? "MOONRAKER_CONTROL_FAILED",
+        result.outcome === "outcome_unknown"
+          ? "Command outcome is unknown; printer status will reconcile it. Do not retry blindly."
+          : "Moonraker control failed.",
+        false,
       );
     }
     return NextResponse.json({ ok: true, outcome: result.outcome });

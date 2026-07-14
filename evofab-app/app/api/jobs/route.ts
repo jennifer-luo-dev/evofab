@@ -1,11 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/app/lib/supabase-server";
 import {
-  uploadGcode,
-  applyPrintSettings,
-  startPrint,
-} from "@/app/lib/moonraker";
-import {
   EMPTY_PRINT_SETTINGS,
   mergePrintSettings,
   normalizePrintSettings,
@@ -15,6 +10,7 @@ import {
 import { startNextQueuedJob } from "@/app/lib/print-queue";
 import type { MaterialProfile, PrintSettings } from "@/app/types/job";
 import { PrusaLinkDriver } from "@/app/lib/prusalink-driver";
+import { MoonrakerDriver } from "@/app/lib/moonraker-driver";
 import type { Printer } from "@/app/types/printer";
 
 export async function GET() {
@@ -260,40 +256,118 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Upload file to Moonraker; busy printers keep the job queued until idle.
-  let fileKey: string;
-  try {
-    fileKey = await uploadGcode(printer.ip, printer.port, file);
-    if (shouldStartNow) {
-      await applyPrintSettings(printer.ip, printer.port, settings);
-      await startPrint(printer.ip, printer.port, fileKey);
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: message }, { status: 502 });
+  if (printer.driver_type !== "moonraker") {
+    return NextResponse.json(
+      { error: "This printer does not support the prepared-print flow." },
+      { status: 400 },
+    );
+  }
+  if (!shouldStartNow) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "MOONRAKER_NOT_IDLE",
+          message: "Printer must be idle before upload.",
+          retryable: true,
+        },
+      },
+      { status: 409 },
+    );
   }
 
-  const { data: job, error } = await supabase
+  const { data: createdJob, error: createError } = await supabase
     .from("jobs")
     .insert({
       printer_id,
       experiment_id,
       material_profile_id,
       filename: file.name,
-      file_key: fileKey,
+      file_key: null,
       print_settings: { ...settings, prepare: prepareSettings },
       experiment_params,
-      status: shouldStartNow ? "printing" : "queued",
-      pipeline_step: shouldStartNow ? "printing" : "upload",
-      started_at: shouldStartNow ? new Date().toISOString() : null,
+      status: "queued",
+      pipeline_step: "upload",
+      command_outcome: "pending",
+      last_command: "upload",
     })
     .select()
     .single();
 
-  if (error)
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  if (!shouldStartNow && printerStatus?.status === "idle") {
-    await startNextQueuedJob(supabase, printer_id);
+  if (createError || !createdJob)
+    return NextResponse.json(
+      { error: createError?.message ?? "Unable to create job" },
+      { status: 500 },
+    );
+
+  const driver = new MoonrakerDriver();
+  const path = `evofab/${createdJob.id}-${file.name}`;
+  const upload = await driver.uploadFile(printer as Printer, file, path);
+  if (upload.outcome !== "succeeded" || !upload.path) {
+    await supabase
+      .from("jobs")
+      .update({
+        status: upload.outcome === "failed" ? "failed" : "queued",
+        command_outcome: upload.outcome,
+        last_command_code: upload.code ?? null,
+        completed_at:
+          upload.outcome === "failed" ? new Date().toISOString() : null,
+      })
+      .eq("id", createdJob.id);
+    return NextResponse.json(
+      {
+        error: {
+          code: upload.code ?? "MOONRAKER_UPLOAD_FAILED",
+          message:
+            upload.outcome === "outcome_unknown"
+              ? "Upload outcome is unknown; reconcile printer status before trying again."
+              : "Moonraker upload failed.",
+          retryable: false,
+        },
+        job_id: createdJob.id,
+      },
+      { status: upload.outcome === "outcome_unknown" ? 504 : 502 },
+    );
   }
-  return NextResponse.json({ job }, { status: 201 });
+  const verify = await driver.verifyStoredFile(printer as Printer, upload.path);
+  if (verify.outcome !== "succeeded") {
+    await supabase
+      .from("jobs")
+      .update({
+        status: verify.outcome === "failed" ? "failed" : "queued",
+        command_outcome: verify.outcome,
+        last_command_code: verify.code ?? null,
+        completed_at:
+          verify.outcome === "failed" ? new Date().toISOString() : null,
+      })
+      .eq("id", createdJob.id);
+    return NextResponse.json(
+      {
+        error: {
+          code: verify.code ?? "MOONRAKER_FILE_NOT_VERIFIED",
+          message:
+            verify.outcome === "outcome_unknown"
+              ? "File verification outcome is unknown; reconcile printer status before trying again."
+              : "Moonraker did not verify the uploaded file.",
+          retryable: false,
+        },
+        job_id: createdJob.id,
+      },
+      { status: verify.outcome === "outcome_unknown" ? 504 : 502 },
+    );
+  }
+  const { data: uploadedJob } = await supabase
+    .from("jobs")
+    .update({
+      file_key: upload.path,
+      command_outcome: "succeeded",
+      last_command: "upload",
+      last_command_code: null,
+    })
+    .eq("id", createdJob.id)
+    .select()
+    .single();
+  return NextResponse.json(
+    { job: uploadedJob ?? createdJob, uploaded_only: true },
+    { status: 201 },
+  );
 }

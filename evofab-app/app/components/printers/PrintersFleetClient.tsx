@@ -38,6 +38,10 @@ export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
   const [homeBusyPrinterId, setHomeBusyPrinterId] = useState<string | null>(
     null,
   );
+  const [uploadedJob, setUploadedJob] = useState<{
+    id: string;
+    printer: PrinterWithStatus;
+  } | null>(null);
 
   const draftState = useMemo<{
     draft: PreparedPrintDraft | null;
@@ -64,7 +68,7 @@ export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
         draft: JSON.parse(raw) as PreparedPrintDraft,
         loadMessage: {
           tone: "info",
-          text: "Prepared print is ready. Choose a printer to start it.",
+          text: "Prepared print is ready. Choose an idle printer to upload and verify it.",
         },
       };
     } catch {
@@ -101,7 +105,7 @@ export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
     return null;
   }
 
-  async function startPreparedPrint(printer: PrinterWithStatus) {
+  async function uploadPreparedPrint(printer: PrinterWithStatus) {
     if (!draft || !draftId || busyPrinterId) return;
 
     setBusyPrinterId(printer.id);
@@ -118,15 +122,18 @@ export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
       form.append("settings", JSON.stringify(draft.settings));
       form.append("prepare_settings", JSON.stringify(draft.prepareSettings));
       form.append("experiment_params", JSON.stringify(draft.experimentParams));
-      form.append("start_after_upload", "true");
+      form.append("start_after_upload", "false");
 
       const response = await fetch("/api/jobs", {
         method: "POST",
         body: form,
       });
       const body = await readJsonOrThrow<{ job: { id: string } }>(response);
-      window.sessionStorage.removeItem(preparedPrintStorageKey(draftId));
-      router.push(`/monitor/${body.job.id}`);
+      setUploadedJob({ id: body.job.id, printer });
+      setMessage({
+        tone: "info",
+        text: "Upload verified. Review the printer, file, and profile before starting.",
+      });
     } catch (error) {
       setMessage({
         tone: "error",
@@ -134,6 +141,32 @@ export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
           error instanceof Error
             ? error.message
             : "Unable to start prepared print.",
+      });
+    } finally {
+      setBusyPrinterId(null);
+    }
+  }
+
+  async function confirmStart() {
+    if (!uploadedJob || !draft || busyPrinterId) return;
+    setBusyPrinterId(uploadedJob.printer.id);
+    setMessage(null);
+    try {
+      const response = await fetch(`/api/jobs/${uploadedJob.id}/control`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "start" }),
+      });
+      await readJsonOrThrow(response);
+      window.sessionStorage.removeItem(preparedPrintStorageKey(draft.id));
+      router.push(`/monitor/${uploadedJob.id}`);
+    } catch (error) {
+      setMessage({
+        tone: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : "Unable to start the verified print.",
       });
     } finally {
       setBusyPrinterId(null);
@@ -328,22 +361,77 @@ export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
                 >
                   <button
                     disabled={
-                      !draft ||
-                      busyPrinterId !== null ||
-                      (readOnly && statusValue !== "idle")
+                      !draft || busyPrinterId !== null || statusValue !== "idle"
                     }
-                    onClick={() => startPreparedPrint(printer)}
+                    onClick={() => uploadPreparedPrint(printer)}
                     title={printButtonLabel}
                     className="w-full truncate rounded-md bg-[var(--color-teal)] px-2 py-1.5 text-xs font-semibold text-[var(--color-bg)] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     {busyPrinterId === printer.id
-                      ? "Starting"
-                      : printButtonLabel}
+                      ? "Uploading"
+                      : `Upload: ${preparedDisplayName ?? "prepared print"}`}
                   </button>
                 </div>
               </section>
             );
           })}
+        </div>
+      )}
+      {uploadedJob && draft && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="start-print-title"
+        >
+          <div className="w-full max-w-md rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-xl">
+            <h2
+              id="start-print-title"
+              className="text-base font-semibold text-[var(--color-text)]"
+            >
+              Start verified print?
+            </h2>
+            <p className="mt-3 text-sm text-[var(--color-muted)]">
+              This sends one start command to the printer. Confirm the physical
+              printer is clear and supervised.
+            </p>
+            <dl className="mt-4 space-y-2 rounded-md bg-[var(--color-surface-2)] p-3 text-sm">
+              <div>
+                <dt className="inline text-[var(--color-muted)]">Printer: </dt>
+                <dd className="inline font-semibold text-[var(--color-text)]">
+                  {uploadedJob.printer.name}
+                </dd>
+              </div>
+              <div>
+                <dt className="inline text-[var(--color-muted)]">File: </dt>
+                <dd className="inline font-mono text-[var(--color-text)]">
+                  {draft.filename}
+                </dd>
+              </div>
+              <div>
+                <dt className="inline text-[var(--color-muted)]">Profile: </dt>
+                <dd className="inline font-semibold text-[var(--color-text)]">
+                  {draft.materialProfileId ?? "Generic PLA preset chain"}
+                </dd>
+              </div>
+            </dl>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={() => setUploadedJob(null)}
+                disabled={busyPrinterId !== null}
+                className="rounded-md border border-[var(--color-border)] px-3 py-2 text-sm font-semibold text-[var(--color-text)]"
+              >
+                Not now
+              </button>
+              <button
+                onClick={confirmStart}
+                disabled={busyPrinterId !== null}
+                className="rounded-md bg-[var(--color-teal)] px-3 py-2 text-sm font-semibold text-[var(--color-bg)]"
+              >
+                {busyPrinterId ? "Starting" : "Confirm and start"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </>

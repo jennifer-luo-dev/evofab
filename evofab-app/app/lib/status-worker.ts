@@ -8,6 +8,7 @@ import { PrusaLinkDriver } from "@/app/lib/prusalink-driver";
 import { MoonrakerError } from "@/app/lib/moonraker-errors";
 import type { Printer, PrinterStatus } from "@/app/types/printer";
 import { prusaLifecyclePatch } from "@/app/lib/prusalink-job-lifecycle";
+import { moonrakerLifecyclePatch } from "@/app/lib/moonraker-job-lifecycle";
 
 export const DEFAULT_STATUS_POLL_INTERVAL_MS = 2_000;
 export const MIN_STATUS_POLL_INTERVAL_MS = 250;
@@ -131,7 +132,11 @@ export async function writeStatusWorkerTick(
       const status = await connector.readStatus(printer);
       backoffState.delete(printer.id);
       statuses.push(status);
-      if (!options.connector && printer.driver_type === "prusalink") {
+      if (
+        !options.connector &&
+        (printer.driver_type === "prusalink" ||
+          printer.driver_type === "moonraker")
+      ) {
         const jobs = options.supabase.from("jobs") as {
           select(columns: string): {
             eq(
@@ -175,7 +180,10 @@ export async function writeStatusWorkerTick(
           .limit(1)
           .maybeSingle();
         if (activeJob) {
-          const patch = prusaLifecyclePatch(status, activeJob, now);
+          const patch =
+            printer.driver_type === "prusalink"
+              ? prusaLifecyclePatch(status, activeJob, now)
+              : moonrakerLifecyclePatch(status, activeJob, now);
           if (patch) await jobs.update({ ...patch }).eq("id", activeJob.id);
         }
       }
