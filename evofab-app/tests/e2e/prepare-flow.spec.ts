@@ -271,8 +271,10 @@ endsolid smoke
   ).toHaveCount(0);
 
   await page.getByLabel("Print target").selectOption("printer:printer-fdm");
-  await expect(page.getByLabel("Shore hardness")).toBeDisabled();
-  await expect(page.getByText("Rigid", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Shore hardness")).toHaveCount(0);
+  await expect(
+    page.getByText(/No verified materials with positive, non-depleted stock/),
+  ).toBeVisible();
 
   await page.getByLabel("Print target").selectOption("printer:printer-fgf");
   await expect(page.getByText("Elastic 50A V2")).toHaveCount(0);
