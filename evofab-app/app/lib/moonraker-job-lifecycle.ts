@@ -43,7 +43,10 @@ export function moonrakerLifecyclePatch(
       completed_at: now.toISOString(),
     };
   }
-  if (["cancelled", "canceled", "stopped"].includes(printState)) {
+  if (
+    job.status === "printing" &&
+    ["cancelled", "canceled", "stopped"].includes(printState)
+  ) {
     return {
       ...common,
       status: "aborted",
@@ -51,7 +54,10 @@ export function moonrakerLifecyclePatch(
       completed_at: now.toISOString(),
     };
   }
-  if (["complete", "completed", "finished"].includes(printState)) {
+  if (
+    job.status === "printing" &&
+    ["complete", "completed", "finished"].includes(printState)
+  ) {
     return {
       ...common,
       status: "complete",

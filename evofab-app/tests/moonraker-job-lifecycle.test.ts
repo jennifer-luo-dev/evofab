@@ -68,4 +68,11 @@ test("Moonraker lifecycle reconciles printing and natural completion", () => {
     ),
     { command_outcome: "outcome_unknown" },
   );
+  assert.equal(
+    moonrakerLifecyclePatch(withPrintState("cancelled"), {
+      status: "queued",
+      last_command: "upload",
+    }),
+    null,
+  );
 });
