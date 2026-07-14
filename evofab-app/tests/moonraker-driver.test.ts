@@ -112,3 +112,28 @@ test("Moonraker upload timeout is outcome_unknown and is not retried", async () 
   assert.equal(result.code, "MOONRAKER_TIMEOUT");
   assert.equal(calls, 1);
 });
+
+test("Moonraker start and pause commands are single dispatches with unknown timeout outcomes", async () => {
+  const seen: string[] = [];
+  const client = driver(async (url) => {
+    seen.push(String(url));
+    return new Response("{}", { status: 200 });
+  });
+  assert.equal(
+    (await client.startPrint(printer, "evofab/job.gcode")).outcome,
+    "succeeded",
+  );
+  assert.equal((await client.pausePrint(printer)).outcome, "succeeded");
+  assert.deepEqual(
+    seen.map((url) => new URL(url).pathname),
+    ["/printer/print/start", "/printer/print/pause"],
+  );
+
+  let calls = 0;
+  const timeout = driver(async () => {
+    calls += 1;
+    throw new DOMException("timed out", "TimeoutError");
+  });
+  assert.equal((await timeout.resumePrint(printer)).outcome, "outcome_unknown");
+  assert.equal(calls, 1);
+});

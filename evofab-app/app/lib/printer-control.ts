@@ -8,6 +8,7 @@ import {
 } from "@/app/lib/moonraker";
 
 export type PrinterControlAction =
+  | "start"
   | "pause"
   | "resume"
   | "cancel"
@@ -27,7 +28,8 @@ export async function runPrinterControl(
   if (action === "pause") return pausePrint(printer.ip, printer.port);
   if (action === "resume") return resumePrint(printer.ip, printer.port);
   if (action === "cancel") return cancelPrint(printer.ip, printer.port);
-  if (action === "emergency_stop") return emergencyStop(printer.ip, printer.port);
+  if (action === "emergency_stop")
+    return emergencyStop(printer.ip, printer.port);
   if (action === "restart") return restartKlipper(printer.ip, printer.port);
   return firmwareRestartKlipper(printer.ip, printer.port);
 }
@@ -36,6 +38,8 @@ export function controlRequiresGuard(action: PrinterControlAction): boolean {
   return action === "restart" || action === "firmware_restart";
 }
 
-export function expectedControlConfirmation(action: PrinterControlAction): string {
+export function expectedControlConfirmation(
+  action: PrinterControlAction,
+): string {
   return action === "restart" ? "RESTART" : "FIRMWARE_RESTART";
 }
