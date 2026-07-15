@@ -118,10 +118,17 @@ All unsuccessful starts below auto-cancelled before model deposition. Their term
 
 - Live acceptance is achieved: slice, upload, confirmation, explicit start, pause, resume, and natural
   completion have all been exercised on `.89` with announced state-changing commands.
-- Final proof still required: after deployment from merged main, perform one upload-only regression while
-  `.89` is idle and cool. Announce `SDCARD_RESET_FILE`, confirm `standby`, upload with `print=false` plus
-  checksum, verify the file list, and observe at least five worker polls. The job must remain `queued`
-  with no inherited layers, `last_command=upload`, and `command_outcome=succeeded`. Do not start that print.
+- The post-merge upload-only regression passed on 2026-07-15. With `.89` idle and cool, the announced
+  `SDCARD_RESET_FILE` command returned the printer to `standby` with an inactive virtual SD and both heater
+  targets at zero. Slicer job `71d15296-4ed5-4dd3-8d70-e68315350fb3` was uploaded with `print=false` and
+  created dashboard job `e430f42c-ca87-471d-a760-80f86fa1df6c`.
+- Moonraker listed the nested 209,724-byte file
+  `slice-71d15296-4ed5-4dd3-8d70-e68315350fb3.gcode/slice-71d15296-4ed5-4dd3-8d70-e68315350fb3.gcode`.
+  Its read-back SHA-256 matched the source checksum exactly:
+  `958ad518dcac14ec2df4cb870f240efacd0b484d5b1af8a81a6971d6a4135a43`.
+- Across five observed status-worker polls, the job remained `queued` with `last_command=upload`,
+  `command_outcome=succeeded`, null current/total layers, Moonraker `standby`, and inactive virtual SD.
+  No print/start call was made.
 - The oversized incident status-worker log must be archived outside the repository. Log rotation and
   PID-stamped log lines are follow-up work, not part of this acceptance change.
 - `.21` is intentionally powered off. Its timeout/backoff is expected and must be re-verified only when
