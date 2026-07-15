@@ -17,16 +17,26 @@ export function moonrakerLifecyclePatch(
     status: string;
     command_outcome?: string | null;
     last_command?: string | null;
+    filename?: string | null;
+    file_key?: string | null;
   },
   now = new Date(),
 ): MoonrakerLifecyclePatch | null {
   const printState = status.print_state?.toLowerCase() ?? "";
+  const activeFilename = basename(status.filename);
+  const queuedFilename = basename(job.filename ?? job.file_key);
   const common = {
     print_progress: status.progress,
     layer_current: status.layer_current,
     layer_total: status.layer_total,
   };
   if (status.status === "printing" || status.status === "paused") {
+    if (
+      job.status === "queued" &&
+      (!activeFilename || !queuedFilename || activeFilename !== queuedFilename)
+    ) {
+      return null;
+    }
     return {
       ...common,
       status: "printing",
@@ -78,4 +88,10 @@ export function moonrakerLifecyclePatch(
         };
   }
   return null;
+}
+
+function basename(value: string | null | undefined): string | null {
+  const normalized = value?.trim().replaceAll("\\", "/");
+  if (!normalized) return null;
+  return normalized.split("/").at(-1)?.toLowerCase() ?? null;
 }
