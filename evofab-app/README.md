@@ -65,16 +65,25 @@ Other scripts: `npm run build`, `npm run start`, `npm run lint`.
 
 ### Frontend (`app/`)
 
-- `setup/`, `monitor/`, `results/`, `history/` — the core job pipeline pages
-  (submit a job → watch it print and run → view curvature results → browse
-  past results)
+- `setup/`, `monitor/`, `results/` — the original job pipeline pages (submit
+  a job → watch it print and run → view curvature results), still backed by
+  the real `jobs`/`printers`/`results` Supabase tables
+- `(themed)/pipelines/`, `(themed)/history/`, `(themed)/machine-settings/` —
+  a route group (doesn't affect the URL) previewing the interface's target
+  shape: building a pipeline from arbitrary technology steps, a merged run
+  history + progress view, and machine inventory management. Currently
+  **mock-data-only**, ahead of the `machines`/`pipelines`/`pipeline_steps`
+  schema (`supabase/schema.sql`) being wired up to an API. The `(themed)`
+  layout also scopes a light/dark theme toggle to just these three pages —
+  every other page stays on the single dark theme in `globals.css`
 - `robot-test/`, `actuation-test/`, `classification-test/` — manual hardware
   diagnostic pages, used to exercise the robot arm, solenoids, and camera
   independently of a full job run. `actuation-test/` also hosts the live
   camera preview and actuation-synced capture (see below) — there is no
   separate camera-test page
 - `components/` — organized by feature area (`setup/`, `monitor/`,
-  `results/`, `history/`, `layout/`, `ui/`)
+  `results/`, `history/`, `pipelines/`, `machine-settings/`, `theme/`,
+  `layout/`, `ui/`)
 - `contexts/` — React Context providers for job state (`JobContext`),
   printer setup state (`PrinterContext`), and live robot arm status
   (`RobotContext`, backed by a WebSocket to the FastAPI server)

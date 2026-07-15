@@ -1,39 +1,42 @@
 // NavTabs.tsx: React component for tabs associated with site pages
-'use client'
+'use client';
 
-import Link from 'next/link'
-import { usePathname } from 'next/navigation'
-import { cn } from '@/app/lib/utils'
-import { useJob } from '@/app/contexts/JobContext'
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { cn } from '@/app/lib/utils';
+import { useJob } from '@/app/contexts/JobContext';
 
 const TABS = [
-  { label: 'Setup',       href: '/setup' },
-  { label: 'Monitor',     href: '/monitor' },
-  { label: 'Results',     href: '/results' },
-  { label: 'History',     href: '/history' },
+  // { label: 'Setup', href: '/setup' },
+  // { label: 'Monitor', href: '/monitor' },
+  // { label: 'Results', href: '/results' },
+  { label: 'Pipelines', href: '/pipelines' },
+  { label: 'History', href: '/history' },
+  { label: 'Machine Settings', href: '/machine-settings' },
   // TODO: remove when robot motion is integrated into the main flow
-  { label: 'Robot Test',        href: '/robot-test' },
-  { label: 'Actuation Test',    href: '/actuation-test' },
-  { label: 'Classification',    href: '/classification-test' },
-]
+  // { label: 'Robot Test', href: '/robot-test' },
+  // { label: 'Actuation Test', href: '/actuation-test' },
+  // { label: 'Classification', href: '/classification-test' },
+];
 
 /**
  * App-wide navigation tabs. The Monitor and Results tabs link to the active job's
  * URL when one exists, otherwise fall back to their index routes.
  */
 export function NavTabs() {
-  const pathname = usePathname()
-  const { jobActive, currentJobId, resultCount } = useJob()
+  const pathname = usePathname();
+  const { jobActive, currentJobId, resultCount } = useJob();
 
   return (
-    <nav className="flex items-center gap-1 px-6 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
+    <nav className="flex items-center gap-1 px-6 overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-surface)]">
       {TABS.map((tab) => {
-        const isActive = pathname.startsWith(tab.href)
-        const href = tab.href === '/monitor' && currentJobId
-          ? `/monitor/${currentJobId}`
-          : tab.href === '/results' && currentJobId
-          ? `/results/${currentJobId}`
-          : tab.href
+        const isActive = pathname.startsWith(tab.href);
+        const href =
+          tab.href === '/monitor' && currentJobId
+            ? `/monitor/${currentJobId}`
+            : tab.href === '/results' && currentJobId
+              ? `/results/${currentJobId}`
+              : tab.href;
 
         return (
           <Link
@@ -56,8 +59,8 @@ export function NavTabs() {
               </span>
             )}
           </Link>
-        )
+        );
       })}
     </nav>
-  )
+  );
 }

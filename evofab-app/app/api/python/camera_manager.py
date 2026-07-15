@@ -19,6 +19,8 @@
 # camera's 1920x1080 default and stable across reconnects since it's a
 # property of the physical sensor, not of enumeration order.
 
+import json
+import subprocess
 import threading
 import time
 from typing import Optional
@@ -31,11 +33,54 @@ RETRY_DELAY_S = 3.0
 JPEG_QUALITY = 85
 MAX_PROBE_INDEX = 4
 ORBBEC_NATIVE_SIZE = (1280, 800)  # (width, height) — see module docstring
+ORBBEC_PRESENCE_CHECK_TIMEOUT_S = 4.0  # system_profiler wall-clock is ~2.3s observed
+
+
+def _orbbec_physically_present() -> bool:
+    """Cheap, non-opening presence check via `system_profiler
+    SPCameraDataType -json` (a macOS system built-in — no new dependency).
+
+    WHY THIS EXISTS: without it, _find_orbbec_index() below opens
+    cv2.VideoCapture(0, ...) every RETRY_DELAY_S while the Orbbec is
+    unplugged, in order to check its resolution — and on this machine
+    index 0 is the MacBook's built-in FaceTime HD Camera. That made the
+    FaceTime camera's indicator light blink on/off every ~3s for the
+    entire time the Orbbec was disconnected. system_profiler queries
+    which cameras macOS's own camera subsystem currently sees WITHOUT
+    opening any device, so we can skip the probe loop below entirely
+    when no Orbbec is attached.
+
+    Fails open (returns True) on any error — subprocess failure, timeout,
+    malformed JSON — so a broken presence check degrades back to the
+    original unconditional probing instead of silently disabling
+    detection forever. Same philosophy as the broad except in _run().
+    """
+    try:
+        result = subprocess.run(
+            ["system_profiler", "SPCameraDataType", "-json"],
+            capture_output=True,
+            text=True,
+            timeout=ORBBEC_PRESENCE_CHECK_TIMEOUT_S,
+            check=True,
+        )
+        data = json.loads(result.stdout)
+        cameras = data.get("SPCameraDataType", [])
+        return any("orbbec" in str(cam.get("_name", "")).lower() for cam in cameras)
+    except Exception:
+        return True
 
 
 def _find_orbbec_index() -> Optional[int]:
     """Probes cv2 device indices and returns the one whose native resolution
-    matches the Orbbec's RGB sensor, or None if it isn't found."""
+    matches the Orbbec's RGB sensor, or None if it isn't found.
+
+    Checks physical presence via system_profiler first and returns
+    immediately if absent, so this never has to open cv2.VideoCapture(0)
+    (the built-in FaceTime camera on this machine) just to rule it out —
+    see _orbbec_physically_present() for why that matters."""
+    if not _orbbec_physically_present():
+        return None
+
     for idx in range(MAX_PROBE_INDEX):
         cap = cv2.VideoCapture(idx, cv2.CAP_AVFOUNDATION)
         try:
