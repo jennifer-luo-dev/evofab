@@ -33,7 +33,11 @@ function withPrintState(value: string): PrinterStatus {
 test("Moonraker lifecycle reconciles printing and natural completion", () => {
   const now = new Date("2026-07-14T00:00:00.000Z");
   assert.deepEqual(
-    moonrakerLifecyclePatch(status("printing"), { status: "queued" }, now),
+    moonrakerLifecyclePatch(
+      status("printing"),
+      { status: "queued", filename: "cube.gcode" },
+      now,
+    ),
     {
       status: "printing",
       pipeline_step: "printing",
@@ -74,5 +78,24 @@ test("Moonraker lifecycle reconciles printing and natural completion", () => {
       last_command: "upload",
     }),
     null,
+  );
+  assert.equal(
+    moonrakerLifecyclePatch(status("printing"), {
+      status: "queued",
+      filename: "new-upload.gcode",
+      last_command: "upload",
+    }),
+    null,
+  );
+  assert.equal(
+    moonrakerLifecyclePatch(
+      { ...status("paused"), filename: "folder/cube.gcode" },
+      {
+        status: "queued",
+        file_key: "evofab/job/cube.gcode",
+        last_command: "upload",
+      },
+    )?.status,
+    "printing",
   );
 });

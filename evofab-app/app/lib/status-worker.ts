@@ -158,6 +158,8 @@ export async function writeStatusWorkerTick(
                         status: string;
                         command_outcome?: string | null;
                         last_command?: string | null;
+                        filename?: string | null;
+                        file_key?: string | null;
                       }>
                     >;
                   };
@@ -173,7 +175,9 @@ export async function writeStatusWorkerTick(
           };
         };
         const { data: activeJob } = await jobs
-          .select("id, status, command_outcome, last_command")
+          .select(
+            "id, status, command_outcome, last_command, filename, file_key",
+          )
           .eq("printer_id", printer.id)
           .in("status", ["queued", "printing"])
           .order("created_at", { ascending: false })

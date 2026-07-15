@@ -9,6 +9,10 @@ import {
   readStatusWorkerIntervalMs,
   writeStatusWorkerTick,
 } from "@/app/lib/status-worker";
+import {
+  acquireStatusWorkerSingleton,
+  readStatusWorkerSingletonPort,
+} from "@/app/lib/status-worker-singleton";
 
 const supabase = createScriptSupabaseClient();
 const connector = createStatusWorkerConnector();
@@ -91,7 +95,33 @@ function stop() {
   console.log(JSON.stringify({ event: "status-worker.stop", tick }));
 }
 
-process.on("SIGINT", stop);
-process.on("SIGTERM", stop);
+async function main(): Promise<void> {
+  const singleton = await acquireStatusWorkerSingleton();
+  if (!singleton) {
+    console.log(
+      JSON.stringify({
+        event: "status-worker.duplicate",
+        port: readStatusWorkerSingletonPort(),
+        message: "Another status worker already owns the singleton lock.",
+      }),
+    );
+    return;
+  }
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
+  try {
+    await loop();
+  } finally {
+    singleton.close();
+  }
+}
 
-void loop();
+void main().catch((error) => {
+  console.error(
+    JSON.stringify({
+      event: "status-worker.fatal",
+      message: error instanceof Error ? error.message : String(error),
+    }),
+  );
+  process.exitCode = 1;
+});
