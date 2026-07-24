@@ -1,4 +1,5 @@
 fastapi
+python-multipart
 uvicorn[standard]
 ur-rtde
 httpx
@@ -6,3 +7,4 @@ opencv-contrib-python-headless
 numpy
 scipy
 pyserial
+pyobjc-framework-AVFoundation

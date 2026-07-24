@@ -3,49 +3,80 @@
 // machine, and the action's own configurable inputs (including referencing
 // another step's output).
 
-'use client'
+'use client';
 
-import { usePipelineConfig } from './PipelineConfigContext'
-import type { ActionConfig, Step, StepDraft, StepInputConfig, TechKey, TechOption } from './types'
+import { useState } from 'react';
+import { usePipelineConfig } from './PipelineConfigContext';
+import { FileUploadZone } from '@/app/components/setup/FileUploadZone';
+import { PrintSettingsPanel } from '@/app/components/setup/PrintSettingsPanel';
+import { PositionPickerTrigger } from '@/app/components/position-picker/PositionPickerTrigger';
+import { PositionPickerModal } from '@/app/components/position-picker/PositionPickerModal';
+import type { ActionConfig, Step, StepDraft, StepInputConfig, TechKey, TechOption } from './types';
+import type { MaterialProfile, PrintSettings } from '@/app/types/job';
 
 interface StepDraftFormProps {
-  draft: StepDraft
-  mode: 'add' | 'edit'
-  error: string | null
-  availableTechs: TechOption[]
+  draft: StepDraft;
+  mode: 'add' | 'edit';
+  error: string | null;
+  availableTechs: TechOption[];
   /** Existing steps, used to populate "reference another step's output" inputs. */
-  steps: Step[]
-  onChangeTech: (tech: TechOption['key']) => void
-  onChangeAction: (action: string) => void
-  onChangeMachine: (machine: string) => void
-  onChangeInput: (key: string, value: string) => void
-  onCancel: () => void
-  onCommit: () => void
+  steps: Step[];
+  onChangeTech: (tech: TechOption['key']) => void;
+  onChangeAction: (action: string) => void;
+  onChangeMachine: (machine: string) => void;
+  onChangeInput: (key: string, value: string) => void;
+  onChangeFile: (key: string, file: File | null) => void;
+  onChangePrintSetting: (key: keyof PrintSettings, value: number) => void;
+  onChangeMaterialProfile: (profile: MaterialProfile | null) => void;
+  onCancel: () => void;
+  onCommit: () => void;
 }
 
-/** Renders one action input, dispatching to a text/number/select/step-reference control. */
+/** Renders one action input, dispatching to a text/number/select/file/step-reference control. */
 function DraftInputField({
   input,
   value,
+  file,
+  buildVolume,
   steps,
   excludeStepId,
   actionsByTech,
   onChange,
+  onFileChange,
 }: {
-  input: StepInputConfig
-  value: string
-  steps: Step[]
-  excludeStepId?: number
-  actionsByTech: Partial<Record<TechKey, ActionConfig[]>>
-  onChange: (value: string) => void
+  input: StepInputConfig;
+  value: string;
+  file: File | null;
+  buildVolume?: string | null;
+  steps: Step[];
+  excludeStepId?: number;
+  actionsByTech: Partial<Record<TechKey, ActionConfig[]>>;
+  onChange: (value: string) => void;
+  onFileChange: (file: File | null) => void;
 }) {
+  if (input.type === 'file') {
+    return (
+      <div className="flex-1 min-w-60">
+        <FileUploadZone
+          heading={input.label}
+          file={file}
+          buildVolume={buildVolume}
+          onFileChange={(f) => {
+            onFileChange(f);
+            onChange(f?.name ?? '');
+          }}
+        />
+      </div>
+    );
+  }
+
   if (input.type === 'step_output') {
     const candidates = steps.filter((s) => {
-      if (s.id === excludeStepId) return false
-      if (!input.expects) return true
-      const action = (actionsByTech[s.tech] ?? []).find((a) => a.key === s.action)
-      return (action?.outputs ?? []).some((o) => o.type === input.expects)
-    })
+      if (s.id === excludeStepId) return false;
+      if (!input.expects) return true;
+      const action = (actionsByTech[s.tech] ?? []).find((a) => a.key === s.action);
+      return (action?.outputs ?? []).some((o) => o.type === input.expects);
+    });
     return (
       <div className="flex-1 min-w-37.5">
         <label className="block text-[11px] font-semibold uppercase tracking-wide text-muted mb-1">
@@ -58,20 +89,20 @@ function DraftInputField({
         >
           <option value="">None</option>
           {candidates.map((s) => {
-            const action = (actionsByTech[s.tech] ?? []).find((a) => a.key === s.action)
+            const action = (actionsByTech[s.tech] ?? []).find((a) => a.key === s.action);
             return (
               <option key={s.id} value={s.num}>
                 Step {s.num} — {action?.label ?? s.action}
               </option>
-            )
+            );
           })}
         </select>
       </div>
-    )
+    );
   }
 
   if (input.type === 'select') {
-    const options = input.options ?? []
+    const options = input.options ?? [];
     return (
       <div className="flex-1 min-w-37.5">
         <label className="block text-[11px] font-semibold uppercase tracking-wide text-muted mb-1">
@@ -94,7 +125,7 @@ function DraftInputField({
           )}
         </select>
       </div>
-    )
+    );
   }
 
   return (
@@ -109,7 +140,7 @@ function DraftInputField({
         className="w-full px-2.25 py-1.75 rounded-md border border-border bg-surface text-text text-xs"
       />
     </div>
-  )
+  );
 }
 
 /** Inline form for adding a new pipeline step or editing an existing one. */
@@ -123,13 +154,29 @@ export function StepDraftForm({
   onChangeAction,
   onChangeMachine,
   onChangeInput,
+  onChangeFile,
+  onChangePrintSetting,
+  onChangeMaterialProfile,
   onCancel,
   onCommit,
 }: StepDraftFormProps) {
-  const { actionsByTech, machinesByTech, techLabel } = usePipelineConfig()
-  const actions = actionsByTech[draft.tech] ?? []
-  const action = actions.find((a) => a.key === draft.action) ?? actions[0]
-  const machines = machinesByTech[draft.tech] ?? []
+  const { actionsByTech, machinesByTech, techLabel, printers, materialProfiles, machineIdByName } =
+    usePipelineConfig();
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const actions = actionsByTech[draft.tech] ?? [];
+  const action = actions.find((a) => a.key === draft.action) ?? actions[0];
+  const isPrinter = draft.tech === 'printer';
+  const isRobotMove = draft.tech === 'robot_arm' && draft.action === 'move';
+  const machines = isPrinter ? printers.map((p) => p.name) : (machinesByTech[draft.tech] ?? []);
+  const selectedPrinter = isPrinter ? printers.find((p) => p.name === draft.machine) : undefined;
+  const selectedMaterialProfile =
+    materialProfiles.find((p) => p.id === draft.materialProfileId) ?? null;
+  // The embedded PrintSettingsPanel below already covers `print_profile_id` with a
+  // proper picker; the generic select control has no resolved options for it (its
+  // `source` isn't a static option list), so it would only render disabled.
+  const visibleInputs = (action?.inputs ?? []).filter(
+    (input) => !(isPrinter && input.key === 'print_profile_id')
+  );
 
   return (
     <div className="border-[1.5px] border-dashed border-teal rounded-lg p-3.5 bg-teal-dim my-2.5">
@@ -183,28 +230,74 @@ export function StepDraftForm({
             className="w-full px-2.25 py-1.75 rounded-md border border-border bg-surface text-text text-xs"
           >
             <option value="">Select…</option>
-            {machines.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
+            {isPrinter
+              ? printers.map((p) => (
+                  <option key={p.id} value={p.name}>
+                    {p.name}
+                    {p.printer_status?.online ? '' : ' (offline)'}
+                  </option>
+                ))
+              : machines.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
           </select>
         </div>
       </div>
 
-      {action && action.inputs.length > 0 && (
+      {action && visibleInputs.length > 0 && (
         <div className="flex gap-2.5 flex-wrap mb-2.5">
-          {action.inputs.map((input) => (
+          {visibleInputs.map((input) => (
             <DraftInputField
               key={input.key}
               input={input}
               value={draft.inputs[input.key]}
+              file={draft.files?.[input.key] ?? null}
+              buildVolume={selectedPrinter?.build_volume}
               steps={steps}
               excludeStepId={draft.id}
               actionsByTech={actionsByTech}
               onChange={(value) => onChangeInput(input.key, value)}
+              onFileChange={(file) => onChangeFile(input.key, file)}
             />
           ))}
+          {isRobotMove && <PositionPickerTrigger onClick={() => setPickerOpen(true)} />}
+        </div>
+      )}
+
+      {isRobotMove && pickerOpen && (
+        <PositionPickerModal
+          initial={{
+            x: parseFloat(draft.inputs.x) || 0,
+            y: parseFloat(draft.inputs.y) || 0,
+            z: parseFloat(draft.inputs.z) || 0,
+          }}
+          machineId={machineIdByName[draft.machine]}
+          onCancel={() => setPickerOpen(false)}
+          onConfirm={(pos) => {
+            onChangeInput('x', String(pos.x));
+            onChangeInput('y', String(pos.y));
+            onChangeInput('z', String(pos.z));
+            setPickerOpen(false);
+          }}
+        />
+      )}
+
+      {isPrinter && (
+        <div className="mb-2.5">
+          <PrintSettingsPanel
+            materialProfiles={materialProfiles}
+            settings={draft.printSettings}
+            onUpdateSetting={onChangePrintSetting}
+            selectedMaterialProfile={selectedMaterialProfile}
+            onSelectMaterialProfile={(profile) => {
+              onChangeMaterialProfile(profile);
+              // Keep the generic input record in sync for step summaries, storing the
+              // readable name (like the machine field) rather than the raw profile id.
+              onChangeInput('print_profile_id', profile?.name ?? '');
+            }}
+          />
         </div>
       )}
 
@@ -227,5 +320,5 @@ export function StepDraftForm({
         </button>
       </div>
     </div>
-  )
+  );
 }

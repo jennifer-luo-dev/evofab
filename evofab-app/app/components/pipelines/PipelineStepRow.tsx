@@ -15,6 +15,8 @@ interface PipelineStepRowProps {
   meta?: string
   /** True when this row belongs to a synced group, drawing the accent left-border. */
   synced?: boolean
+  /** True while this step is actively executing (Run Pipeline) — draws a teal highlight. */
+  highlighted?: boolean
   leading?: ReactNode
   trailing?: ReactNode
 }
@@ -26,16 +28,18 @@ export function PipelineStepRow({
   title,
   meta,
   synced,
+  highlighted,
   leading,
   trailing,
 }: PipelineStepRowProps) {
+  const stateClasses = highlighted
+    ? cn('border-teal bg-teal-dim ring-1 ring-teal', synced ? 'rounded-l-sm rounded-r-lg' : 'rounded-lg')
+    : synced
+      ? 'border-l-[3px] border-teal rounded-l-sm rounded-r-lg bg-surface'
+      : 'border-border rounded-lg bg-surface'
+
   return (
-    <div
-      className={cn(
-        'flex items-center gap-2.5 px-2.5 py-2.25 border bg-surface',
-        synced ? 'border-l-[3px] border-teal rounded-l-sm rounded-r-lg' : 'border-border rounded-lg'
-      )}
-    >
+    <div className={cn('flex items-center gap-2.5 px-2.5 py-2.25 border transition-colors', stateClasses)}>
       {leading}
       <span className="w-4.5 shrink-0 text-center font-mono text-xs text-muted">{number}</span>
       <span className="shrink-0 text-teal">{icon}</span>

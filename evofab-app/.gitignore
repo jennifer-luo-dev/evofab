@@ -44,5 +44,9 @@ next-env.d.ts
 path/
 venv/
 .venv/
+orbbec_env/
 __pycache__/
 *.pyc
+
+# logs
+Log/

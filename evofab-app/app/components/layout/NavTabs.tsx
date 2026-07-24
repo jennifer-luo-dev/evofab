@@ -13,6 +13,8 @@ const TABS = [
   { label: 'Pipelines', href: '/pipelines' },
   { label: 'History', href: '/history' },
   { label: 'Machine Settings', href: '/machine-settings' },
+  // TEMPORARY — camera stale-frame diagnostic, remove when no longer needed
+  { label: 'Camera Test', href: '/camera-test' },
   // TODO: remove when robot motion is integrated into the main flow
   // { label: 'Robot Test', href: '/robot-test' },
   // { label: 'Actuation Test', href: '/actuation-test' },

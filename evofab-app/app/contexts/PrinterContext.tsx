@@ -8,7 +8,7 @@ import { createContext, useContext, useState, useCallback, ReactNode } from 'rea
 import type { PrinterWithStatus } from '@/app/types/printer'
 import type { PrintSettings, MaterialProfile, Experiment, ExperimentParams } from '@/app/types/job'
 
-const DEFAULT_SETTINGS: PrintSettings = {
+export const DEFAULT_SETTINGS: PrintSettings = {
   nozzle_temp: 200,
   bed_temp: 60,
   speed: 40,

@@ -66,15 +66,17 @@ CREATE TABLE public.machine_camera (
   model text NOT NULL,
   capture_method text NOT NULL,
   resolution text,
+  ppm numeric,
   CONSTRAINT machine_camera_pkey PRIMARY KEY (machine_id),
   CONSTRAINT machine_camera_machine_id_fkey FOREIGN KEY (machine_id) REFERENCES public.machines(id)
 );
 CREATE TABLE public.machine_classification_model (
   machine_id uuid NOT NULL,
   model_name text NOT NULL,
-  script_path text,
-  model_version text,
-  confidence_threshold numeric,
+  function_name text NOT NULL,
+  threshold numeric,
+  z_min_m numeric,
+  z_max_m numeric,
   CONSTRAINT machine_classification_model_pkey PRIMARY KEY (machine_id),
   CONSTRAINT machine_classification_model_machine_id_fkey FOREIGN KEY (machine_id) REFERENCES public.machines(id)
 );

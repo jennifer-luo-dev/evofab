@@ -152,6 +152,22 @@ export function TrashIcon(props: IconProps) {
   )
 }
 
+/** Crosshair/target glyph — trigger for the robot-arm position picker. */
+export function TargetIcon(props: IconProps) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" {...props}>
+      <circle cx="8" cy="8" r="5" stroke="currentColor" strokeWidth="1.3" />
+      <circle cx="8" cy="8" r="1.3" fill="currentColor" />
+      <path
+        d="M8 0.5V3M8 13V15.5M0.5 8H3M13 8H15.5"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
+
 /** Small decorative curved connector drawn between consecutive pipeline steps. */
 export function StepConnectorGlyph(props: IconProps) {
   return (

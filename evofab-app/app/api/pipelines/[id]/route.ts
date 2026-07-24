@@ -7,8 +7,10 @@
 // `{ summary: string }` for its results-table row; falls back to a raw JSON
 // dump if that's absent.
 
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/app/lib/supabase-server'
+
+const TERMINAL_PIPELINE_STATUSES = new Set(['complete', 'failed', 'aborted'])
 
 const STATE_DOT_CLASS: Record<string, string> = {
   idle: 'bg-green',
@@ -99,4 +101,30 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   }
 
   return NextResponse.json({ pipeline, progress, results, machineStatus })
+}
+
+/**
+ * PATCH /api/pipelines/[id] — Body: `{ status }`. Updates a run's overall status, stamping
+ * `completed_at` when it reaches a terminal status (`complete`/`failed`/`aborted`).
+ */
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
+  const supabase = await createClient()
+  const body = await req.json()
+
+  const status: string | undefined = body.status
+  if (!status) return NextResponse.json({ error: 'status is required' }, { status: 400 })
+
+  const update: Record<string, unknown> = { status }
+  if (TERMINAL_PIPELINE_STATUSES.has(status)) update.completed_at = new Date().toISOString()
+
+  const { data, error } = await supabase
+    .from('pipelines')
+    .update(update)
+    .eq('id', id)
+    .select()
+    .single()
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ pipeline: data })
 }

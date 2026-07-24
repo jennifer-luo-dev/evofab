@@ -8,12 +8,20 @@
 
 import { createContext, useContext, type ReactNode } from 'react'
 import type { ActionConfig, TechKey, TechOption } from './types'
+import type { PrinterWithStatus } from '@/app/types/printer'
+import type { MaterialProfile } from '@/app/types/job'
 
 export interface PipelineConfig {
   techs: TechOption[]
   techLabel: Record<TechKey, string>
   actionsByTech: Partial<Record<TechKey, ActionConfig[]>>
   machinesByTech: Partial<Record<TechKey, string[]>>
+  /** `machines.id` by name (names are unique — see evofab-app/supabase/schema.sql) — needed to persist a step's `pipeline_steps.machine_id`. */
+  machineIdByName: Record<string, string>
+  /** Active printers (with live status), used in place of `machinesByTech` for the `printer` tech's machine picker. */
+  printers: PrinterWithStatus[]
+  /** Material profiles, used by the embedded PrintSettingsPanel on `printer` steps. */
+  materialProfiles: MaterialProfile[]
 }
 
 export const EMPTY_PIPELINE_CONFIG: PipelineConfig = {
@@ -21,6 +29,9 @@ export const EMPTY_PIPELINE_CONFIG: PipelineConfig = {
   techLabel: {} as Record<TechKey, string>,
   actionsByTech: {},
   machinesByTech: {},
+  machineIdByName: {},
+  printers: [],
+  materialProfiles: [],
 }
 
 const PipelineConfigContext = createContext<PipelineConfig | null>(null)

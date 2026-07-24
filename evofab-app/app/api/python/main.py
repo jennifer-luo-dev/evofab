@@ -28,16 +28,24 @@ from math import sqrt
 from typing import Optional
 
 import cv2
+import httpx
 import numpy as np
-from fastapi import FastAPI, HTTPException, Response, WebSocket
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from analyzer import ActuatorAnalyzer
-from camera_manager import CameraManager
-from geometry import compute_spine_curvature
+from geometry import ACTUATOR_LENGTH_M, compute_spine_curvature
 
 ROBOT_IP = os.getenv("ROBOT_IP", "192.168.50.100")
+
+# Standalone Orbbec bridge (camera_orbbec_service.py) — talks to the camera
+# directly over USB via pyorbbecsdk, on its own fixed port, run separately
+# (as root — see that file's docstring) from this process. Every request to
+# its /capture grabs a brand-new frame; there is no continuously-updated
+# cache the way camera_manager.py's CameraManager used to provide.
+ORBBEC_SERVICE_URL = os.getenv("ORBBEC_SERVICE_URL", "http://127.0.0.1:8002")
+ORBBEC_CAPTURE_TIMEOUT_S = 2.0  # margin over the service's own ~1s wait_for_frames timeout
 
 # Safety planes (metres, robot base frame).  Constraint: n·p + d ≥ 0
 # Derived from UR7e controller safety configuration.
@@ -128,14 +136,10 @@ def _rtde_reader() -> None:
             time.sleep(5)
 
 
-_camera = CameraManager()  # auto-detects the Orbbec — see camera_manager.py
-
-
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     threading.Thread(target=_rtde_reader, daemon=True).start()
     threading.Thread(target=_serial_reader, daemon=True).start()
-    _camera.start()
     yield
 
 
@@ -435,9 +439,10 @@ _last_capture_meta: Optional[dict] = None  # {"channel", "synced", "latency_ms",
 _last_capture_jpeg: Optional[bytes] = None  # the annotated image (mask/skeleton/fit drawn on), not raw
 
 # Vision pipeline (analyzer.py mask -> skeleton, geometry.py circle fit).
-# RGB-only input (no Orbbec-SDK depth stream, see camera_manager.py), so
-# ActuatorAnalyzer always takes its brightness-threshold branch — z_min/z_max
-# are unused in that mode, kept at analyzer.py's own defaults.
+# RGB-only input (no depth stream requested from the Orbbec — see
+# camera_orbbec_service.py's Config), so ActuatorAnalyzer always takes its
+# brightness-threshold branch — z_min/z_max are unused in that mode, kept at
+# analyzer.py's own defaults.
 _analyzer = ActuatorAnalyzer()
 
 # Pixels-per-metre scaling for geometry.py's circle fit, carried over from
@@ -449,12 +454,16 @@ _analyzer = ActuatorAnalyzer()
 PPM = 2800.0
 
 
-def _annotate_curvature(frame_bgr: np.ndarray):
+def _annotate_curvature(frame_bgr: np.ndarray, analyzer: ActuatorAnalyzer = None):
     """Runs mask -> skeleton -> circle-fit on one frame and draws the result
     (mask tint, skeleton, fitted arc + center) on a copy of it, so the fit
     can be visually checked against the image it came from. Returns
-    (annotated_bgr, CurvatureResult)."""
-    raw_mask = _analyzer.generate_mask(frame_bgr)
+    (annotated_bgr, CurvatureResult). `analyzer` defaults to the module-level
+    actuation-capture instance; POST /classify passes its own, built from a
+    machine's machine_classification_model tuning columns."""
+    if analyzer is None:
+        analyzer = _analyzer
+    raw_mask = analyzer.generate_mask(frame_bgr)
 
     # Restrict to the largest connected blob before skeletonizing. The
     # brightness threshold in analyzer.generate_mask also picks up scattered
@@ -471,7 +480,7 @@ def _annotate_curvature(frame_bgr: np.ndarray):
     else:
         mask = raw_mask
 
-    skeleton = _analyzer.extract_spine(mask)
+    skeleton = analyzer.extract_spine(mask)
     result = compute_spine_curvature(skeleton, PPM)
 
     display = frame_bgr.copy()
@@ -511,13 +520,27 @@ def _annotate_curvature(frame_bgr: np.ndarray):
 
 
 def _resolve_capture(channel: int, synced: bool, event_ts: float, armed_at: float) -> None:
-    """Grabs the freshest available camera frame, runs curvature analysis on
+    """Grabs a fresh frame from the Orbbec bridge (camera_orbbec_service.py,
+    ORBBEC_SERVICE_URL — port 8002 by default), runs curvature analysis on
     it, and records the annotated result as the last capture. event_ts is
     the monotonic time STATUS:BUSY was read (or the timeout deadline, on the
     fallback path). armed_at identifies which arm request this resolves —
     since the synced path runs on a delay timer, a fast re-fire could
     otherwise let a stale timer clear/overwrite a newer request; if
-    _capture_request has since moved on, this is a no-op."""
+    _capture_request has since moved on, this is a no-op.
+
+    NOTE on latency_ms below: this used to be a true hardware-capture
+    timestamp — camera_manager.py's CameraManager stamped frame_ts the
+    instant its background thread read that exact frame off the sensor,
+    continuously, off the request path entirely. Now that the frame comes
+    from an HTTP round-trip to camera_orbbec_service.py (which itself
+    blocks on pipeline.wait_for_frames), frame_ts is measured as soon as
+    that request returns, so latency_ms also includes network + SDK wait +
+    JPEG encode/decode overhead — no longer a pure hardware-capture number.
+    Kept under the same name since actuation-test/page.tsx's UI already
+    depends on it, but treat it as "time to capture" rather than "camera
+    hardware timing" from here on.
+    """
     global _last_capture_meta, _last_capture_jpeg, _capture_request
     with _capture_lock:
         req = _capture_request
@@ -525,11 +548,17 @@ def _resolve_capture(channel: int, synced: bool, event_ts: float, armed_at: floa
             return  # superseded by a newer arm — stale timer, do nothing
         _capture_request = None
 
-    result = _camera.capture_now()
-    if result is None:
-        return  # camera not connected — nothing to save
+    try:
+        resp = httpx.get(f"{ORBBEC_SERVICE_URL}/capture", timeout=ORBBEC_CAPTURE_TIMEOUT_S)
+        resp.raise_for_status()
+    except httpx.HTTPError:
+        return  # camera service unreachable / no frame available — nothing to save
 
-    frame, frame_ts = result
+    frame_ts = time.monotonic()
+    frame = cv2.imdecode(np.frombuffer(resp.content, np.uint8), cv2.IMREAD_COLOR)
+    if frame is None:
+        return
+
     try:
         annotated, curvature = _annotate_curvature(frame)
     except Exception:
@@ -620,6 +649,13 @@ def _serial_reader() -> None:
     (2 s, set in _open_serial_conn) doubles as the poll interval for the
     capture-armed timeout fallback below, since readline() returns on its
     own after that long even with no data.
+
+    _resolve_capture now blocks on an HTTP round-trip to the Orbbec bridge
+    (camera_orbbec_service.py) rather than an instant in-memory read, so the
+    timeout-fallback call below is dispatched on its own thread — same as
+    the synced path's threading.Timer above — instead of calling it inline.
+    Blocking this loop directly would delay draining the Arduino's serial
+    output for as long as that HTTP call takes.
     """
     global _serial_conn
     while True:
@@ -636,9 +672,11 @@ def _serial_reader() -> None:
                 with _capture_lock:
                     req = _capture_request
                 if req is not None and time.monotonic() - req["armed_at"] > CAPTURE_TIMEOUT_S:
-                    _resolve_capture(
-                        req["channel"], synced=False, event_ts=time.monotonic(), armed_at=req["armed_at"]
-                    )
+                    threading.Thread(
+                        target=_resolve_capture,
+                        args=(req["channel"], False, time.monotonic(), req["armed_at"]),
+                        daemon=True,
+                    ).start()
 
                 if not line:
                     continue  # readline() timed out with no data
@@ -763,17 +801,38 @@ async def actuation_status() -> dict:
 
 @app.get("/camera/status")
 async def camera_status() -> dict:
-    return _camera.status()
+    """Same response shape as before CameraManager was retired
+    ({connected, backend, resolution}) — translated from the Orbbec
+    bridge's own /status shape so actuation-test/page.tsx (which only
+    reads `.connected`) needs no changes."""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{ORBBEC_SERVICE_URL}/status", timeout=ORBBEC_CAPTURE_TIMEOUT_S)
+        resp.raise_for_status()
+        data = resp.json()
+        return {"connected": data["connected"], "backend": "pyorbbecsdk", "resolution": data["resolution"]}
+    except httpx.HTTPError:
+        return {"connected": False, "backend": "pyorbbecsdk", "resolution": None}
 
 
 @app.get("/camera/snapshot")
 async def camera_snapshot():
     """Single current JPEG frame. Poll with a cache-busting query param
-    (e.g. ?t=Date.now()) from an <img> tag for a live-ish preview."""
-    jpeg = _camera.get_latest_jpeg_bytes()
-    if jpeg is None:
+    (e.g. ?t=Date.now()) from an <img> tag for a live-ish preview.
+
+    Unlike the old CameraManager-backed version, every poll here triggers a
+    brand-new frame grab on the Orbbec bridge (camera_orbbec_service.py has
+    no continuously-updated cache) rather than re-encoding an
+    already-current in-memory frame — a real cost difference worth knowing
+    if this is ever polled much faster than actuation-test's current
+    ~5/sec (SNAPSHOT_POLL_MS)."""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{ORBBEC_SERVICE_URL}/capture", timeout=ORBBEC_CAPTURE_TIMEOUT_S)
+        resp.raise_for_status()
+    except httpx.HTTPError:
         raise HTTPException(status_code=503, detail="Camera not connected")
-    return Response(content=jpeg, media_type="image/jpeg")
+    return Response(content=resp.content, media_type="image/jpeg")
 
 
 @app.get("/camera/last-capture")
@@ -789,3 +848,73 @@ async def camera_last_capture_image():
     if _last_capture_jpeg is None:
         raise HTTPException(status_code=404, detail="No capture yet")
     return Response(content=_last_capture_jpeg, media_type="image/jpeg")
+
+
+
+# A `camera` pipeline step's on-demand "take a photo now" capture used to
+# live here too, but now goes straight to camera_orbbec_service.py (its own
+# standalone bridge, port 8002, talking to the Orbbec directly over USB via
+# pyorbbecsdk) instead of through this process — see stepExecutors.ts's
+# runCameraStep and app/lib/camera.ts. /camera/status, /camera/snapshot, and
+# _resolve_capture above now reach the same standalone bridge over HTTP
+# (ORBBEC_SERVICE_URL) rather than through an in-process CameraManager.
+
+
+# ---------------------------------------------------------------------------
+# Classification — deterministic curvature-vision pipeline (analyzer.py mask
+# -> skeleton, geometry.py circle fit) run on demand against an already-
+# captured photo, rather than a live camera frame. Used by a
+# classification_model pipeline step to classify a prior camera step's
+# capture — see evofab-app/app/components/pipelines/stepExecutors.ts's
+# classifyPhoto. CurvatureResult.status (TRACKING / NO_TARGET / MATH_ERROR)
+# *is* the classification result; z_min/z_max/threshold tune mask generation
+# per machine_classification_model, they aren't a separate pass/fail cutoff.
+# ---------------------------------------------------------------------------
+
+_last_classify_jpeg: Optional[bytes] = None  # annotated result of the most recent /classify call
+
+
+@app.post("/classify")
+async def classify_frame(
+    file: UploadFile = File(...),
+    z_min: float = Form(0.40),
+    z_max: float = Form(0.55),
+    threshold: int = Form(200),
+) -> dict:
+    """Classifies an uploaded photo with the same mask -> skeleton -> circle-fit
+    pipeline the actuation-capture path uses, but built fresh per request from
+    the given z_min/z_max/threshold (a machine_classification_model row) instead
+    of the module-level actuation _analyzer/PPM."""
+    global _last_classify_jpeg
+
+    data = await file.read()
+    frame = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    if frame is None:
+        raise HTTPException(status_code=422, detail="Could not decode uploaded image")
+
+    analyzer = ActuatorAnalyzer(z_min=z_min, z_max=z_max, threshold=threshold)
+    annotated, result = _annotate_curvature(frame, analyzer)
+
+    ok, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    _last_classify_jpeg = buf.tobytes() if ok else None
+
+    return {
+        # Matches action_types.output_schema for classification_model's "classify"
+        # action exactly (analysis_status/mean_curvature/bend_angle_deg/radius_mm/
+        # ppm_used/actuator_length_mm) — see stepExecutors.ts's classifyPhoto.
+        "analysis_status": result.status,
+        "mean_curvature": round(result.mean_curvature, 3) if result.status == "TRACKING" else None,
+        "bend_angle_deg": round(result.bend_angle_deg, 2) if result.status == "TRACKING" else None,
+        "radius_mm": round(result.radius_mm, 1) if result.status == "TRACKING" else None,
+        "ppm_used": PPM,
+        "actuator_length_mm": round(ACTUATOR_LENGTH_M * 1000, 1),
+        "image_url": "/classify/last-image" if ok else None,
+    }
+
+
+@app.get("/classify/last-image")
+async def classify_last_image():
+    """The annotated (mask/skeleton/fit overlay) photo from the most recent POST /classify call."""
+    if _last_classify_jpeg is None:
+        raise HTTPException(status_code=404, detail="No classification run yet")
+    return Response(content=_last_classify_jpeg, media_type="image/jpeg")

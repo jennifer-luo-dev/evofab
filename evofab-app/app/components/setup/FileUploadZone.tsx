@@ -6,10 +6,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useDropzone } from "react-dropzone";
+import { Check, Upload } from "lucide-react";
 import { cn } from "@/app/lib/utils";
 import { analyzeGCode, parseBuildVolume } from "@/app/lib/gcode";
 import { usePrinter } from "@/app/contexts/PrinterContext";
 import type { GCodeBounds } from "@/app/lib/gcode";
+import type { PrintSettings } from "@/app/types/job";
 
 const ACCEPTED_EXTENSIONS = [".gcode", ".stl", ".3mf"];
 
@@ -73,10 +75,30 @@ function buildChecks(
   ];
 }
 
+interface FileUploadZoneProps {
+  /** Controlled file value. Omit to fall back to the shared PrinterContext (the /setup flow's usage). */
+  file?: File | null;
+  onFileChange?: (file: File | null) => void;
+  buildVolume?: string | null;
+  onSettingsDetected?: (settings: Partial<PrintSettings>) => void;
+  /** Section heading text — lets callers embedding this for a non-print file input relabel it. */
+  heading?: string;
+}
+
 /** Drag-and-drop print file upload zone; analyzes G-code bounds and runs build-volume checks. */
-export function FileUploadZone() {
-  const { uploadedFile, setUploadedFile, selectedPrinter, applySettings } =
-    usePrinter();
+export function FileUploadZone({
+  file: fileProp,
+  onFileChange,
+  buildVolume: buildVolumeProp,
+  onSettingsDetected,
+  heading = "Print File",
+}: FileUploadZoneProps = {}) {
+  const printerCtx = usePrinter();
+  const uploadedFile = fileProp !== undefined ? fileProp : printerCtx.uploadedFile;
+  const setUploadedFile = onFileChange ?? printerCtx.setUploadedFile;
+  const buildVolume =
+    buildVolumeProp !== undefined ? buildVolumeProp : printerCtx.selectedPrinter?.build_volume;
+  const applySettings = onSettingsDetected ?? printerCtx.applySettings;
   const [bounds, setBounds] = useState<GCodeBounds | null | "loading">(null);
 
   useEffect(() => {
@@ -107,14 +129,12 @@ export function FileUploadZone() {
     },
   });
 
-  const checks = uploadedFile
-    ? buildChecks(uploadedFile, selectedPrinter?.build_volume, bounds)
-    : [];
+  const checks = uploadedFile ? buildChecks(uploadedFile, buildVolume, bounds) : [];
 
   return (
     <section>
       <h2 className="text-xs font-semibold uppercase tracking-widest text-muted mb-3">
-        Print File
+        {heading}
       </h2>
       <div
         {...getRootProps()}
@@ -128,7 +148,11 @@ export function FileUploadZone() {
         )}
       >
         <input {...getInputProps()} />
-        <span className="text-2xl">{uploadedFile ? "✓" : "⬆"}</span>
+        {uploadedFile ? (
+          <Check className="w-6 h-6" strokeWidth={2.5} />
+        ) : (
+          <Upload className="w-6 h-6" strokeWidth={2} />
+        )}
         {uploadedFile ? (
           <p className="text-sm font-mono text-green">{uploadedFile.name}</p>
         ) : (

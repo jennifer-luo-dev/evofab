@@ -29,7 +29,7 @@ export async function GET() {
   const { data: actions, error: actionsError } = await supabase
     .from('action_types')
     .select(
-      'machine_type_id, type_key, display_name, input_schema, output_schema, is_implemented, created_at'
+      'id, machine_type_id, type_key, display_name, input_schema, output_schema, is_implemented, created_at'
     )
     .eq('is_implemented', true)
     .order('created_at')
@@ -46,7 +46,13 @@ export async function GET() {
     const outputs: StepOutputConfig[] = Array.isArray(action.output_schema)
       ? action.output_schema
       : []
-    const config: ActionConfig = { key: action.type_key, label: action.display_name, inputs, outputs }
+    const config: ActionConfig = {
+      id: action.id,
+      key: action.type_key,
+      label: action.display_name,
+      inputs,
+      outputs,
+    }
     ;(actionsByTech[tech] ??= []).push(config)
   }
 

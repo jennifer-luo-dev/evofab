@@ -13,24 +13,32 @@ import {
   type PipelineConfig,
 } from '@/app/components/pipelines/PipelineConfigContext';
 import type { ActionConfig, TechKey, TechOption } from '@/app/components/pipelines/types';
+import type { PrinterWithStatus } from '@/app/types/printer';
+import type { MaterialProfile } from '@/app/types/job';
 
 interface MachineTypeApiRow {
+  id: string;
   key: TechKey;
   name: string;
   machines: { id: string; name: string }[];
 }
 
-/** Fetches the technology/action/machine configuration backing the pipeline builder from the API. */
+/** Fetches the technology/action/machine/printer/material configuration backing the pipeline builder from the API. */
 async function fetchPipelineConfig(): Promise<PipelineConfig> {
-  const [typesRes, actionsRes] = await Promise.all([
+  const [typesRes, actionsRes, printersRes, printProfilesRes] = await Promise.all([
     fetch('/api/machine-types'),
     fetch('/api/action-types'),
+    fetch('/api/printers'),
+    fetch('/api/print-profiles'),
   ]);
   const { machineTypes = [] }: { machineTypes: MachineTypeApiRow[] } = await typesRes.json();
   const { actionsByTech = {} }: { actionsByTech: Partial<Record<TechKey, ActionConfig[]>> } =
     await actionsRes.json();
+  const { printers = [] }: { printers: PrinterWithStatus[] } = await printersRes.json();
+  const { printProfiles: materialProfiles = [] }: { printProfiles: MaterialProfile[] } =
+    await printProfilesRes.json();
 
-  const techs: TechOption[] = machineTypes.map((t) => ({ key: t.key, name: t.name }));
+  const techs: TechOption[] = machineTypes.map((t) => ({ id: t.id, key: t.key, name: t.name }));
   const techLabel = Object.fromEntries(techs.map((t) => [t.key, t.name])) as Record<
     TechKey,
     string
@@ -38,8 +46,11 @@ async function fetchPipelineConfig(): Promise<PipelineConfig> {
   const machinesByTech = Object.fromEntries(
     machineTypes.map((t) => [t.key, t.machines.map((m) => m.name)])
   ) as Partial<Record<TechKey, string[]>>;
+  const machineIdByName = Object.fromEntries(
+    machineTypes.flatMap((t) => t.machines.map((m) => [m.name, m.id]))
+  ) as Record<string, string>;
 
-  return { techs, techLabel, actionsByTech, machinesByTech };
+  return { techs, techLabel, actionsByTech, machinesByTech, machineIdByName, printers, materialProfiles };
 }
 
 /** Technology selection followed by the pipeline step builder. */

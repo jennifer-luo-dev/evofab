@@ -13,7 +13,16 @@ import { HistoryResultsTable } from './HistoryResultsTable'
 import { MachinePanel } from './MachinePanel'
 import { PipelineStatusBadge } from './PipelineStatusBadge'
 import { computeProgressUnits } from './historyUtils'
-import type { MachineStatusRow, PipelineSummary, ProgressStep, ResultRow } from './types'
+import type {
+  MachineStatusRow,
+  PipelineRunStatus,
+  PipelineSummary,
+  ProgressStep,
+  ResultRow,
+} from './types'
+
+const ACTIVE_STATUSES = new Set<PipelineRunStatus>(['queued', 'running'])
+const DETAIL_POLL_INTERVAL_MS = 3000
 
 interface PipelineHistoryDetailProps {
   pipeline: PipelineSummary
@@ -21,31 +30,43 @@ interface PipelineHistoryDetailProps {
 }
 
 interface PipelineDetail {
+  /** The run's live status, fresher than the `pipeline` prop (which is a point-in-time snapshot from the list). */
+  status: PipelineRunStatus | null
   progress: ProgressStep[]
   results: ResultRow[]
   machineStatus: MachineStatusRow[]
 }
 
-const EMPTY_DETAIL: PipelineDetail = { progress: [], results: [], machineStatus: [] }
+const EMPTY_DETAIL: PipelineDetail = { status: null, progress: [], results: [], machineStatus: [] }
 
-/** Fetches a pipeline run's step progress, results, and machine statuses from `/api/pipelines/[id]`. */
+/** Fetches a pipeline run's step progress, results, and machine statuses from `/api/pipelines/[id]`, polling while the run is still active so a reload mid-run keeps updating live. */
 function usePipelineDetail(pipelineId: string): PipelineDetail {
   const [detail, setDetail] = useState<PipelineDetail>(EMPTY_DETAIL)
 
   useEffect(() => {
     let cancelled = false
-    fetch(`/api/pipelines/${pipelineId}`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (cancelled) return
-        setDetail({
-          progress: data.progress ?? [],
-          results: data.results ?? [],
-          machineStatus: data.machineStatus ?? [],
-        })
+    let timer: ReturnType<typeof setTimeout> | undefined
+
+    async function load() {
+      const res = await fetch(`/api/pipelines/${pipelineId}`)
+      const data = await res.json()
+      if (cancelled) return
+      const status: PipelineRunStatus | null = data.pipeline?.status ?? null
+      setDetail({
+        status,
+        progress: data.progress ?? [],
+        results: data.results ?? [],
+        machineStatus: data.machineStatus ?? [],
       })
+      if (status && ACTIVE_STATUSES.has(status)) {
+        timer = setTimeout(load, DETAIL_POLL_INTERVAL_MS)
+      }
+    }
+
+    load()
     return () => {
       cancelled = true
+      if (timer) clearTimeout(timer)
     }
   }, [pipelineId])
 
@@ -66,6 +87,7 @@ function renderProgressRow(step: ProgressStep, numberLabel: string | number, syn
         </>
       }
       synced={synced}
+      highlighted={step.status === 'running'}
       trailing={<PipelineStatusBadge status={step.status} />}
     />
   )
@@ -73,7 +95,7 @@ function renderProgressRow(step: ProgressStep, numberLabel: string | number, syn
 
 /** Back link, run header, results table, and progress tracker + machine panel for one pipeline run. */
 export function PipelineHistoryDetail({ pipeline, onBack }: PipelineHistoryDetailProps) {
-  const { progress, results, machineStatus } = usePipelineDetail(pipeline.id)
+  const { status, progress, results, machineStatus } = usePipelineDetail(pipeline.id)
   const progressUnits = computeProgressUnits(progress)
   const exportSlug = pipeline.name.toLowerCase().replace(/[^a-z0-9]+/g, '_')
 
@@ -89,7 +111,7 @@ export function PipelineHistoryDetail({ pipeline, onBack }: PipelineHistoryDetai
 
       <div className="flex items-center gap-2.5 mb-5.5">
         <h1 className="text-[19px] font-semibold text-text">{pipeline.name}</h1>
-        <PipelineStatusBadge status={pipeline.status} />
+        <PipelineStatusBadge status={status ?? pipeline.status} />
       </div>
 
       <div className="mb-6.5">

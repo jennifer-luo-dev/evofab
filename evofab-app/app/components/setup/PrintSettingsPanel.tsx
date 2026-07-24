@@ -25,19 +25,30 @@ const FIELDS: {
 
 interface PrintSettingsPanelProps {
   materialProfiles: MaterialProfile[];
+  /** Controlled values. Omit any to fall back to the shared PrinterContext (the /setup flow's usage). */
+  settings?: PrintSettings;
+  onUpdateSetting?: (key: keyof PrintSettings, value: number) => void;
+  selectedMaterialProfile?: MaterialProfile | null;
+  onSelectMaterialProfile?: (profile: MaterialProfile | null) => void;
 }
 
 /** Collapsible panel for selecting a material profile and overriding print settings. */
 export function PrintSettingsPanel({
   materialProfiles,
+  settings: settingsProp,
+  onUpdateSetting,
+  selectedMaterialProfile: selectedMaterialProfileProp,
+  onSelectMaterialProfile,
 }: PrintSettingsPanelProps) {
   const [open, setOpen] = useState(false);
-  const {
-    settings,
-    updateSetting,
-    selectedMaterialProfile,
-    setSelectedMaterialProfile,
-  } = usePrinter();
+  const printerCtx = usePrinter();
+  const settings = settingsProp ?? printerCtx.settings;
+  const updateSetting = onUpdateSetting ?? printerCtx.updateSetting;
+  const selectedMaterialProfile =
+    selectedMaterialProfileProp !== undefined
+      ? selectedMaterialProfileProp
+      : printerCtx.selectedMaterialProfile;
+  const setSelectedMaterialProfile = onSelectMaterialProfile ?? printerCtx.setSelectedMaterialProfile;
 
   return (
     <section>

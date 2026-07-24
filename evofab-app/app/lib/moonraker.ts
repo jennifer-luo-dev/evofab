@@ -131,6 +131,38 @@ export function getMoonrakerWsUrl(ip: string, port: number): string {
   return `ws://${ip}:${port}/websocket`
 }
 
+export interface GcodeMetadata {
+  /** The slicer's own estimated print duration, in seconds — null if the slicer didn't embed one. */
+  estimated_time: number | null
+  filament_total: number | null
+  layer_count: number | null
+}
+
+/**
+ * Queries Moonraker's file metadata for a previously-uploaded G-code file, including the
+ * slicer's own `estimated_time` (seconds) when one was embedded in the file. Moonraker's
+ * metadata scan can lag slightly behind the upload finishing, so this may return nulls for a
+ * moment right after uploadGcode() — callers should retry briefly rather than treat a null as final.
+ */
+export async function getGcodeMetadata(ip: string, port: number, filename: string): Promise<GcodeMetadata> {
+  try {
+    const res = await fetch(
+      `${base(ip, port)}/server/files/metadata?filename=${encodeURIComponent(filename)}`,
+      { signal: AbortSignal.timeout(5000), cache: 'no-store' }
+    )
+    if (!res.ok) return { estimated_time: null, filament_total: null, layer_count: null }
+    const json = await res.json()
+    const r = json.result ?? {}
+    return {
+      estimated_time: typeof r.estimated_time === 'number' ? r.estimated_time : null,
+      filament_total: typeof r.filament_total === 'number' ? r.filament_total : null,
+      layer_count: typeof r.layer_count === 'number' ? r.layer_count : null,
+    }
+  } catch {
+    return { estimated_time: null, filament_total: null, layer_count: null }
+  }
+}
+
 /**
  * Queries the Moonraker webcam list and returns the first stream URL, or null if unavailable.
  * Relative URLs (e.g. "/webcam?action=stream") are prefixed with the printer's IP

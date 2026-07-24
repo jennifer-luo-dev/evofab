@@ -7,14 +7,39 @@
 import { useMemo, useRef, useState } from 'react'
 import { actionsForTech, usePipelineConfig } from './PipelineConfigContext'
 import { computeUnits, renumberSteps } from './pipelineUtils'
+import { DEFAULT_SETTINGS } from '@/app/contexts/PrinterContext'
 import type { PipelineConfig } from './PipelineConfigContext'
-import type { DraftMode, Step, StepDraft, TechKey } from './types'
+import type { ActionConfig, DraftMode, Step, StepDraft, TechKey } from './types'
+import type { MaterialProfile, PrintSettings } from '@/app/types/job'
+
+/**
+ * Seeds a draft's `inputs` from an action's schema so the value shown in the form
+ * (DraftInputField falls back to `input.default`, or a `select`'s first option, when
+ * the draft has nothing set) is actually what gets committed if the user never
+ * touches the field — otherwise a step can silently commit with empty inputs.
+ */
+function defaultInputs(action?: ActionConfig): Record<string, string> {
+  const result: Record<string, string> = {}
+  for (const input of action?.inputs ?? []) {
+    if (input.default !== undefined) result[input.key] = String(input.default)
+    else if (input.type === 'select' && input.options?.length) result[input.key] = input.options[0]
+  }
+  return result
+}
 
 /** Builds a fresh draft for a new step, defaulting to the first available technology and its first action. */
 function newDraft(availableTechs: TechKey[], config: PipelineConfig): StepDraft {
   const tech = availableTechs[0] ?? 'printer'
-  const action = actionsForTech(config, tech)[0]?.key ?? ''
-  return { tech, action, machine: '', inputs: {} }
+  const action = actionsForTech(config, tech)[0]
+  return {
+    tech,
+    action: action?.key ?? '',
+    machine: '',
+    inputs: defaultInputs(action),
+    files: {},
+    printSettings: { ...DEFAULT_SETTINGS },
+    materialProfileId: null,
+  }
 }
 
 /** Owns the pipeline builder's step list, sync grouping, and add/edit draft form state. */
@@ -99,6 +124,9 @@ export function usePipelineBuilder(availableTechs: TechKey[]) {
         action: existing.action,
         machine: existing.machine,
         inputs: { ...existing.inputs },
+        files: { ...(existing.files ?? {}) },
+        printSettings: { ...(existing.printSettings ?? DEFAULT_SETTINGS) },
+        materialProfileId: existing.materialProfileId ?? null,
       })
       setDraftMode('edit')
     } else {
@@ -116,15 +144,29 @@ export function usePipelineBuilder(availableTechs: TechKey[]) {
 
   /** Switching technology resets the action, machine, and inputs, since they're tech-specific. */
   function changeDraftTech(tech: TechKey) {
-    setDraftState((prev) =>
-      prev
-        ? { ...prev, tech, action: actionsForTech(config, tech)[0]?.key ?? '', machine: '', inputs: {} }
-        : prev
-    )
+    setDraftState((prev) => {
+      if (!prev) return prev
+      const action = actionsForTech(config, tech)[0]
+      return {
+        ...prev,
+        tech,
+        action: action?.key ?? '',
+        machine: '',
+        inputs: defaultInputs(action),
+        files: {},
+        printSettings: { ...DEFAULT_SETTINGS },
+        materialProfileId: null,
+      }
+    })
   }
 
+  /** Switching actions resets inputs to the new action's schema defaults — a different action can have a completely different input schema, so stale values from the old one shouldn't linger. */
   function changeDraftAction(action: string) {
-    setDraftState((prev) => (prev ? { ...prev, action } : prev))
+    setDraftState((prev) => {
+      if (!prev) return prev
+      const actionConfig = actionsForTech(config, prev.tech).find((a) => a.key === action)
+      return { ...prev, action, inputs: defaultInputs(actionConfig) }
+    })
   }
 
   function changeDraftMachine(machine: string) {
@@ -133,6 +175,45 @@ export function usePipelineBuilder(availableTechs: TechKey[]) {
 
   function setDraftInput(key: string, value: string) {
     setDraftState((prev) => (prev ? { ...prev, inputs: { ...prev.inputs, [key]: value } } : prev))
+  }
+
+  /** Sets or clears the File object backing a `type: 'file'` input. */
+  function setDraftFile(key: string, file: File | null) {
+    setDraftState((prev) => {
+      if (!prev) return prev
+      const files = { ...(prev.files ?? {}) }
+      if (file) files[key] = file
+      else delete files[key]
+      return { ...prev, files }
+    })
+  }
+
+  function setDraftPrintSetting(key: keyof PrintSettings, value: number) {
+    setDraftState((prev) =>
+      prev
+        ? { ...prev, printSettings: { ...(prev.printSettings ?? DEFAULT_SETTINGS), [key]: value } }
+        : prev
+    )
+  }
+
+  /** Selecting a material profile overwrites the draft's print settings with that profile's values, mirroring PrinterContext. */
+  function setDraftMaterialProfile(profile: MaterialProfile | null) {
+    setDraftState((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        materialProfileId: profile?.id ?? null,
+        printSettings: profile
+          ? {
+              nozzle_temp: profile.nozzle_temp,
+              bed_temp: profile.bed_temp,
+              speed: profile.speed,
+              flow_rate: profile.flow_rate,
+              fan_speed: profile.fan_speed,
+            }
+          : prev.printSettings,
+      }
+    })
   }
 
   /** Validates and commits the current draft as a new step or an update to the step it's editing. */
@@ -153,6 +234,9 @@ export function usePipelineBuilder(availableTechs: TechKey[]) {
                   action: draftState.action,
                   machine: draftState.machine,
                   inputs: { ...draftState.inputs },
+                  files: { ...(draftState.files ?? {}) },
+                  printSettings: draftState.printSettings,
+                  materialProfileId: draftState.materialProfileId ?? null,
                 }
               : s
           )
@@ -165,6 +249,9 @@ export function usePipelineBuilder(availableTechs: TechKey[]) {
         action: draftState.action,
         machine: draftState.machine,
         inputs: { ...draftState.inputs },
+        files: { ...(draftState.files ?? {}) },
+        printSettings: draftState.printSettings,
+        materialProfileId: draftState.materialProfileId ?? null,
         syncGroupId: null,
         num: 0,
       }
@@ -191,6 +278,9 @@ export function usePipelineBuilder(availableTechs: TechKey[]) {
     changeDraftAction,
     changeDraftMachine,
     setDraftInput,
+    setDraftFile,
+    setDraftPrintSetting,
+    setDraftMaterialProfile,
     commitDraft,
   }
 }

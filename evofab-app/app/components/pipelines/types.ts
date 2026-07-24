@@ -2,8 +2,10 @@
 // UI types for the Pipelines page's technology selection and pipeline
 // builder. `TechOption`/`ActionConfig` are sourced from `machine_types`/
 // `action_types` via /api/machine-types and /api/action-types; `Step`/
-// `StepDraft` remain local-only builder state (not yet persisted to
-// `pipelines`/`pipeline_steps` — see evofab-app/supabase/schema.sql).
+// `StepDraft` are local-only builder state. When Run Pipeline starts, the
+// current step list is persisted to `pipelines`/`pipeline_steps` (see
+// evofab-app/supabase/schema.sql) via POST /api/pipelines — see
+// PipelineBuilder.runPipeline().
 
 /**
  * A machine type's `type_key` (see `machine_types.type_key` in
@@ -11,10 +13,14 @@
  * closed set. Any machine type without a dedicated pipeline action (e.g. a
  * load cell) simply never appears in `/api/action-types`'s response.
  */
+import type { PrintSettings } from '@/app/types/job'
+
 export type TechKey = string
 
 /** A technology entry shown in the technology-selection grid. `machine_types` has no description column, so `desc` is only shown when present. */
 export interface TechOption {
+  /** `machine_types.id` — needed to persist a run's steps to `pipeline_steps.machine_type_id`. */
+  id: string
   key: TechKey
   name: string
   desc?: string
@@ -43,6 +49,8 @@ export interface StepOutputConfig {
 
 /** An action a technology can perform as a pipeline step (e.g. Printer -> Print). */
 export interface ActionConfig {
+  /** `action_types.id` — needed to persist a run's steps to `pipeline_steps.action_type_id`. */
+  id: string
   key: string
   label: string
   inputs: StepInputConfig[]
@@ -56,6 +64,11 @@ export interface Step {
   action: string
   machine: string
   inputs: Record<string, string>
+  /** Actual File objects for this step's `type: 'file'` inputs, keyed by input key — not serializable, so kept out of `inputs`. */
+  files?: Record<string, File>
+  /** Printer-specific print settings, set via the embedded PrintSettingsPanel when `tech === 'printer'`. */
+  printSettings?: PrintSettings
+  materialProfileId?: string | null
   syncGroupId: string | null
   /** Display order — shared across all steps in the same sync group. Recomputed by `renumberSteps`. */
   num: number
@@ -68,6 +81,9 @@ export interface StepDraft {
   action: string
   machine: string
   inputs: Record<string, string>
+  files?: Record<string, File>
+  printSettings?: PrintSettings
+  materialProfileId?: string | null
 }
 
 /** `'add'` while creating a new step, `'edit'` while editing an existing one, `null` when the draft form is closed. */
