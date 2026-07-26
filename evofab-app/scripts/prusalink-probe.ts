@@ -74,8 +74,7 @@ async function probeEndpoint(
 }
 
 export async function runProbe(args: ProbeArgs): Promise<void> {
-  const keyFile =
-    args.keyFile || process.env.PRUSALINK_KEY_FILE || ".secrets/prusalink.key";
+  const keyFile = args.keyFile || process.env.PRUSALINK_KEY_FILE || "";
   const key = await readPrusaLinkKey(keyFile);
   const secrets = [key];
   console.log(

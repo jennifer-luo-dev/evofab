@@ -10,7 +10,7 @@ const printer: Printer = {
   id: "printer-9",
   name: "Printer 9",
   model: "Prusa MINI+",
-  ip: "192.168.1.100",
+  ip: "fixture-printer.invalid",
   port: 80,
   type: "FDM",
   material: "PLA",
@@ -19,8 +19,8 @@ const printer: Printer = {
   is_active: true,
   created_at: "2026-07-10T00:00:00.000Z",
   driver_type: "prusalink",
-  prusalink_host: "192.168.1.100",
-  prusalink_key_file: ".secrets/test.key",
+  prusalink_host: "fixture-printer.invalid",
+  prusalink_key_file: "fixture-key-reference",
 };
 
 test("normalizes PrusaLink status and job telemetry", () => {
@@ -174,4 +174,17 @@ test("refuses upload planning when all reported storage is unavailable", async (
       error instanceof Error &&
       error.message === "PRUSALINK_STORAGE_UNAVAILABLE",
   );
+});
+
+test("refuses upload planning when storage is read-only", async () => {
+  const driver = new PrusaLinkDriver({
+    readKey: async () => "key",
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          storage_list: [{ name: "usb", available: true, read_only: true }],
+        }),
+      ),
+  });
+  await assert.rejects(() => driver.discoverStorage(printer));
 });

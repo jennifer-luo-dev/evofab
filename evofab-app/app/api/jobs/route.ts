@@ -11,6 +11,8 @@ import { startNextQueuedJob } from "@/app/lib/print-queue";
 import type { MaterialProfile, PrintSettings } from "@/app/types/job";
 import { PrusaLinkDriver } from "@/app/lib/prusalink-driver";
 import { MoonrakerDriver } from "@/app/lib/moonraker-driver";
+import { SlicerClient } from "@/app/lib/slicer-client";
+import { validatePrusaUploadArtifact } from "@/app/lib/prusalink-upload-trust";
 import type { Printer } from "@/app/types/printer";
 
 export async function GET() {
@@ -43,7 +45,8 @@ export async function POST(req: NextRequest) {
   const experiment_params = JSON.parse(
     (form.get("experiment_params") as string) || "{}",
   );
-  const startAfterUpload = form.get("start_after_upload") !== "false";
+  const sourceSlicerJobId = (form.get("source_slicer_job_id") as string) || "";
+  const previewHash = (form.get("preview_hash") as string) || null;
 
   const [{ data: printer, error: printerError }, { data: printerStatus }] =
     await Promise.all([
@@ -108,6 +111,38 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (!sourceSlicerJobId) {
+      return NextResponse.json(
+        {
+          error: {
+            code: "PREVIEW_EVIDENCE_REQUIRED",
+            message:
+              "A verified source slicer job is required before Prusa upload.",
+            retryable: false,
+          },
+        },
+        { status: 409 },
+      );
+    }
+    const trust = await validatePrusaUploadArtifact({
+      slicer: new SlicerClient(),
+      slicerJobId: sourceSlicerJobId,
+      submittedGcode: await file.text(),
+      submittedHash: previewHash,
+    }).catch(() => ({
+      ok: false as const,
+      code: "PREVIEW_VALIDATION_FAILED",
+      message: "Unable to validate the source slicer artifact before upload.",
+    }));
+    if (!trust.ok) {
+      return NextResponse.json(
+        {
+          error: { code: trust.code, message: trust.message, retryable: false },
+        },
+        { status: 409 },
+      );
+    }
+
     const { data: job, error: createError } = await supabase
       .from("jobs")
       .insert({
@@ -163,73 +198,48 @@ export async function POST(req: NextRequest) {
         );
       }
       const verify = await driver.verifyStoredFile(device, storage, file.name);
-      if (verify.outcome !== "succeeded")
-        throw new Error("PRUSALINK_FILE_NOT_VERIFIED");
-      const fileKey = `${storage}/${file.name}`;
-      if (!startAfterUpload) {
-        const { data: uploadedJob } = await supabase
-          .from("jobs")
-          .update({
-            file_key: fileKey,
-            command_outcome: "succeeded",
-            last_command: "upload",
-            last_command_code: null,
-          })
-          .eq("id", job.id)
-          .select()
-          .single();
-        return NextResponse.json(
-          { job: uploadedJob ?? job, uploaded_only: true },
-          { status: 201 },
-        );
-      }
-      await supabase
-        .from("jobs")
-        .update({
-          file_key: fileKey,
-          last_command: "start",
-          command_outcome: "pending",
-          last_command_code: null,
-        })
-        .eq("id", job.id);
-      const start = await driver.startPrint(device, storage, file.name);
-      if (start.outcome !== "succeeded") {
+      if (verify.outcome !== "succeeded") {
         await supabase
           .from("jobs")
           .update({
-            command_outcome: start.outcome,
-            last_command_code: start.code,
+            status: verify.outcome === "failed" ? "failed" : "queued",
+            command_outcome: verify.outcome,
+            last_command_code: verify.code ?? "PRUSALINK_FILE_NOT_VERIFIED",
+            completed_at:
+              verify.outcome === "failed" ? new Date().toISOString() : null,
           })
           .eq("id", job.id);
         return NextResponse.json(
           {
             error: {
-              code: start.code,
+              code: verify.code ?? "PRUSALINK_FILE_NOT_VERIFIED",
               message:
-                start.outcome === "outcome_unknown"
-                  ? "Start outcome is unknown; status reconciliation is required."
-                  : "PrusaLink start failed.",
-              retryable: start.retryable,
+                verify.outcome === "outcome_unknown"
+                  ? "Stored-file verification is unknown; status reconciliation is required."
+                  : "PrusaLink did not verify the stored file.",
+              retryable: verify.retryable,
             },
             job_id: job.id,
           },
-          { status: start.outcome === "outcome_unknown" ? 504 : 502 },
+          { status: verify.outcome === "outcome_unknown" ? 504 : 502 },
         );
       }
-      const observed = await driver.observeJob(device);
-      const { data: startedJob } = await supabase
+      const fileKey = `${storage}/${file.name}`;
+      const { data: uploadedJob } = await supabase
         .from("jobs")
         .update({
-          status: "printing",
-          pipeline_step: "printing",
-          started_at: new Date().toISOString(),
+          file_key: fileKey,
+          last_command: "upload",
           command_outcome: "succeeded",
-          prusalink_job_id: observed?.id ?? null,
+          last_command_code: null,
         })
         .eq("id", job.id)
         .select()
         .single();
-      return NextResponse.json({ job: startedJob ?? job }, { status: 201 });
+      return NextResponse.json(
+        { job: uploadedJob ?? job, uploaded_only: true },
+        { status: 201 },
+      );
     } catch (error) {
       const code =
         error instanceof Error ? error.message : "PRUSALINK_DISPATCH_FAILED";

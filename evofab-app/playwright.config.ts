@@ -11,6 +11,7 @@ const e2eServerCommand =
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  snapshotPathTemplate: "{testDir}/{testFilePath}-snapshots/{arg}{ext}",
   timeout: 60_000,
   use: {
     baseURL: e2eBaseUrl,

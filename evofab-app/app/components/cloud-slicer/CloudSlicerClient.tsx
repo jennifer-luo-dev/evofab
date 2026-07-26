@@ -1,6 +1,12 @@
 "use client";
 
-import { type ChangeEvent, useEffect, useMemo, useState } from "react";
+import {
+  type ChangeEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import type { MaterialProfile } from "@/app/types/job";
@@ -23,7 +29,10 @@ import {
   DEFAULT_FGF_BUILD_VOLUME,
   parseBuildVolume,
 } from "@/app/lib/printability";
-import { layerTotalFromGcode } from "@/app/lib/gcode-layer-parser";
+import {
+  assessPreviewTrust,
+  type PreviewTrust,
+} from "@/app/lib/gcode-artifact-analysis";
 import type { SlicerFace } from "@/app/lib/slicer-client";
 import type { Printer } from "@/app/types/printer";
 import { PrepareStepper } from "./PrepareStepper";
@@ -35,7 +44,6 @@ import {
 } from "./prepare-workflow";
 
 const MAX_STL_BYTES = 100 * 1024 * 1024;
-const EXTRUDING_G1_RE = /^G1\b(?=[^\n]*\bE[-+]?\d*\.?\d+)/m;
 const SliceViewer = dynamic(
   () => import("./SliceViewer").then((module) => module.SliceViewer),
   { ssr: false },
@@ -141,6 +149,8 @@ export function CloudSlicerClient({
   const [status, setStatus] = useState<SliceStatus>("idle");
   const [job, setJob] = useState<SlicerJob | null>(null);
   const [gcode, setGcode] = useState<string | null>(null);
+  const [previewTrust, setPreviewTrust] = useState<PreviewTrust | null>(null);
+  const [previewRendererReady, setPreviewRendererReady] = useState(false);
   const [notice, setNotice] = useState<SliceNotice | null>(null);
   const [rotation, setRotation] = useState<number[] | null>(null);
   const [orientationState, setOrientationState] =
@@ -217,11 +227,7 @@ export function CloudSlicerClient({
     orientationState !== null &&
     status !== "queued" &&
     status !== "slicing";
-  const layerCount = useMemo(
-    () =>
-      job?.result?.layer_count ?? (gcode ? layerTotalFromGcode(gcode) : null),
-    [gcode, job?.result?.layer_count],
-  );
+  const layerCount = job?.result?.layer_count ?? null;
   const defaultPrinter =
     selectedTarget?.printer ??
     printers.find((printer) => printer.type === "FGF") ??
@@ -239,7 +245,9 @@ export function CloudSlicerClient({
     status === "done" &&
     gcode !== null &&
     selectedProfile !== null &&
-    !buildBlock;
+    !buildBlock &&
+    previewTrust?.status === "trusted" &&
+    previewRendererReady;
   const hasCompletedSliceResult =
     activeStep === "slice" &&
     status === "done" &&
@@ -288,6 +296,10 @@ export function CloudSlicerClient({
     if (!gcode) return "Downloadable G-code is not ready yet.";
     if (!selectedProfile)
       return "Select a material profile before printer handoff.";
+    if (previewTrust?.status !== "trusted")
+      return "Preview validation must pass before printer handoff.";
+    if (!previewRendererReady)
+      return "Wait for the trusted toolpath preview to render before printer handoff.";
     if (buildBlock)
       return `Part exceeds build volume on ${buildBlock.axis.toUpperCase()} by ${buildBlock.overageMm.toFixed(1)} mm.`;
     return null;
@@ -358,6 +370,8 @@ export function CloudSlicerClient({
     setNotice(null);
     setJob(null);
     setGcode(null);
+    setPreviewTrust(null);
+    setPreviewRendererReady(false);
     setStatus("idle");
     setRotation(null);
     setOrientationState(null);
@@ -507,6 +521,8 @@ export function CloudSlicerClient({
       message: "Uploading STL to the slicer service.",
     });
     setGcode(null);
+    setPreviewTrust(null);
+    setPreviewRendererReady(false);
     setStatus("queued");
 
     try {
@@ -543,21 +559,20 @@ export function CloudSlicerClient({
         throw new Error(`Unable to fetch G-code (${gcodeResponse.status}).`);
       const nextGcode = await gcodeResponse.text();
 
-      if (
-        !nextGcode.includes("START_PRINT") ||
-        !EXTRUDING_G1_RE.test(nextGcode)
-      ) {
-        throw new Error(
-          "Generated G-code did not include START_PRINT and extruding G1 moves.",
-        );
-      }
-
+      const nextTrust = await assessPreviewTrust(
+        nextGcode,
+        doneJob.result?.layer_count ?? null,
+      );
       setGcode(nextGcode);
+      setPreviewTrust(nextTrust);
+      setPreviewRendererReady(false);
       setStatus("done");
       setNotice({
-        tone: "success",
+        tone: nextTrust.status === "trusted" ? "success" : "error",
         message:
-          "Slice complete. Review the result or send the G-code to a printer.",
+          nextTrust.status === "trusted"
+            ? "Slice complete. Review the trusted toolpath before selecting a printer."
+            : "Slice completed, but preview validation blocked printer handoff.",
       });
     } catch (error) {
       setStatus("failed");
@@ -570,7 +585,15 @@ export function CloudSlicerClient({
   }
 
   async function handleSelectPrinter() {
-    if (!canPrint || !selectedProfile || !gcode || !orientationState) return;
+    if (
+      !canPrint ||
+      !selectedProfile ||
+      !gcode ||
+      !orientationState ||
+      !previewTrust ||
+      !job
+    )
+      return;
 
     setNotice({
       tone: "info",
@@ -585,6 +608,8 @@ export function CloudSlicerClient({
         displayName:
           selectedFile?.name ?? `${job?.job_id ?? "cloud-slice"}.gcode`,
         gcode,
+        sourceSlicerJobId: job.job_id,
+        previewTrust,
         materialProfileId: selectedProfile.id,
         settings: settingsFromMaterialProfile(selectedProfile),
         prepareSettings: {
@@ -610,6 +635,17 @@ export function CloudSlicerClient({
       });
     }
   }
+
+  const handleRendererState = useCallback((state: "ready" | "failed") => {
+    setPreviewRendererReady(state === "ready");
+    if (state === "failed") {
+      setNotice({
+        tone: "error",
+        message: "Toolpath rendering failed. Printer handoff remains blocked.",
+        code: "PREVIEW_RENDER_FAILED",
+      });
+    }
+  }, []);
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col gap-6 animate-fade-up">
@@ -1201,9 +1237,9 @@ export function CloudSlicerClient({
           file={selectedFile}
           gcode={gcode}
           status={status}
-          rotation={rotation}
           buildVolume={buildVolume}
-          reportedLayerCount={job?.result?.layer_count ?? null}
+          previewTrust={previewTrust}
+          onRendererState={handleRendererState}
         />
       )}
     </div>

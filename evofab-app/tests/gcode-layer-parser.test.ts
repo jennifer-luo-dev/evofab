@@ -72,3 +72,21 @@ test("parses Orca layer-change comments and relative extrusion", () => {
   assert.equal(layers[1].z, 2.2);
   assert.equal(layers[1].segments.at(-1)?.type, "sparse_infill");
 });
+
+test("handles absolute extrusion resets without turning a reset into a travel", () => {
+  const layers = parseGcodeLayers(
+    [
+      ";LAYER:0",
+      "G1 Z0.2",
+      ";TYPE:Perimeter",
+      "G1 X0 Y0 E1",
+      "G1 X10 Y0 E2",
+      "G92 E0",
+      "G1 X10 Y10 E1",
+    ].join("\n"),
+  );
+  assert.equal(
+    layers[0].segments.filter((segment) => segment.type !== "travel").length,
+    3,
+  );
+});

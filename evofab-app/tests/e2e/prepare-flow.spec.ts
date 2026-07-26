@@ -301,4 +301,18 @@ endsolid smoke
     page.getByRole("heading", { name: "Slice Preview" }),
   ).toBeVisible();
   await expect(page.getByText(/48 reported|reported/)).toBeVisible();
+  await expect(page.getByLabel("First visible layer")).toBeVisible();
+  await page.getByLabel("First visible layer").fill("12");
+  await page.getByLabel("Last visible layer").fill("24");
+  await page.getByLabel("Show travel moves").check();
+  await expect(page.getByText(/travel visible/)).toBeVisible();
+  await expect(
+    page.locator('[role="status"]', { hasText: "Toolpath renderer ready" }),
+  ).toBeVisible();
+  await expect(page.getByTestId("tube-toolpath-canvas")).toHaveScreenshot(
+    "mock-toolpath-preview.png",
+    { animations: "disabled" },
+  );
+  await page.getByRole("button", { name: "Source model" }).click();
+  await expect(page.getByText(/Source model view/)).toBeVisible();
 });

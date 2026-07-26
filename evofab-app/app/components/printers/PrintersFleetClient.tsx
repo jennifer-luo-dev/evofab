@@ -122,7 +122,11 @@ export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
       form.append("settings", JSON.stringify(draft.settings));
       form.append("prepare_settings", JSON.stringify(draft.prepareSettings));
       form.append("experiment_params", JSON.stringify(draft.experimentParams));
-      form.append("start_after_upload", "false");
+      form.append("source_slicer_job_id", draft.sourceSlicerJobId);
+      form.append(
+        "preview_hash",
+        draft.previewTrust.analysis.normalizedHash ?? "",
+      );
 
       const response = await fetch("/api/jobs", {
         method: "POST",

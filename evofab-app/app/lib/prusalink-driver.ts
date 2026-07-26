@@ -39,8 +39,18 @@ interface PrusaJobResponse {
 }
 
 interface PrusaStorageResponse {
-  storage_list?: Array<{ path?: string; name?: string; available?: boolean }>;
-  storage?: Array<{ path?: string; name?: string; available?: boolean }>;
+  storage_list?: Array<{
+    path?: string;
+    name?: string;
+    available?: boolean;
+    read_only?: boolean;
+  }>;
+  storage?: Array<{
+    path?: string;
+    name?: string;
+    available?: boolean;
+    read_only?: boolean;
+  }>;
 }
 
 export interface PrusaObservedJob {
@@ -153,7 +163,9 @@ export class PrusaLinkDriver implements PrinterDriver {
       path: "/api/v1/storage",
     });
     const entries = response.data?.storage_list ?? response.data?.storage ?? [];
-    const storage = entries.find((entry) => entry.available !== false);
+    const storage = entries.find(
+      (entry) => entry.available !== false && entry.read_only !== true,
+    );
     if (!storage)
       throw new PrusaLinkClientError("PRUSALINK_STORAGE_UNAVAILABLE");
     const path = storage?.path ?? storage?.name;
