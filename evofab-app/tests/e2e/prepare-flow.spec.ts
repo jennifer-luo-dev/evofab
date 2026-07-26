@@ -311,7 +311,8 @@ endsolid smoke
   ).toBeVisible();
   await expect(page.getByTestId("tube-toolpath-canvas")).toHaveScreenshot(
     "mock-toolpath-preview.png",
-    { animations: "disabled" },
+    // Three.js tube edges vary slightly across the local and Linux GPU rasterizers.
+    { animations: "disabled", maxDiffPixelRatio: 0.02 },
   );
   await page.getByRole("button", { name: "Source model" }).click();
   await expect(page.getByText(/Source model view/)).toBeVisible();
