@@ -94,7 +94,10 @@ const MOCK_JOB_ID_PREFIX = "mock-slicer-job";
 const MOCK_TOTAL_LAYERS = 48;
 const mockJobs = new Map<string, SlicerJobResult>();
 
-function buildMockGcodeFixture(totalLayers = MOCK_TOTAL_LAYERS): string {
+function buildMockGcodeFixture(
+  totalLayers = MOCK_TOTAL_LAYERS,
+  includeSupport = false,
+): string {
   const lines = [
     "; EvoFab mock pellet slicer fixture",
     "START_PRINT BED_TEMPERATURE=60 EXTRUDER_TEMPERATURE=190 EXTRUDER_ROTATION_VOLUME=210",
@@ -150,6 +153,18 @@ function buildMockGcodeFixture(totalLayers = MOCK_TOTAL_LAYERS): string {
         }
       }
     }
+    if (includeSupport && layer < totalLayers - 8) {
+      lines.push(";TYPE:Support", "G1 X-6 Y-6 F1800");
+      for (const [x, y] of [
+        [-2, -6],
+        [-2, -2],
+        [-6, -2],
+        [-6, -6],
+      ]) {
+        e += 0.6;
+        lines.push(`G1 X${x} Y${y} E${e.toFixed(4)} F900`);
+      }
+    }
   }
 
   lines.push("END_PRINT", "");
@@ -198,7 +213,7 @@ function mockInspectResult(input: InspectModelInput): SlicerInspectResult {
         area_mm2: 576,
         centroid_mm: [12, 12, 0],
         triangle_indices: [0, 1],
-        quaternion_xyzw: [0, 0, 0, 1],
+        quaternion_xyzw: [0, 0.707107, 0, 0.707107],
       },
       {
         id: "face-1",
@@ -410,7 +425,10 @@ export class SlicerClient {
 
   async fetchGcode(jobId: string): Promise<string> {
     if (this.config.mode === "mock" || isMockJobId(jobId)) {
-      return injectPrintStatsInfo(MOCK_GCODE_FIXTURE);
+      const result = mockJobs.get(jobId);
+      return injectPrintStatsInfo(
+        buildMockGcodeFixture(MOCK_TOTAL_LAYERS, result?.supports === true),
+      );
     }
 
     try {

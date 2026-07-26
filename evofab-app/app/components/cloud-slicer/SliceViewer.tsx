@@ -6,6 +6,7 @@ import type {
   PreviewTrust,
 } from "@/app/lib/gcode-artifact-analysis";
 import type { BuildVolumeMm } from "@/app/lib/printability";
+import { preparationQuaternion } from "@/app/lib/preparation-orientation";
 import {
   phaseJPreviewAdapter,
   type SlicePreviewRenderer,
@@ -13,14 +14,21 @@ import {
 
 interface SliceViewerProps {
   file: File | null;
+  rotation: number[] | null;
   gcode: string | null;
   status: string;
   buildVolume: BuildVolumeMm;
   previewTrust: PreviewTrust | null;
-  onRendererState: (state: "ready" | "failed") => void;
+  onRendererState: (state: "pending" | "ready" | "failed") => void;
 }
 
-function SourceModelView({ file }: { file: File | null }) {
+function SourceModelView({
+  file,
+  rotation,
+}: {
+  file: File | null;
+  rotation: number[] | null;
+}) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,11 +61,8 @@ function SourceModelView({ file }: { file: File | null }) {
         geometry.computeVertexNormals();
         geometry.computeBoundingBox();
         const box = geometry.boundingBox;
-        const center = new THREE.Vector3();
         const size = new THREE.Vector3();
-        box?.getCenter(center);
         box?.getSize(size);
-        geometry.translate(-center.x, -center.y, -(box?.min.z ?? 0));
         const material = new THREE.MeshStandardMaterial({
           color: "#9cc7d6",
           metalness: 0.05,
@@ -65,13 +70,31 @@ function SourceModelView({ file }: { file: File | null }) {
         });
         const mesh = new THREE.Mesh(geometry, material);
         mesh.rotation.x = -Math.PI / 2;
+        const sourceRotation = preparationQuaternion(rotation);
+        if (sourceRotation) {
+          mesh.quaternion.multiply(
+            new THREE.Quaternion(
+              sourceRotation[0],
+              sourceRotation[1],
+              sourceRotation[2],
+              sourceRotation[3],
+            ),
+          );
+        }
+        mesh.updateMatrixWorld(true);
+        const preparedBox = new THREE.Box3().setFromObject(mesh);
+        const preparedCenter = preparedBox.getCenter(new THREE.Vector3());
+        mesh.position.x -= preparedCenter.x;
+        mesh.position.z -= preparedCenter.z;
+        mesh.position.y -= preparedBox.min.y - 0.08;
+        mesh.updateMatrixWorld(true);
         scene.add(mesh, new THREE.AmbientLight(0xffffff, 0.75));
         const light = new THREE.DirectionalLight(0xffffff, 0.9);
         light.position.set(30, 50, 40);
         scene.add(light);
         const radius = Math.max(size.length(), 10);
         camera.position.set(radius, radius * 0.8, radius);
-        controls.target.set(0, size.z / 2, 0);
+        controls.target.set(0, Math.max(size.y, size.z) / 2, 0);
         controls.update();
         const resize = () => {
           const rect = sourceCanvas.getBoundingClientRect();
@@ -107,14 +130,21 @@ function SourceModelView({ file }: { file: File | null }) {
       cancelled = true;
       dispose();
     };
-  }, [file]);
+  }, [file, rotation]);
 
   return (
     <div className="relative min-h-[500px] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[#111927]">
-      <canvas ref={canvasRef} className="min-h-[500px] w-full" />
+      <canvas
+        ref={canvasRef}
+        className="min-h-[500px] w-full"
+        data-testid="source-model-canvas"
+        data-preparation-rotation={
+          preparationQuaternion(rotation)?.join(",") ?? "identity"
+        }
+      />
       <p className="absolute left-4 top-4 max-w-sm rounded bg-black/65 px-3 py-2 text-xs text-white/85">
-        Source model view. This STL is reference geometry, not the generated
-        toolpath.
+        Source model view. This STL uses the accepted preparation orientation;
+        it is reference geometry, not the generated toolpath.
       </p>
       {error && (
         <p
@@ -169,6 +199,7 @@ function AnalysisSummary({ analysis }: { analysis: GcodeArtifactAnalysis }) {
 
 export function SliceViewer({
   file,
+  rotation,
   gcode,
   status,
   buildVolume,
@@ -183,16 +214,43 @@ export function SliceViewer({
     () => (gcode ? phaseJPreviewAdapter.parse(gcode) : []),
     [gcode],
   );
-  const [firstLayer, setFirstLayer] = useState(0);
-  const [lastLayer, setLastLayer] = useState(() =>
-    Math.max(0, layers.length - 1),
-  );
-  const [showTravel, setShowTravel] = useState(false);
-  const [view, setView] = useState<"toolpath" | "source">("toolpath");
-  const [renderError, setRenderError] = useState<string | null>(null);
-  const [rendererReady, setRendererReady] = useState(false);
-  const tubeBounds = previewTrust?.analysis.bounds ?? null;
   const layerMax = Math.max(0, layers.length - 1);
+  const [selectedRange, setSelectedRange] = useState(() => ({
+    artifact: gcode,
+    firstLayer: 0,
+    lastLayer: layerMax,
+  }));
+  const [selectedTravel, setSelectedTravel] = useState(() => ({
+    artifact: gcode,
+    value: false,
+  }));
+  const [view, setView] = useState<"toolpath" | "source">("toolpath");
+  const [rendererState, setRendererState] = useState<{
+    artifact: string | null;
+    ready: boolean;
+    error: string | null;
+  }>({ artifact: null, ready: false, error: null });
+  const tubeBounds = previewTrust?.analysis.bounds ?? null;
+  // G-code can arrive after the viewer mounts. A new artifact derives a full
+  // range and hidden travel without an effect-driven state reset; selections
+  // made against the same artifact remain intact and are safely clamped.
+  const rangeForArtifact =
+    selectedRange.artifact === gcode
+      ? selectedRange
+      : { firstLayer: 0, lastLayer: layerMax };
+  const firstLayer = Math.min(
+    Math.max(0, rangeForArtifact.firstLayer),
+    layerMax,
+  );
+  const lastLayer = Math.max(
+    firstLayer,
+    Math.min(rangeForArtifact.lastLayer, layerMax),
+  );
+  const showTravel =
+    selectedTravel.artifact === gcode ? selectedTravel.value : false;
+  const rendererReady = rendererState.artifact === gcode && rendererState.ready;
+  const renderError =
+    rendererState.artifact === gcode ? rendererState.error : null;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -203,7 +261,7 @@ export function SliceViewer({
       z: buildVolumeZ,
     };
     let cancelled = false;
-    setRenderError(null);
+    onRendererState("pending");
     phaseJPreviewAdapter
       .createRenderer({
         canvas,
@@ -219,15 +277,16 @@ export function SliceViewer({
       .then((renderer) => {
         if (cancelled) return renderer.dispose();
         rendererRef.current = renderer;
-        setRendererReady(true);
+        setRendererState({ artifact: gcode, ready: true, error: null });
         onRendererState("ready");
       })
       .catch(() => {
         if (!cancelled) {
-          setRenderError(
-            "Toolpath preview failed. Printer upload remains blocked.",
-          );
-          setRendererReady(false);
+          setRendererState({
+            artifact: gcode,
+            ready: false,
+            error: "Toolpath preview failed. Printer upload remains blocked.",
+          });
           onRendererState("failed");
         }
       });
@@ -373,7 +432,14 @@ export function SliceViewer({
           renderer.dispose();
         };
       } catch {
-        if (!cancelled) onRendererState("failed");
+        if (!cancelled) {
+          setRendererState({
+            artifact: gcode,
+            ready: false,
+            error: "Toolpath preview failed. Printer upload remains blocked.",
+          });
+          onRendererState("failed");
+        }
       }
     }
     renderTubes();
@@ -381,13 +447,27 @@ export function SliceViewer({
       cancelled = true;
       cleanup();
     };
-  }, [firstLayer, lastLayer, layers, onRendererState, showTravel, tubeBounds]);
+  }, [
+    firstLayer,
+    gcode,
+    lastLayer,
+    layers,
+    onRendererState,
+    showTravel,
+    tubeBounds,
+  ]);
 
   const layerLabel = layers.length
     ? `Layers ${firstLayer + 1}–${lastLayer + 1} of ${layers.length}`
     : status === "failed"
       ? "Slice failed"
       : "Waiting for a successful slice";
+  const visibleSampleLayers = [0, Math.floor(layerMax / 2), layerMax].filter(
+    (layer, index, samples) =>
+      layer >= firstLayer &&
+      layer <= lastLayer &&
+      samples.indexOf(layer) === index,
+  );
 
   return (
     <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
@@ -460,7 +540,11 @@ export function SliceViewer({
               max={layerMax}
               value={firstLayer}
               onChange={(event) =>
-                setFirstLayer(Math.min(Number(event.target.value), lastLayer))
+                setSelectedRange({
+                  artifact: gcode,
+                  firstLayer: Math.min(Number(event.target.value), lastLayer),
+                  lastLayer,
+                })
               }
               className="mt-1 w-full accent-[var(--color-teal)]"
             />
@@ -474,7 +558,11 @@ export function SliceViewer({
               max={layerMax}
               value={lastLayer}
               onChange={(event) =>
-                setLastLayer(Math.max(Number(event.target.value), firstLayer))
+                setSelectedRange({
+                  artifact: gcode,
+                  firstLayer,
+                  lastLayer: Math.max(Number(event.target.value), firstLayer),
+                })
               }
               className="mt-1 w-full accent-[var(--color-teal)]"
             />
@@ -484,7 +572,12 @@ export function SliceViewer({
               aria-label="Show travel moves"
               type="checkbox"
               checked={showTravel}
-              onChange={(event) => setShowTravel(event.target.checked)}
+              onChange={(event) =>
+                setSelectedTravel({
+                  artifact: gcode,
+                  value: event.target.checked,
+                })
+              }
             />{" "}
             Show travel moves
           </label>
@@ -492,7 +585,7 @@ export function SliceViewer({
       )}
       <div className="mt-4">
         {view === "source" ? (
-          <SourceModelView file={file} />
+          <SourceModelView file={file} rotation={rotation} />
         ) : (
           <div className="relative min-h-[500px] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[#111927]">
             <canvas
@@ -504,6 +597,8 @@ export function SliceViewer({
               ref={tubeCanvasRef}
               className="min-h-[500px] w-full"
               data-testid="tube-toolpath-canvas"
+              data-visible-layer-range={`${firstLayer}-${lastLayer}`}
+              data-visible-sample-layers={visibleSampleLayers.join(",")}
             />
             <p className="absolute left-4 top-4 rounded bg-black/65 px-3 py-2 text-xs text-white/85">
               Generated extrusion toolpath · travel{" "}

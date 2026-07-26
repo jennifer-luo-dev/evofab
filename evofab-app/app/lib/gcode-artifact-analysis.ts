@@ -22,7 +22,10 @@ export interface GcodeArtifactAnalysis {
   extrusionMoveCount: number;
   extrusionPathLengthMm: number;
   features: GcodeLineType[];
+  featureMoveCounts: Partial<Record<GcodeLineType, number>>;
+  hasStartPrintMarker: boolean;
   occupancy: { bottom: number; middle: number; top: number };
+  representativePathLengthMm: { bottom: number; middle: number; top: number };
 }
 
 export interface PreviewTrust {
@@ -62,6 +65,17 @@ function extrusionLayers(layers: GcodeLayer[]) {
   );
 }
 
+function layerPathLength(segments: GcodeLayer["segments"]) {
+  return segments.reduce(
+    (total, segment) => total + segmentLength(segment.from, segment.to),
+    0,
+  );
+}
+
+function hasCanonicalStartPrintMarker(gcode: string) {
+  return gcode.split("\n").some((line) => /^START_PRINT\b/i.test(line));
+}
+
 export async function analyzeGcodeArtifact(
   gcode: string,
   options: { includeHash?: boolean } = {},
@@ -72,6 +86,17 @@ export async function analyzeGcodeArtifact(
   const points = extrusion.flatMap((segment) => [segment.from, segment.to]);
   const counts = extrusionLayers(layers);
   const middle = Math.floor(counts.length / 2);
+  const sampled = {
+    bottom: counts[0] ?? [],
+    middle: counts[middle] ?? [],
+    top: counts.at(-1) ?? [],
+  };
+  const featureMoveCounts = extrusion.reduce<
+    Partial<Record<GcodeLineType, number>>
+  >((result, segment) => {
+    result[segment.type] = (result[segment.type] ?? 0) + 1;
+    return result;
+  }, {});
 
   return {
     byteCount: new TextEncoder().encode(normalized).byteLength,
@@ -98,10 +123,17 @@ export async function analyzeGcodeArtifact(
       0,
     ),
     features: [...new Set(extrusion.map((segment) => segment.type))].sort(),
+    featureMoveCounts,
+    hasStartPrintMarker: hasCanonicalStartPrintMarker(normalized),
     occupancy: {
-      bottom: counts[0]?.length ?? 0,
-      middle: counts[middle]?.length ?? 0,
-      top: counts.at(-1)?.length ?? 0,
+      bottom: sampled.bottom.length,
+      middle: sampled.middle.length,
+      top: sampled.top.length,
+    },
+    representativePathLengthMm: {
+      bottom: layerPathLength(sampled.bottom),
+      middle: layerPathLength(sampled.middle),
+      top: layerPathLength(sampled.top),
     },
   };
 }
@@ -109,6 +141,7 @@ export async function analyzeGcodeArtifact(
 export async function assessPreviewTrust(
   gcode: string,
   reportedLayerCount: number | null | undefined,
+  options: { requiredFeatures?: GcodeLineType[] } = {},
 ): Promise<PreviewTrust> {
   const analysis = await analyzeGcodeArtifact(gcode);
   const reasons: string[] = [];
@@ -119,20 +152,80 @@ export async function assessPreviewTrust(
       `Reported ${reportedLayerCount} layers, but the validated parser found ${analysis.parsedLayerCount}.`,
     );
   }
-  if (!analysis.bounds || analysis.extrusionMoveCount < 2) {
+  if (!analysis.hasStartPrintMarker) {
+    reasons.push(
+      "The G-code is missing the required START_PRINT slicer contract marker.",
+    );
+  }
+  if (!analysis.bounds) {
     reasons.push(
       "The G-code does not contain a renderable extrusion toolpath.",
     );
+  } else {
+    const spanX = analysis.bounds.maxX - analysis.bounds.minX;
+    const spanY = analysis.bounds.maxY - analysis.bounds.minY;
+    const spanZ = analysis.bounds.maxZ - analysis.bounds.minZ;
+    // 0.05 mm axis and 0.01 mm² area accept small parts while rejecting a
+    // line-only path. The path/move minima below scale with parsed layers and
+    // XY span so a few long strings cannot impersonate a model.
+    if (
+      ![spanX, spanY, spanZ].every(Number.isFinite) ||
+      spanX < 0.05 ||
+      spanY < 0.05 ||
+      spanZ < 0.01 ||
+      spanX * spanY < 0.01
+    ) {
+      reasons.push(
+        "Extrusion bounds are degenerate; trusted artifacts require finite nonzero XY area and Z height.",
+      );
+    }
+
+    const layers = Math.max(1, analysis.parsedLayerCount);
+    const xyScale = Math.max(4, Math.min((spanX + spanY) / 2, 25));
+    const minimumMoves = Math.max(12, layers * 3);
+    const minimumPathLength = Math.max(25, layers * xyScale);
+    const minimumSampleMoves = Math.max(
+      3,
+      Math.min(10, Math.ceil(analysis.extrusionMoveCount / layers / 3)),
+    );
+    const minimumSamplePath = Math.max(2, Math.min(xyScale / 2, 12));
+
+    if (analysis.extrusionMoveCount < minimumMoves) {
+      reasons.push(
+        `Toolpath density is too low (${analysis.extrusionMoveCount} moves; need at least ${minimumMoves} for ${layers} layers).`,
+      );
+    }
+    if (analysis.extrusionPathLengthMm < minimumPathLength) {
+      reasons.push(
+        `Extrusion path is too short (${analysis.extrusionPathLengthMm.toFixed(1)} mm; need at least ${minimumPathLength.toFixed(1)} mm for this span and layer count).`,
+      );
+    }
+    for (const sample of ["bottom", "middle", "top"] as const) {
+      if (
+        analysis.occupancy[sample] < minimumSampleMoves ||
+        analysis.representativePathLengthMm[sample] < minimumSamplePath
+      ) {
+        reasons.push(
+          `Representative ${sample} layer lacks meaningful occupancy (${analysis.occupancy[sample]} moves, ${analysis.representativePathLengthMm[sample].toFixed(1)} mm).`,
+        );
+      }
+    }
   }
-  if (analysis.extrusionPathLengthMm < 10) {
+  const wallFeatures: GcodeLineType[] = [
+    "external_perimeter",
+    "outer_wall",
+    "perimeter",
+    "inner_wall",
+  ];
+  if (!wallFeatures.some((feature) => (analysis.featureMoveCounts[feature] ?? 0) > 0)) {
     reasons.push(
-      "The extrusion path is too short to trust as a printable artifact.",
+      "Trusted model G-code requires recognized wall or perimeter extrusion evidence.",
     );
   }
-  if (Object.values(analysis.occupancy).some((count) => count === 0)) {
-    reasons.push(
-      "Bottom, middle, and top layer occupancy must all be non-empty.",
-    );
+  for (const feature of options.requiredFeatures ?? []) {
+    if ((analysis.featureMoveCounts[feature] ?? 0) === 0) {
+      reasons.push(`Expected ${feature.replaceAll("_", " ")} evidence is missing.`);
+    }
   }
   return {
     status: reasons.length === 0 ? "trusted" : "blocked",

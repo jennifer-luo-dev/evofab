@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizedGcodeHash } from "../app/lib/gcode-artifact-analysis";
 import { validatePrusaUploadArtifact } from "../app/lib/prusalink-upload-trust";
-import { cube20mmGcode, SPARSE_GCODE } from "./fixtures/gcode-fixtures";
+import {
+  cube20mmGcode,
+  SPARSE_GCODE,
+  SPARSE_MULTILAYER_STRING_GCODE,
+} from "./fixtures/gcode-fixtures";
 
 function slicer(gcode: string, layerCount = 21) {
   return {
@@ -56,4 +60,16 @@ test("Prusa upload trust blocks changed, sparse, and metadata-mismatched artifac
   });
   assert.equal(sparse.ok, false);
   if (!sparse.ok) assert.equal(sparse.code, "PREVIEW_UNTRUSTED");
+
+  const sparseStrings = await validatePrusaUploadArtifact({
+    slicer: slicer(SPARSE_MULTILAYER_STRING_GCODE, 3),
+    slicerJobId: "fixture-slice",
+    submittedGcode: SPARSE_MULTILAYER_STRING_GCODE,
+    submittedHash: null,
+  });
+  assert.equal(sparseStrings.ok, false);
+  if (!sparseStrings.ok) {
+    assert.equal(sparseStrings.code, "PREVIEW_UNTRUSTED");
+    assert.match(sparseStrings.message, /density|occupancy/i);
+  }
 });

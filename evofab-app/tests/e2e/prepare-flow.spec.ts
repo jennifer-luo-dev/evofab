@@ -254,6 +254,10 @@ endsolid smoke
   await expect(
     page.getByText("evofab-smoke.stl", { exact: true }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Auto-orient" }).click();
+  await expect(
+    page.getByText("Auto-oriented — largest flat face down"),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Next", exact: true }).click();
 
   await page.getByLabel("Print target").selectOption("preform:sla");
@@ -302,18 +306,55 @@ endsolid smoke
   ).toBeVisible();
   await expect(page.getByText(/48 reported|reported/)).toBeVisible();
   await expect(page.getByLabel("First visible layer")).toBeVisible();
-  await page.getByLabel("First visible layer").fill("12");
-  await page.getByLabel("Last visible layer").fill("24");
-  await page.getByLabel("Show travel moves").check();
-  await expect(page.getByText(/travel visible/)).toBeVisible();
+  await expect(page.getByText("Layers 1–48 of 48")).toBeVisible();
+  await expect(page.getByTestId("tube-toolpath-canvas")).toHaveAttribute(
+    "data-visible-layer-range",
+    "0-47",
+  );
+  await expect(page.getByTestId("tube-toolpath-canvas")).toHaveAttribute(
+    "data-visible-sample-layers",
+    "0,23,47",
+  );
   await expect(
     page.locator('[role="status"]', { hasText: "Toolpath renderer ready" }),
   ).toBeVisible();
   await expect(page.getByTestId("tube-toolpath-canvas")).toHaveScreenshot(
-    "mock-toolpath-preview.png",
+    "mock-support-toolpath-default.png",
+    // Three.js tube edges vary slightly across the local and Linux GPU rasterizers.
+    { animations: "disabled", maxDiffPixelRatio: 0.02 },
+  );
+
+  await page.getByLabel("First visible layer").fill("12");
+  await page.getByLabel("Last visible layer").fill("24");
+  await expect(page.getByText("Layers 13–25 of 48")).toBeVisible();
+  await expect(page.getByTestId("tube-toolpath-canvas")).toHaveAttribute(
+    "data-visible-layer-range",
+    "12-24",
+  );
+  await expect(page.getByTestId("tube-toolpath-canvas")).toHaveAttribute(
+    "data-visible-sample-layers",
+    "23",
+  );
+  await page.getByLabel("Show travel moves").check();
+  await expect(page.getByText(/travel visible/)).toBeVisible();
+  await expect(page.getByText(/Preview trusted/)).toBeVisible();
+  await expect(
+    page.locator('[role="status"]', { hasText: "Toolpath renderer ready" }),
+  ).toBeVisible();
+  await expect(page.getByTestId("tube-toolpath-canvas")).toHaveScreenshot(
+    "mock-support-toolpath-range.png",
     // Three.js tube edges vary slightly across the local and Linux GPU rasterizers.
     { animations: "disabled", maxDiffPixelRatio: 0.02 },
   );
   await page.getByRole("button", { name: "Source model" }).click();
   await expect(page.getByText(/Source model view/)).toBeVisible();
+  await expect(page.getByTestId("source-model-canvas")).toHaveAttribute(
+    "data-preparation-rotation",
+    "0,0.707107,0,0.707107",
+  );
+  await page.getByRole("button", { name: "Toolpath" }).click();
+  await expect(page.getByTestId("tube-toolpath-canvas")).toHaveAttribute(
+    "data-visible-layer-range",
+    "12-24",
+  );
 });

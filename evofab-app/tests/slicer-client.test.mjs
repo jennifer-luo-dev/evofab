@@ -200,7 +200,7 @@ test("mock inspect can return deterministic ranked faces", async () => {
 
   assert.equal(result.faces.length, 6);
   assert.equal(result.faces[0].rank, 1);
-  assert.deepEqual(result.faces[0].quaternion_xyzw, [0, 0, 0, 1]);
+  assert.deepEqual(result.faces[0].quaternion_xyzw, [0, 0.707107, 0, 0.707107]);
 });
 
 test("pollJob follows queued to slicing to done", async () => {

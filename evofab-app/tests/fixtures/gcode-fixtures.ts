@@ -24,6 +24,7 @@ function square(
 export function cube20mmGcode(): string {
   const lines = [
     "; deterministic 20 mm cube",
+    "START_PRINT",
     "M82",
     "SET_PRINT_STATS_INFO TOTAL_LAYER=21",
   ];
@@ -49,6 +50,7 @@ export function cube20mmGcode(): string {
 export function supportHeavyGcode(): string {
   const lines = [
     "; deterministic support fixture",
+    "START_PRINT",
     "M82",
     "SET_PRINT_STATS_INFO TOTAL_LAYER=12",
   ];
@@ -73,4 +75,30 @@ export function supportHeavyGcode(): string {
 }
 
 export const SPARSE_GCODE =
-  ";LAYER:0\nG1 Z0.2\n;TYPE:Outer wall\nG1 X0 Y0\nG1 X1 Y0 E1\n";
+  "START_PRINT\n;LAYER:0\nG1 Z0.2\n;TYPE:Outer wall\nG1 X0 Y0\nG1 X1 Y0 E1\n";
+
+/**
+ * This deliberately passes the former predicate: three reported/parsed layers,
+ * non-empty representative samples, and more than 10 mm of extrusion. It is
+ * only one diagonal string per layer, so the scale-aware density guard must
+ * block it despite its START_PRINT and wall label.
+ */
+export const SPARSE_MULTILAYER_STRING_GCODE = [
+  "START_PRINT",
+  "M82",
+  "SET_PRINT_STATS_INFO TOTAL_LAYER=3",
+  ";LAYER:0",
+  "G0 Z0.2",
+  ";TYPE:Outer wall",
+  "G0 X0 Y0",
+  "G1 X20 Y20 E1",
+  ";LAYER:1",
+  "G0 Z0.4",
+  "G0 X0 Y0",
+  "G1 X20 Y20 E2",
+  ";LAYER:2",
+  "G0 Z0.6",
+  "G0 X0 Y0",
+  "G1 X20 Y20 E3",
+  "",
+].join("\n");

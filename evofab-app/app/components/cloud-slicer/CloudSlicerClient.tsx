@@ -562,6 +562,7 @@ export function CloudSlicerClient({
       const nextTrust = await assessPreviewTrust(
         nextGcode,
         doneJob.result?.layer_count ?? null,
+        doneJob.result?.supports ? { requiredFeatures: ["support"] } : {},
       );
       setGcode(nextGcode);
       setPreviewTrust(nextTrust);
@@ -636,16 +637,20 @@ export function CloudSlicerClient({
     }
   }
 
-  const handleRendererState = useCallback((state: "ready" | "failed") => {
-    setPreviewRendererReady(state === "ready");
-    if (state === "failed") {
-      setNotice({
-        tone: "error",
-        message: "Toolpath rendering failed. Printer handoff remains blocked.",
-        code: "PREVIEW_RENDER_FAILED",
-      });
-    }
-  }, []);
+  const handleRendererState = useCallback(
+    (state: "pending" | "ready" | "failed") => {
+      setPreviewRendererReady(state === "ready");
+      if (state === "failed") {
+        setNotice({
+          tone: "error",
+          message:
+            "Toolpath rendering failed. Printer handoff remains blocked.",
+          code: "PREVIEW_RENDER_FAILED",
+        });
+      }
+    },
+    [],
+  );
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col gap-6 animate-fade-up">
@@ -1235,6 +1240,7 @@ export function CloudSlicerClient({
         <SliceViewer
           key={job?.job_id ?? "pending-preview"}
           file={selectedFile}
+          rotation={rotation}
           gcode={gcode}
           status={status}
           buildVolume={buildVolume}

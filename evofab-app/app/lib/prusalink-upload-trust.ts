@@ -51,6 +51,7 @@ export async function validatePrusaUploadArtifact(input: {
   const trust = await assessPreviewTrust(
     sourceGcode,
     sourceJob.result.layer_count ?? null,
+    sourceJob.result.supports ? { requiredFeatures: ["support"] } : {},
   );
   if (trust.status !== "trusted") {
     return {
