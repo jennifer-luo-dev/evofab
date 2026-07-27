@@ -1,6 +1,6 @@
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Tuple
+from typing import Optional, Tuple
 
 
 ACTUATOR_LENGTH_M = 0.066  # 66 mm
@@ -43,8 +43,18 @@ def _trim_rigid_base(u_sorted: np.ndarray, v_sorted: np.ndarray,
     return int(bends[0]) if len(bends) > 0 else 0
 
 
-def compute_spine_curvature(skeleton_mask: np.ndarray, ppm: float) -> CurvatureResult:
-    """Fit a circle to the skeleton and return curvature metrics + pixel-space circle."""
+def compute_spine_curvature(skeleton_mask: np.ndarray, ppm: float,
+                             base_tip_px: Optional[Tuple[int, int]] = None) -> CurvatureResult:
+    """Fit a circle to the skeleton and return curvature metrics + pixel-space circle.
+
+    base_tip_px, if given, is the segmentation-detected point where the
+    actuator physically emerges from its clamp (analyzer.detect_base). It
+    replaces the geometric straightness trim (_trim_rigid_base) as the
+    known start of the flexible arc, since the mask is already restricted
+    to the base-connected component upstream — there's no rigid lead-in
+    segment left to infer. Without it, _trim_rigid_base is used as before
+    (e.g. for direct/test calls with no base detection wired in).
+    """
     v, u = np.where(skeleton_mask > 0)
 
     if len(u) < 30:
@@ -54,9 +64,13 @@ def compute_spine_curvature(skeleton_mask: np.ndarray, ppm: float) -> CurvatureR
     u_sorted = u[idx]
     v_sorted = v[idx]
 
-    trim = _trim_rigid_base(u_sorted, v_sorted)
-    u_flex = u_sorted[trim:]
-    v_flex = v_sorted[trim:]
+    if base_tip_px is None:
+        trim = _trim_rigid_base(u_sorted, v_sorted)
+        u_flex = u_sorted[trim:]
+        v_flex = v_sorted[trim:]
+    else:
+        u_flex = u_sorted
+        v_flex = v_sorted
 
     u_m, v_m = np.mean(u_flex), np.mean(v_flex)
     u_c, v_c = u_flex - u_m, v_flex - v_m
@@ -71,7 +85,10 @@ def compute_spine_curvature(skeleton_mask: np.ndarray, ppm: float) -> CurvatureR
         radius_m = radius_px / ppm
         k = 1.0 / radius_m
 
-        u_start, v_start = u_flex[0], v_flex[0]
+        if base_tip_px is not None:
+            u_start, v_start = base_tip_px
+        else:
+            u_start, v_start = u_flex[0], v_flex[0]
         u_end, v_end = u_flex[-1], v_flex[-1]
         chord_px = float(np.hypot(u_end - u_start, v_end - v_start))
 
