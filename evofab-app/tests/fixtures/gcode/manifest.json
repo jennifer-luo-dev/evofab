@@ -1,4 +1,5 @@
 {
+  "artifact_classification": "Synthetic deterministic parser and renderer fixtures; not slicer output from an uploaded STL and not independent-viewer parity evidence.",
   "fixtures": [
     {
       "filename": "cube-20mm.gcode",

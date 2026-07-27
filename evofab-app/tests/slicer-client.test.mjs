@@ -60,7 +60,7 @@ test("real mode requires url and token", () => {
   );
 });
 
-test("mock fixture mirrors real slicer output markers", () => {
+test("synthetic mock fixture supplies parser-compatible markers only", () => {
   assert.match(MOCK_GCODE_FIXTURE, /START_PRINT/);
   assert.match(MOCK_GCODE_FIXTURE, /SET_PRINT_STATS_INFO TOTAL_LAYER=/);
   assert.match(MOCK_GCODE_FIXTURE, /^G1\b(?=[^\n]*\bE[-+]?\d*\.?\d+)/m);
@@ -89,9 +89,66 @@ test("mock slicer completes STL submit, poll, and G-code fetch", async () => {
   assert.deepEqual(job.result.rotation, [0, 0, 0, 1]);
   assert.equal(job.result.supports, true);
   assert.equal(job.result.layer_count, 48);
+  assert.deepEqual(job.result.provenance, {
+    kind: "mock",
+    mode: "mock",
+    engine: "mock",
+    source: "fixed_test_toolpath",
+  });
   assert.match(gcode, /START_PRINT/);
   assert.match(gcode, /SET_PRINT_STATS_INFO TOTAL_LAYER=/);
   assert.match(gcode, /^G1\b(?=[^\n]*\bE[-+]?\d*\.?\d+)/m);
+});
+
+test("real-mode job provenance is derived server-side and mock contradictions stay blocked", async () => {
+  const realClient = new SlicerClient({
+    env: {
+      SLICER_MODE: "real",
+      SLICER_URL: "http://slicer.test",
+      SLICER_TOKEN: "secret",
+    },
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          job_id: "job-real",
+          status: "done",
+          result: { engine: "fixture-engine" },
+        }),
+        { status: 200 },
+      ),
+  });
+  const realJob = await realClient.getJob("job-real");
+  assert.deepEqual(realJob.result.provenance, {
+    kind: "real",
+    mode: "real",
+    engine: "fixture-engine",
+    source: "slicer_service",
+  });
+
+  const contradictoryClient = new SlicerClient({
+    env: {
+      SLICER_MODE: "real",
+      SLICER_URL: "http://slicer.test",
+      SLICER_TOKEN: "secret",
+    },
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          job_id: "job-contradictory",
+          status: "done",
+          result: {
+            engine: "fixture-engine",
+            provenance: {
+              kind: "real",
+              source: "fixed_test_toolpath",
+            },
+          },
+        }),
+        { status: 200 },
+      ),
+  });
+  const contradictory = await contradictoryClient.getJob("job-contradictory");
+  assert.equal(contradictory.result.provenance.kind, "unknown");
 });
 
 test("injectPrintStatsInfo adds layer metadata after START_PRINT", () => {

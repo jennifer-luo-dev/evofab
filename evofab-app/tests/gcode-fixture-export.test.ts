@@ -13,7 +13,7 @@ async function readFixture(filename: string) {
   return readFile(new URL(filename, gcodeDirectory), "utf8");
 }
 
-test("exported G-code fixtures exactly match their deterministic generators", async () => {
+test("exported synthetic G-code fixtures exactly match their deterministic generators", async () => {
   const fixtures = [
     ["cube-20mm.gcode", cube20mmGcode()],
     ["support-heavy.gcode", supportHeavyGcode()],
@@ -29,6 +29,7 @@ test("exported G-code fixtures exactly match their deterministic generators", as
 
 test("export manifest matches the analyzed static artifacts", async () => {
   const manifest = JSON.parse(await readFixture("manifest.json")) as {
+    artifact_classification: string;
     fixtures: Array<{
       filename: string;
       sha256: string;
@@ -41,6 +42,9 @@ test("export manifest matches the analyzed static artifacts", async () => {
       major_features: string[];
     }>;
   };
+
+  assert.match(manifest.artifact_classification, /synthetic/i);
+  assert.match(manifest.artifact_classification, /not slicer output/i);
 
   for (const entry of manifest.fixtures) {
     const analysis = await analyzeGcodeArtifact(

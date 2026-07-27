@@ -1,4 +1,5 @@
 import {
+  assessSourceOutputCorrelation,
   assessPreviewTrust,
   normalizedGcodeHash,
   type PreviewTrust,
@@ -48,6 +49,24 @@ export async function validatePrusaUploadArtifact(input: {
         "The upload artifact no longer matches the verified slicer artifact.",
     };
   }
+
+  const provenance = sourceJob.result.provenance;
+  if (provenance?.kind === "mock") {
+    return {
+      ok: false,
+      code: "PREVIEW_MOCK_ARTIFACT",
+      message:
+        "This artifact came from the fixed test-toolpath simulation and cannot be uploaded to a printer.",
+    };
+  }
+  if (provenance?.kind !== "real") {
+    return {
+      ok: false,
+      code: "PREVIEW_PROVENANCE_UNVERIFIED",
+      message:
+        "Server-side slicer provenance is missing, unknown, or contradictory; printer upload is blocked.",
+    };
+  }
   const trust = await assessPreviewTrust(
     sourceGcode,
     sourceJob.result.layer_count ?? null,
@@ -60,6 +79,18 @@ export async function validatePrusaUploadArtifact(input: {
       message:
         trust.reasons.join(" ") ||
         "Preview validation did not establish trust.",
+    };
+  }
+  const correlationReasons = assessSourceOutputCorrelation(trust.analysis, {
+    preparedSourceBounds: sourceJob.result.prepared_source_bounding_box_mm,
+    transformedResultBounds: sourceJob.result.transformed_bounding_box_mm,
+    rotation: sourceJob.result.rotation,
+  });
+  if (correlationReasons.length > 0) {
+    return {
+      ok: false,
+      code: "PREVIEW_SOURCE_OUTPUT_MISMATCH",
+      message: correlationReasons.join(" "),
     };
   }
   return { ok: true, trust };

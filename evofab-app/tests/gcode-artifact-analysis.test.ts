@@ -12,7 +12,7 @@ import {
   supportHeavyGcode,
 } from "./fixtures/gcode-fixtures";
 
-test("20 mm cube fixture meets documented geometric minima", async () => {
+test("synthetic 20 mm cube fixture meets documented parser geometric minima", async () => {
   const analysis = await analyzeGcodeArtifact(cube20mmGcode());
   assert.equal(analysis.parsedLayerCount, 21);
   assert.equal(analysis.bounds?.minX, 0);

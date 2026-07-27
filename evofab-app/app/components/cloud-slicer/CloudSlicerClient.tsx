@@ -33,7 +33,10 @@ import {
   assessPreviewTrust,
   type PreviewTrust,
 } from "@/app/lib/gcode-artifact-analysis";
-import type { SlicerFace } from "@/app/lib/slicer-client";
+import type {
+  SlicerArtifactProvenance,
+  SlicerFace,
+} from "@/app/lib/slicer-client";
 import type { Printer } from "@/app/types/printer";
 import { PrepareStepper } from "./PrepareStepper";
 import { SliceResultSummary } from "./SliceResultSummary";
@@ -67,6 +70,7 @@ interface SlicerJobResult {
   profile_id: string;
   rotation?: number[] | null;
   supports?: boolean | null;
+  provenance?: SlicerArtifactProvenance;
 }
 
 interface SlicerJob {
@@ -241,11 +245,14 @@ export function CloudSlicerClient({
   );
   const supportsRecommended =
     inspectResult !== null && inspectResult.overhang_ratio > 0.45 && !supports;
+  const artifactProvenance = job?.result?.provenance;
+  const isSimulation = artifactProvenance?.kind === "mock";
   const canPrint =
     status === "done" &&
     gcode !== null &&
     selectedProfile !== null &&
     !buildBlock &&
+    artifactProvenance?.kind === "real" &&
     previewTrust?.status === "trusted" &&
     previewRendererReady;
   const hasCompletedSliceResult =
@@ -296,6 +303,10 @@ export function CloudSlicerClient({
     if (!gcode) return "Downloadable G-code is not ready yet.";
     if (!selectedProfile)
       return "Select a material profile before printer handoff.";
+    if (isSimulation)
+      return "Simulation output is a fixed test toolpath and cannot be sent to a printer.";
+    if (artifactProvenance?.kind !== "real")
+      return "Server-side slicer provenance must be verified before printer handoff.";
     if (previewTrust?.status !== "trusted")
       return "Preview validation must pass before printer handoff.";
     if (!previewRendererReady)
@@ -569,11 +580,18 @@ export function CloudSlicerClient({
       setPreviewRendererReady(false);
       setStatus("done");
       setNotice({
-        tone: nextTrust.status === "trusted" ? "success" : "error",
+        tone:
+          doneJob.result?.provenance?.kind === "mock"
+            ? "info"
+            : nextTrust.status === "trusted"
+              ? "success"
+              : "error",
         message:
-          nextTrust.status === "trusted"
-            ? "Slice complete. Review the trusted toolpath before selecting a printer."
-            : "Slice completed, but preview validation blocked printer handoff.",
+          doneJob.result?.provenance?.kind === "mock"
+            ? "Simulation complete. This fixed test toolpath is for UI preview only; printer handoff is disabled."
+            : nextTrust.status === "trusted"
+              ? "Slice complete. Review the trusted toolpath before selecting a printer."
+              : "Slice completed, but preview validation blocked printer handoff.",
       });
     } catch (error) {
       setStatus("failed");
@@ -610,6 +628,7 @@ export function CloudSlicerClient({
           selectedFile?.name ?? `${job?.job_id ?? "cloud-slice"}.gcode`,
         gcode,
         sourceSlicerJobId: job.job_id,
+        slicerProvenance: artifactProvenance,
         previewTrust,
         materialProfileId: selectedProfile.id,
         settings: settingsFromMaterialProfile(selectedProfile),
@@ -1233,6 +1252,7 @@ export function CloudSlicerClient({
                   : "uploaded orientation"
             }
             supports={supports}
+            provenance={artifactProvenance}
           />
         )}
       </div>
@@ -1245,6 +1265,7 @@ export function CloudSlicerClient({
           status={status}
           buildVolume={buildVolume}
           previewTrust={previewTrust}
+          provenance={artifactProvenance}
           onRendererState={handleRendererState}
         />
       )}

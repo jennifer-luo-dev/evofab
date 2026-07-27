@@ -25,8 +25,22 @@ export interface SlicerJobResult {
   profile_id: string;
   rotation?: number[] | null;
   drop_to_bed?: boolean;
+  /**
+   * Server-owned provenance. Browser-supplied status is never used to decide
+   * whether an artifact can reach a printer.
+   */
+  provenance?: SlicerArtifactProvenance;
+  /** Dimensions of the prepared source geometry before G-code generation. */
+  prepared_source_bounding_box_mm?: BoundingBoxMm | null;
   transformed_bounding_box_mm?: BoundingBoxMm | null;
   supports?: boolean | null;
+}
+
+export interface SlicerArtifactProvenance {
+  kind: "mock" | "real" | "unknown";
+  mode: "mock" | "real" | "unknown";
+  engine: string | null;
+  source: "fixed_test_toolpath" | "slicer_service" | "unknown";
 }
 
 export interface SlicerJob {
@@ -183,6 +197,13 @@ const MOCK_RESULT: SlicerJobResult = {
   profile_id: "pla-fgf",
   rotation: null,
   drop_to_bed: true,
+  provenance: {
+    kind: "mock",
+    mode: "mock",
+    engine: "mock",
+    source: "fixed_test_toolpath",
+  },
+  prepared_source_bounding_box_mm: { x: 24, y: 24, z: 40 },
   transformed_bounding_box_mm: { x: 24, y: 24, z: 40 },
   supports: null,
 };
@@ -300,6 +321,76 @@ function isMockJobId(jobId: string): boolean {
   return jobId.startsWith(MOCK_JOB_ID_PREFIX);
 }
 
+function isMockEngine(engine: string | undefined): boolean {
+  return engine?.trim().toLowerCase() === "mock";
+}
+
+/**
+ * Derive provenance at the server boundary. A remote response may provide
+ * descriptive fields, but it cannot turn mock mode or a mock engine into a
+ * real artifact. Conflicting signals are deliberately left unknown and are
+ * blocked by printer handoff.
+ */
+function deriveArtifactProvenance(
+  result: SlicerJobResult,
+  mode: "mock" | "real",
+): SlicerArtifactProvenance {
+  const supplied = result.provenance;
+  const suppliedReal = supplied?.kind === "real";
+  const suppliedMock = supplied?.kind === "mock";
+  const suppliedMockSource = supplied?.source === "fixed_test_toolpath";
+  const mockSignal =
+    mode === "mock" ||
+    isMockEngine(result.engine) ||
+    suppliedMock ||
+    suppliedMockSource;
+
+  if (suppliedReal && mockSignal) {
+    return {
+      kind: "unknown",
+      mode: "unknown",
+      engine: result.engine || null,
+      source: "unknown",
+    };
+  }
+  if (mockSignal) {
+    return {
+      kind: "mock",
+      mode: "mock",
+      engine: result.engine || "mock",
+      source: "fixed_test_toolpath",
+    };
+  }
+  if (mode === "real" && result.engine?.trim()) {
+    return {
+      kind: "real",
+      mode: "real",
+      engine: result.engine,
+      source: "slicer_service",
+    };
+  }
+  return {
+    kind: "unknown",
+    mode: "unknown",
+    engine: result.engine || null,
+    source: "unknown",
+  };
+}
+
+function withServerProvenance(
+  job: SlicerJob,
+  mode: "mock" | "real",
+): SlicerJob {
+  if (!job.result) return job;
+  return {
+    ...job,
+    result: {
+      ...job.result,
+      provenance: deriveArtifactProvenance(job.result, mode),
+    },
+  };
+}
+
 export function injectPrintStatsInfo(gcode: string, totalLayer = 48): string {
   if (/^SET_PRINT_STATS_INFO\b/im.test(gcode)) return gcode;
 
@@ -366,6 +457,8 @@ export class SlicerClient {
         ...MOCK_RESULT,
         profile_id: input.profileId,
         rotation: input.rotation ?? null,
+        prepared_source_bounding_box_mm:
+          mockInspectResult(input).bounding_box_mm,
         transformed_bounding_box_mm: mockInspectResult(input).bounding_box_mm,
         supports: input.supports ?? null,
       });
@@ -399,11 +492,14 @@ export class SlicerClient {
 
   async getJob(jobId: string): Promise<SlicerJob> {
     if (this.config.mode === "mock" || isMockJobId(jobId)) {
-      return {
-        job_id: jobId,
-        status: "done",
-        result: mockJobs.get(jobId) ?? MOCK_RESULT,
-      };
+      return withServerProvenance(
+        {
+          job_id: jobId,
+          status: "done",
+          result: mockJobs.get(jobId) ?? MOCK_RESULT,
+        },
+        "mock",
+      );
     }
 
     try {
@@ -417,7 +513,10 @@ export class SlicerClient {
           signal: AbortSignal.timeout(this.timeoutMs),
         },
       );
-      return await readResponse<SlicerJob>(response);
+      return withServerProvenance(
+        await readResponse<SlicerJob>(response),
+        this.config.mode,
+      );
     } catch (error) {
       throw normalizeSlicerError(error);
     }

@@ -35,6 +35,110 @@ export interface PreviewTrust {
   analysis: GcodeArtifactAnalysis;
 }
 
+export interface SourceOutputCorrelationInput {
+  preparedSourceBounds: { x: number; y: number; z: number } | null | undefined;
+  transformedResultBounds:
+    { x: number; y: number; z: number } | null | undefined;
+  rotation: number[] | null | undefined;
+}
+
+/**
+ * Source/output correlation is intentionally one-sided for XY: a slicer may
+ * add a brim, skirt, or support, but a parsed extrusion footprint that is more
+ * than 20% smaller than the prepared source is not credible. The 0.5 mm floor
+ * permits small-part rounding. Z uses the same ratio/floor because a prepared
+ * part should not silently lose a substantial portion of its height.
+ */
+const CORRELATION_MINIMUM_RATIO = 0.8;
+const CORRELATION_ABSOLUTE_TOLERANCE_MM = 0.5;
+
+function isUsableBounds(
+  bounds: { x: number; y: number; z: number } | null | undefined,
+): bounds is { x: number; y: number; z: number } {
+  return Boolean(
+    bounds &&
+    [bounds.x, bounds.y, bounds.z].every(
+      (value) => Number.isFinite(value) && value > 0,
+    ),
+  );
+}
+
+function materiallySmaller(output: number, expected: number): boolean {
+  return (
+    output + CORRELATION_ABSOLUTE_TOLERANCE_MM <
+    expected * CORRELATION_MINIMUM_RATIO
+  );
+}
+
+function hasUsableQuaternion(rotation: number[] | null | undefined): boolean {
+  return (
+    rotation == null ||
+    (rotation.length === 4 && rotation.every((value) => Number.isFinite(value)))
+  );
+}
+
+/**
+ * Checks only server-returned preparation and slicer-result dimensions against
+ * parsed extrusion bounds. It never treats a browser's model data as evidence.
+ */
+export function assessSourceOutputCorrelation(
+  analysis: GcodeArtifactAnalysis,
+  input: SourceOutputCorrelationInput,
+): string[] {
+  const reasons: string[] = [];
+  if (!isUsableBounds(input.preparedSourceBounds)) {
+    reasons.push(
+      "Prepared source bounds are unavailable; source-to-toolpath correlation cannot be established.",
+    );
+  }
+  if (!isUsableBounds(input.transformedResultBounds)) {
+    reasons.push(
+      "Transformed slicer-result bounds are unavailable; source-to-toolpath correlation cannot be established.",
+    );
+  }
+  if (!hasUsableQuaternion(input.rotation)) {
+    reasons.push(
+      "The slicer returned an invalid preparation orientation state.",
+    );
+  }
+  if (!analysis.bounds || reasons.length > 0) return reasons;
+
+  const output = {
+    x: analysis.bounds.maxX - analysis.bounds.minX,
+    y: analysis.bounds.maxY - analysis.bounds.minY,
+    z: analysis.bounds.maxZ - analysis.bounds.minZ,
+  };
+  const expected = input.transformedResultBounds;
+  if (!expected) return reasons;
+  const outputXY = [output.x, output.y].sort((left, right) => left - right);
+  const expectedXY = [expected.x, expected.y].sort(
+    (left, right) => left - right,
+  );
+  if (
+    materiallySmaller(outputXY[0], expectedXY[0]) ||
+    materiallySmaller(outputXY[1], expectedXY[1]) ||
+    materiallySmaller(output.z, expected.z)
+  ) {
+    reasons.push(
+      "Parsed extrusion bounds are materially smaller than the server-reported prepared result bounds.",
+    );
+  }
+
+  const source = input.preparedSourceBounds;
+  if (!source) return reasons;
+  const sourceXY = [source.x, source.y].sort((left, right) => left - right);
+  if (
+    materiallySmaller(expectedXY[0], sourceXY[0]) ||
+    materiallySmaller(expectedXY[1], sourceXY[1]) ||
+    materiallySmaller(expected.z, source.z)
+  ) {
+    reasons.push(
+      "The slicer-result bounds do not preserve the prepared source dimensions.",
+    );
+  }
+  return reasons;
+}
+
 function segmentLength(
   from: { x: number; y: number; z: number },
   to: { x: number; y: number; z: number },
@@ -217,14 +321,20 @@ export async function assessPreviewTrust(
     "perimeter",
     "inner_wall",
   ];
-  if (!wallFeatures.some((feature) => (analysis.featureMoveCounts[feature] ?? 0) > 0)) {
+  if (
+    !wallFeatures.some(
+      (feature) => (analysis.featureMoveCounts[feature] ?? 0) > 0,
+    )
+  ) {
     reasons.push(
       "Trusted model G-code requires recognized wall or perimeter extrusion evidence.",
     );
   }
   for (const feature of options.requiredFeatures ?? []) {
     if ((analysis.featureMoveCounts[feature] ?? 0) === 0) {
-      reasons.push(`Expected ${feature.replaceAll("_", " ")} evidence is missing.`);
+      reasons.push(
+        `Expected ${feature.replaceAll("_", " ")} evidence is missing.`,
+      );
     }
   }
   return {

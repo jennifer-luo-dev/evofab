@@ -20,7 +20,10 @@ function square(
   }
 }
 
-/** Deterministic 20 mm fixture; thresholds live with its analysis test. */
+/**
+ * Synthetic deterministic 20 mm parser/renderer fixture. It is not output
+ * from an STL slicer and must never be used as source-to-toolpath evidence.
+ */
 export function cube20mmGcode(): string {
   const lines = [
     "; deterministic 20 mm cube",

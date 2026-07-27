@@ -6,6 +6,7 @@ import type {
   PreviewTrust,
 } from "@/app/lib/gcode-artifact-analysis";
 import type { BuildVolumeMm } from "@/app/lib/printability";
+import type { SlicerArtifactProvenance } from "@/app/lib/slicer-client";
 import { preparationQuaternion } from "@/app/lib/preparation-orientation";
 import {
   phaseJPreviewAdapter,
@@ -19,15 +20,18 @@ interface SliceViewerProps {
   status: string;
   buildVolume: BuildVolumeMm;
   previewTrust: PreviewTrust | null;
+  provenance: SlicerArtifactProvenance | undefined;
   onRendererState: (state: "pending" | "ready" | "failed") => void;
 }
 
 function SourceModelView({
   file,
   rotation,
+  simulation,
 }: {
   file: File | null;
   rotation: number[] | null;
+  simulation: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -143,8 +147,9 @@ function SourceModelView({
         }
       />
       <p className="absolute left-4 top-4 max-w-sm rounded bg-black/65 px-3 py-2 text-xs text-white/85">
-        Source model view. This STL uses the accepted preparation orientation;
-        it is reference geometry, not the generated toolpath.
+        {simulation
+          ? "Source model view. This STL uses the accepted preparation orientation, but the simulation toolpath is fixed and is not comparable source output."
+          : "Source model view. This STL uses the accepted preparation orientation; it is reference geometry, not the generated toolpath."}
       </p>
       {error && (
         <p
@@ -204,6 +209,7 @@ export function SliceViewer({
   status,
   buildVolume,
   previewTrust,
+  provenance,
   onRendererState,
 }: SliceViewerProps) {
   const { x: buildVolumeX, y: buildVolumeY, z: buildVolumeZ } = buildVolume;
@@ -501,6 +507,15 @@ export function SliceViewer({
       </div>
       {previewTrust && (
         <div className="mt-4 space-y-3">
+          {provenance?.kind === "mock" && (
+            <p
+              role="alert"
+              className="rounded border border-[var(--color-amber)]/50 bg-[var(--color-amber)]/10 px-3 py-2 text-sm text-[var(--color-amber)]"
+            >
+              Simulation mode — this fixed test toolpath was not generated from
+              the uploaded STL. Printer handoff is disabled.
+            </p>
+          )}
           <p
             className={
               previewTrust.status === "trusted"
@@ -508,9 +523,11 @@ export function SliceViewer({
                 : "text-sm text-[var(--color-amber)]"
             }
           >
-            {previewTrust.status === "trusted"
-              ? "Preview trusted — upload may be enabled after this renderer is ready."
-              : "Preview blocked — resolve the evidence below before upload."}
+            {provenance?.kind === "mock"
+              ? "Simulation metrics are shown for UI testing only; they are not printer trust evidence."
+              : previewTrust.status === "trusted"
+                ? "Preview trusted — upload may be enabled after this renderer is ready."
+                : "Preview blocked — resolve the evidence below before upload."}
           </p>
           <p className="text-xs text-[var(--color-muted)]">
             Server reported {previewTrust.reportedLayerCount ?? "no"} layers ·
@@ -585,7 +602,11 @@ export function SliceViewer({
       )}
       <div className="mt-4">
         {view === "source" ? (
-          <SourceModelView file={file} rotation={rotation} />
+          <SourceModelView
+            file={file}
+            rotation={rotation}
+            simulation={provenance?.kind === "mock"}
+          />
         ) : (
           <div className="relative min-h-[500px] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[#111927]">
             <canvas

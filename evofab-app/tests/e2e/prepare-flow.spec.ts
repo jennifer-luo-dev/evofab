@@ -222,37 +222,39 @@ test.afterAll(async () => {
   });
 });
 
-test("mock prepare flow reaches slice preview", async ({ page }) => {
+test("simulation flow labels its fixed toolpath and blocks printer handoff", async ({
+  page,
+}) => {
   await page.goto("/cloud-slicer");
   await expect(
     page.getByRole("heading", { name: "Cloud Slicer" }),
   ).toBeVisible();
 
-  const stl = `solid smoke
+  const stl = `solid asymmetric_mount
 facet normal 0 0 1
   outer loop
     vertex 0 0 0
-    vertex 20 0 0
+    vertex 60 0 0
     vertex 0 20 0
   endloop
 endfacet
 facet normal 0 0 1
   outer loop
-    vertex 20 0 0
-    vertex 20 20 0
+    vertex 60 0 0
+    vertex 60 20 0
     vertex 0 20 0
   endloop
 endfacet
-endsolid smoke
+endsolid asymmetric_mount
 `;
   const uploadInput = page.locator('input[type="file"]').first();
   await uploadInput.setInputFiles({
-    name: "evofab-smoke.stl",
+    name: "asymmetric-mounting-plate.stl",
     mimeType: "model/stl",
     buffer: Buffer.from(stl),
   });
   await expect(
-    page.getByText("evofab-smoke.stl", { exact: true }),
+    page.getByText("asymmetric-mounting-plate.stl", { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Auto-orient" }).click();
   await expect(
@@ -298,13 +300,24 @@ endsolid smoke
   await page.getByRole("button", { name: "Next", exact: true }).click();
 
   await page.getByRole("button", { name: "Slice", exact: true }).click();
-  await expect(page.getByText("Slice complete.")).toBeVisible({
+  await expect(page.getByText("Simulation complete.")).toBeVisible({
     timeout: 15_000,
   });
   await expect(
     page.getByRole("heading", { name: "Slice Preview" }),
   ).toBeVisible();
   await expect(page.getByText(/48 reported|reported/)).toBeVisible();
+  await expect(
+    page.getByText(
+      /fixed test toolpath was not generated from the uploaded STL/i,
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Select a printer" }),
+  ).toBeDisabled();
+  await expect(
+    page.getByText(/Simulation output is a fixed test toolpath/i),
+  ).toBeVisible();
   await expect(page.getByLabel("First visible layer")).toBeVisible();
   await expect(page.getByText("Layers 1–48 of 48")).toBeVisible();
   await expect(page.getByTestId("tube-toolpath-canvas")).toHaveAttribute(
@@ -337,7 +350,9 @@ endsolid smoke
   );
   await page.getByLabel("Show travel moves").check();
   await expect(page.getByText(/travel visible/)).toBeVisible();
-  await expect(page.getByText(/Preview trusted/)).toBeVisible();
+  await expect(
+    page.getByText(/Simulation metrics are shown for UI testing only/i),
+  ).toBeVisible();
   await expect(
     page.locator('[role="status"]', { hasText: "Toolpath renderer ready" }),
   ).toBeVisible();
