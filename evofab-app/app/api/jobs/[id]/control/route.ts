@@ -144,7 +144,9 @@ export async function POST(
   }
 
   if (printer.driver_type === "prusalink") {
-    if (!(["pause", "resume", "cancel"] as string[]).includes(action)) {
+    if (
+      !(["start", "pause", "resume", "cancel"] as string[]).includes(action)
+    ) {
       return errorResponse(
         403,
         "PRUSALINK_CAPABILITY_UNSUPPORTED",
@@ -152,6 +154,82 @@ export async function POST(
       );
     }
     const driver = new PrusaLinkDriver();
+    if (action === "start") {
+      if (job.status !== "queued" || !job.file_key) {
+        return errorResponse(
+          409,
+          "PRUSALINK_START_NOT_READY",
+          "Only a verified, uploaded Prusa job can be started.",
+        );
+      }
+      const separator = job.file_key.indexOf("/");
+      if (separator <= 0 || separator === job.file_key.length - 1) {
+        return errorResponse(
+          409,
+          "PRUSALINK_START_NOT_READY",
+          "The verified storage path is unavailable.",
+        );
+      }
+      await supabase
+        .from("jobs")
+        .update({
+          last_command: "start",
+          command_outcome: "pending",
+          last_command_code: null,
+        })
+        .eq("id", id);
+      const result = await driver.startPrint(
+        printer as Printer,
+        job.file_key.slice(0, separator),
+        job.file_key.slice(separator + 1),
+      );
+      if (result.outcome !== "succeeded") {
+        await supabase
+          .from("jobs")
+          .update({
+            command_outcome: result.outcome,
+            last_command_code: result.code ?? null,
+          })
+          .eq("id", id);
+        return errorResponse(
+          result.outcome === "outcome_unknown" ? 504 : 502,
+          result.code ?? "PRUSALINK_START_FAILED",
+          result.outcome === "outcome_unknown"
+            ? "Start outcome is unknown; do not retry until status reconciles."
+            : "PrusaLink start failed.",
+          result.retryable,
+        );
+      }
+      const observed = await driver
+        .observeJob(printer as Printer)
+        .catch(() => null);
+      if (!observed) {
+        await supabase
+          .from("jobs")
+          .update({
+            command_outcome: "outcome_unknown",
+            last_command_code: "PRUSALINK_JOB_UNOBSERVED",
+          })
+          .eq("id", id);
+        return errorResponse(
+          504,
+          "PRUSALINK_JOB_UNOBSERVED",
+          "Start was accepted but the printer job identity could not be observed. Do not retry blindly.",
+        );
+      }
+      await supabase
+        .from("jobs")
+        .update({
+          status: "printing",
+          pipeline_step: "printing",
+          started_at: new Date().toISOString(),
+          command_outcome: "succeeded",
+          last_command_code: null,
+          prusalink_job_id: observed.id,
+        })
+        .eq("id", id);
+      return NextResponse.json({ ok: true, outcome: "succeeded" });
+    }
     const observed = await driver
       .observeJob(printer as Printer)
       .catch(() => null);

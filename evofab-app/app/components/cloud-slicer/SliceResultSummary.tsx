@@ -1,6 +1,7 @@
 "use client";
 
 import { displaySlicerEngine } from "@/app/lib/slicer-display";
+import type { SlicerArtifactProvenance } from "@/app/lib/slicer-client";
 
 interface SliceResultSummaryProps {
   printTimeS: number | null;
@@ -10,6 +11,9 @@ interface SliceResultSummaryProps {
   layerCount: number | null;
   orientationLabel: string;
   supports: boolean;
+  supportsGenerated: boolean | null | undefined;
+  supportDetected: boolean | undefined;
+  provenance: SlicerArtifactProvenance | undefined;
 }
 
 function formatBytes(bytes: number): string {
@@ -32,6 +36,9 @@ export function SliceResultSummary({
   layerCount,
   orientationLabel,
   supports,
+  supportsGenerated,
+  supportDetected,
+  provenance,
 }: SliceResultSummaryProps) {
   return (
     <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
@@ -60,7 +67,9 @@ export function SliceResultSummary({
             Engine
           </p>
           <p className="mt-2 truncate font-mono text-sm text-[var(--color-text)]">
-            {displaySlicerEngine(engine)}
+            {provenance?.kind === "mock"
+              ? "Simulation (fixed test toolpath)"
+              : displaySlicerEngine(engine)}
           </p>
         </div>
         <div className="rounded-lg bg-[var(--color-surface-2)] p-3">
@@ -84,7 +93,19 @@ export function SliceResultSummary({
             Prepare
           </p>
           <p className="mt-2 font-mono text-xs text-[var(--color-text)]">
-            {orientationLabel} · {supports ? "supports on" : "supports off"}
+            {orientationLabel} · requested {supports ? "yes" : "no"}
+            {" · "}generated{" "}
+            {supportsGenerated == null
+              ? "unknown"
+              : supportsGenerated
+                ? "yes"
+                : "no"}
+            {" · "}feature detected{" "}
+            {supportDetected == null
+              ? "unknown"
+              : supportDetected
+                ? "yes"
+                : "no"}
           </p>
         </div>
       </div>

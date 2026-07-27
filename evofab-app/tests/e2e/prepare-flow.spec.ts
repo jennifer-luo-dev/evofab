@@ -222,37 +222,43 @@ test.afterAll(async () => {
   });
 });
 
-test("mock prepare flow reaches slice preview", async ({ page }) => {
+test("simulation flow labels its fixed toolpath and blocks printer handoff", async ({
+  page,
+}) => {
   await page.goto("/cloud-slicer");
   await expect(
     page.getByRole("heading", { name: "Cloud Slicer" }),
   ).toBeVisible();
 
-  const stl = `solid smoke
+  const stl = `solid asymmetric_mount
 facet normal 0 0 1
   outer loop
     vertex 0 0 0
-    vertex 20 0 0
+    vertex 60 0 0
     vertex 0 20 0
   endloop
 endfacet
 facet normal 0 0 1
   outer loop
-    vertex 20 0 0
-    vertex 20 20 0
+    vertex 60 0 0
+    vertex 60 20 0
     vertex 0 20 0
   endloop
 endfacet
-endsolid smoke
+endsolid asymmetric_mount
 `;
   const uploadInput = page.locator('input[type="file"]').first();
   await uploadInput.setInputFiles({
-    name: "evofab-smoke.stl",
+    name: "asymmetric-mounting-plate.stl",
     mimeType: "model/stl",
     buffer: Buffer.from(stl),
   });
   await expect(
-    page.getByText("evofab-smoke.stl", { exact: true }),
+    page.getByText("asymmetric-mounting-plate.stl", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Auto-orient" }).click();
+  await expect(
+    page.getByText("Auto-oriented — largest flat face down"),
   ).toBeVisible();
   await page.getByRole("button", { name: "Next", exact: true }).click();
 
@@ -294,11 +300,76 @@ endsolid smoke
   await page.getByRole("button", { name: "Next", exact: true }).click();
 
   await page.getByRole("button", { name: "Slice", exact: true }).click();
-  await expect(page.getByText("Slice complete.")).toBeVisible({
+  await expect(page.getByText("Simulation complete.")).toBeVisible({
     timeout: 15_000,
   });
   await expect(
     page.getByRole("heading", { name: "Slice Preview" }),
   ).toBeVisible();
   await expect(page.getByText(/48 reported|reported/)).toBeVisible();
+  await expect(
+    page.getByText(
+      /fixed test toolpath was not generated from the uploaded STL/i,
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Select a printer" }),
+  ).toBeDisabled();
+  await expect(
+    page.getByText(/Simulation output is a fixed test toolpath/i),
+  ).toBeVisible();
+  await expect(page.getByLabel("First visible layer")).toBeVisible();
+  await expect(page.getByText("Layers 1–48 of 48")).toBeVisible();
+  await expect(page.getByTestId("toolpath-canvas")).toHaveAttribute(
+    "data-visible-layer-range",
+    "0-47",
+  );
+  await expect(page.getByTestId("toolpath-canvas")).toHaveAttribute(
+    "data-visible-sample-layers",
+    "0,23,47",
+  );
+  await expect(
+    page.locator('[role="status"]', { hasText: "Toolpath renderer ready" }),
+  ).toBeVisible();
+  await expect(page.getByTestId("toolpath-canvas")).toHaveScreenshot(
+    "mock-support-toolpath-default.png",
+    // gcode-preview tube edges vary slightly across local and Linux GPU rasterizers.
+    { animations: "disabled", maxDiffPixelRatio: 0.02 },
+  );
+
+  await page.getByLabel("First visible layer").fill("12");
+  await page.getByLabel("Last visible layer").fill("24");
+  await expect(page.getByText("Layers 13–25 of 48")).toBeVisible();
+  await expect(page.getByTestId("toolpath-canvas")).toHaveAttribute(
+    "data-visible-layer-range",
+    "12-24",
+  );
+  await expect(page.getByTestId("toolpath-canvas")).toHaveAttribute(
+    "data-visible-sample-layers",
+    "23",
+  );
+  await page.getByLabel("Show travel moves").check();
+  await expect(page.getByText(/travel visible/)).toBeVisible();
+  await expect(
+    page.getByText(/Simulation metrics are shown for UI testing only/i),
+  ).toBeVisible();
+  await expect(
+    page.locator('[role="status"]', { hasText: "Toolpath renderer ready" }),
+  ).toBeVisible();
+  await expect(page.getByTestId("toolpath-canvas")).toHaveScreenshot(
+    "mock-support-toolpath-range.png",
+    // gcode-preview tube edges vary slightly across local and Linux GPU rasterizers.
+    { animations: "disabled", maxDiffPixelRatio: 0.02 },
+  );
+  await page.getByRole("button", { name: "Source model" }).click();
+  await expect(page.getByText(/Source model view/)).toBeVisible();
+  await expect(page.getByTestId("source-model-canvas")).toHaveAttribute(
+    "data-preparation-rotation",
+    "0,0.707107,0,0.707107",
+  );
+  await page.getByRole("button", { name: "Toolpath" }).click();
+  await expect(page.getByTestId("toolpath-canvas")).toHaveAttribute(
+    "data-visible-layer-range",
+    "12-24",
+  );
 });

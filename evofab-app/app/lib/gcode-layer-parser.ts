@@ -13,6 +13,8 @@ export type GcodeLineType =
   | "sparse_infill"
   | "support"
   | "top_surface"
+  | "skirt"
+  | "brim"
   | "travel"
   | "unknown";
 
@@ -55,17 +57,25 @@ function makeLayer(index: number, z: number): GcodeLayer {
 }
 
 function normalizeLineType(value: string): GcodeLineType {
-  const normalized = value.trim().toLowerCase().replaceAll(" ", "_");
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replaceAll(/[\s/-]+/g, "_");
+  if (normalized.includes("skirt")) return "skirt";
+  if (normalized.includes("brim")) return "brim";
+  if (normalized.includes("support")) return "support";
+  if (normalized.includes("top") || normalized.includes("surface"))
+    return "top_surface";
   if (normalized.includes("external")) return "external_perimeter";
+  if (normalized.includes("outer") || normalized.includes("wall_outer"))
+    return "outer_wall";
   if (normalized === "perimeter" || normalized.includes("perimeter"))
     return "perimeter";
-  if (normalized.includes("support")) return "support";
-  if (normalized.includes("outer")) return "outer_wall";
   if (normalized.includes("inner") || normalized.includes("wall"))
     return "inner_wall";
-  if (normalized === "infill") return "infill";
+  if (normalized === "infill" || normalized.includes("solid_infill"))
+    return "infill";
   if (normalized.includes("infill")) return "sparse_infill";
-  if (normalized.includes("top")) return "top_surface";
   if (normalized.includes("travel")) return "travel";
   return "unknown";
 }

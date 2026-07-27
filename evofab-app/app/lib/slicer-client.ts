@@ -25,8 +25,30 @@ export interface SlicerJobResult {
   profile_id: string;
   rotation?: number[] | null;
   drop_to_bed?: boolean;
+  extrusion_width_mm?: number | null;
+  layer_height_mm?: number | null;
+  /**
+   * Server-owned provenance. Browser-supplied status is never used to decide
+   * whether an artifact can reach a printer.
+   */
+  provenance?: SlicerArtifactProvenance;
+  /** Dimensions of the prepared source geometry before G-code generation. */
+  prepared_source_bounding_box_mm?: BoundingBoxMm | null;
   transformed_bounding_box_mm?: BoundingBoxMm | null;
+  /** Operator request, not evidence that the slicer emitted support paths. */
+  supports_requested?: boolean | null;
+  /** Authoritative slicer result; only true requires support paths in trust. */
+  supports_generated?: boolean | null;
+  /** Parsed/returned evidence from the canonical result, when supplied. */
+  support_feature_detected?: boolean | null;
   supports?: boolean | null;
+}
+
+export interface SlicerArtifactProvenance {
+  kind: "mock" | "real" | "unknown";
+  mode: "mock" | "real" | "unknown";
+  engine: string | null;
+  source: "fixed_test_toolpath" | "slicer_service" | "unknown";
 }
 
 export interface SlicerJob {
@@ -94,7 +116,10 @@ const MOCK_JOB_ID_PREFIX = "mock-slicer-job";
 const MOCK_TOTAL_LAYERS = 48;
 const mockJobs = new Map<string, SlicerJobResult>();
 
-function buildMockGcodeFixture(totalLayers = MOCK_TOTAL_LAYERS): string {
+function buildMockGcodeFixture(
+  totalLayers = MOCK_TOTAL_LAYERS,
+  includeSupport = false,
+): string {
   const lines = [
     "; EvoFab mock pellet slicer fixture",
     "START_PRINT BED_TEMPERATURE=60 EXTRUDER_TEMPERATURE=190 EXTRUDER_ROTATION_VOLUME=210",
@@ -150,6 +175,18 @@ function buildMockGcodeFixture(totalLayers = MOCK_TOTAL_LAYERS): string {
         }
       }
     }
+    if (includeSupport && layer < totalLayers - 8) {
+      lines.push(";TYPE:Support", "G1 X-6 Y-6 F1800");
+      for (const [x, y] of [
+        [-2, -6],
+        [-2, -2],
+        [-6, -2],
+        [-6, -6],
+      ]) {
+        e += 0.6;
+        lines.push(`G1 X${x} Y${y} E${e.toFixed(4)} F900`);
+      }
+    }
   }
 
   lines.push("END_PRINT", "");
@@ -168,7 +205,17 @@ const MOCK_RESULT: SlicerJobResult = {
   profile_id: "pla-fgf",
   rotation: null,
   drop_to_bed: true,
+  provenance: {
+    kind: "mock",
+    mode: "mock",
+    engine: "mock",
+    source: "fixed_test_toolpath",
+  },
+  prepared_source_bounding_box_mm: { x: 24, y: 24, z: 40 },
   transformed_bounding_box_mm: { x: 24, y: 24, z: 40 },
+  supports_requested: null,
+  supports_generated: null,
+  support_feature_detected: null,
   supports: null,
 };
 
@@ -198,7 +245,7 @@ function mockInspectResult(input: InspectModelInput): SlicerInspectResult {
         area_mm2: 576,
         centroid_mm: [12, 12, 0],
         triangle_indices: [0, 1],
-        quaternion_xyzw: [0, 0, 0, 1],
+        quaternion_xyzw: [0, 0.707107, 0, 0.707107],
       },
       {
         id: "face-1",
@@ -285,6 +332,76 @@ function isMockJobId(jobId: string): boolean {
   return jobId.startsWith(MOCK_JOB_ID_PREFIX);
 }
 
+function isMockEngine(engine: string | undefined): boolean {
+  return engine?.trim().toLowerCase() === "mock";
+}
+
+/**
+ * Derive provenance at the server boundary. A remote response may provide
+ * descriptive fields, but it cannot turn mock mode or a mock engine into a
+ * real artifact. Conflicting signals are deliberately left unknown and are
+ * blocked by printer handoff.
+ */
+function deriveArtifactProvenance(
+  result: SlicerJobResult,
+  mode: "mock" | "real",
+): SlicerArtifactProvenance {
+  const supplied = result.provenance;
+  const suppliedReal = supplied?.kind === "real";
+  const suppliedMock = supplied?.kind === "mock";
+  const suppliedMockSource = supplied?.source === "fixed_test_toolpath";
+  const mockSignal =
+    mode === "mock" ||
+    isMockEngine(result.engine) ||
+    suppliedMock ||
+    suppliedMockSource;
+
+  if (suppliedReal && mockSignal) {
+    return {
+      kind: "unknown",
+      mode: "unknown",
+      engine: result.engine || null,
+      source: "unknown",
+    };
+  }
+  if (mockSignal) {
+    return {
+      kind: "mock",
+      mode: "mock",
+      engine: result.engine || "mock",
+      source: "fixed_test_toolpath",
+    };
+  }
+  if (mode === "real" && result.engine?.trim()) {
+    return {
+      kind: "real",
+      mode: "real",
+      engine: result.engine,
+      source: "slicer_service",
+    };
+  }
+  return {
+    kind: "unknown",
+    mode: "unknown",
+    engine: result.engine || null,
+    source: "unknown",
+  };
+}
+
+function withServerProvenance(
+  job: SlicerJob,
+  mode: "mock" | "real",
+): SlicerJob {
+  if (!job.result) return job;
+  return {
+    ...job,
+    result: {
+      ...job.result,
+      provenance: deriveArtifactProvenance(job.result, mode),
+    },
+  };
+}
+
 export function injectPrintStatsInfo(gcode: string, totalLayer = 48): string {
   if (/^SET_PRINT_STATS_INFO\b/im.test(gcode)) return gcode;
 
@@ -351,7 +468,12 @@ export class SlicerClient {
         ...MOCK_RESULT,
         profile_id: input.profileId,
         rotation: input.rotation ?? null,
+        prepared_source_bounding_box_mm:
+          mockInspectResult(input).bounding_box_mm,
         transformed_bounding_box_mm: mockInspectResult(input).bounding_box_mm,
+        supports_requested: input.supports ?? null,
+        supports_generated: input.supports ?? null,
+        support_feature_detected: input.supports ?? null,
         supports: input.supports ?? null,
       });
       return {
@@ -384,11 +506,14 @@ export class SlicerClient {
 
   async getJob(jobId: string): Promise<SlicerJob> {
     if (this.config.mode === "mock" || isMockJobId(jobId)) {
-      return {
-        job_id: jobId,
-        status: "done",
-        result: mockJobs.get(jobId) ?? MOCK_RESULT,
-      };
+      return withServerProvenance(
+        {
+          job_id: jobId,
+          status: "done",
+          result: mockJobs.get(jobId) ?? MOCK_RESULT,
+        },
+        "mock",
+      );
     }
 
     try {
@@ -402,7 +527,10 @@ export class SlicerClient {
           signal: AbortSignal.timeout(this.timeoutMs),
         },
       );
-      return await readResponse<SlicerJob>(response);
+      return withServerProvenance(
+        await readResponse<SlicerJob>(response),
+        this.config.mode,
+      );
     } catch (error) {
       throw normalizeSlicerError(error);
     }
@@ -410,7 +538,10 @@ export class SlicerClient {
 
   async fetchGcode(jobId: string): Promise<string> {
     if (this.config.mode === "mock" || isMockJobId(jobId)) {
-      return injectPrintStatsInfo(MOCK_GCODE_FIXTURE);
+      const result = mockJobs.get(jobId);
+      return injectPrintStatsInfo(
+        buildMockGcodeFixture(MOCK_TOTAL_LAYERS, result?.supports === true),
+      );
     }
 
     try {

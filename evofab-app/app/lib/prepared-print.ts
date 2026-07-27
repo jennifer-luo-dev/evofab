@@ -1,4 +1,6 @@
 import type { PrintSettings } from "@/app/types/job";
+import type { PreviewTrust } from "@/app/lib/gcode-artifact-analysis";
+import type { SlicerArtifactProvenance } from "@/app/lib/slicer-client";
 
 export const PREPARED_PRINT_STORAGE_PREFIX = "evofab:prepared-print:";
 
@@ -7,6 +9,9 @@ export interface PreparedPrintDraft {
   filename: string;
   displayName?: string;
   gcode: string;
+  sourceSlicerJobId: string;
+  slicerProvenance?: SlicerArtifactProvenance;
+  previewTrust: PreviewTrust;
   materialProfileId: string | null;
   settings: PrintSettings;
   prepareSettings: {

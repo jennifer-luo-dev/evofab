@@ -83,6 +83,7 @@ export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
   }, [draftId]);
 
   const draft = draftState.draft;
+  const draftHasRealSlicerProvenance = draft?.slicerProvenance?.kind === "real";
   const visibleMessage = message ?? draftState.loadMessage;
   const preparedFilename = draft?.filename ?? null;
   const preparedDisplayName = draft?.displayName ?? preparedFilename;
@@ -106,7 +107,15 @@ export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
   }
 
   async function uploadPreparedPrint(printer: PrinterWithStatus) {
-    if (!draft || !draftId || busyPrinterId) return;
+    if (!draft || !draftId || busyPrinterId || !draftHasRealSlicerProvenance) {
+      if (draft && !draftHasRealSlicerProvenance) {
+        setMessage({
+          tone: "error",
+          text: "This prepared artifact lacks verified real slicer provenance and cannot be uploaded.",
+        });
+      }
+      return;
+    }
 
     setBusyPrinterId(printer.id);
     setMessage(null);
@@ -122,7 +131,11 @@ export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
       form.append("settings", JSON.stringify(draft.settings));
       form.append("prepare_settings", JSON.stringify(draft.prepareSettings));
       form.append("experiment_params", JSON.stringify(draft.experimentParams));
-      form.append("start_after_upload", "false");
+      form.append("source_slicer_job_id", draft.sourceSlicerJobId);
+      form.append(
+        "preview_hash",
+        draft.previewTrust.analysis.normalizedHash ?? "",
+      );
 
       const response = await fetch("/api/jobs", {
         method: "POST",
@@ -361,7 +374,10 @@ export function PrintersFleetClient({ printers }: PrintersFleetClientProps) {
                 >
                   <button
                     disabled={
-                      !draft || busyPrinterId !== null || statusValue !== "idle"
+                      !draft ||
+                      !draftHasRealSlicerProvenance ||
+                      busyPrinterId !== null ||
+                      statusValue !== "idle"
                     }
                     onClick={() => uploadPreparedPrint(printer)}
                     title={printButtonLabel}

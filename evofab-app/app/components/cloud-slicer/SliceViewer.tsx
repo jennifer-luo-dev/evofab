@@ -1,551 +1,500 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  layerTotalFromGcode,
-  type GcodeLayer,
-  type GcodeLineType,
-  type GcodeSegment,
-} from "@/app/lib/gcode-layer-parser";
-import { GCODE_PREVIEW_TUBE_OPTIONS } from "@/app/lib/gcode-preview-adapter";
+import type {
+  GcodeArtifactAnalysis,
+  PreviewTrust,
+} from "@/app/lib/gcode-artifact-analysis";
 import type { BuildVolumeMm } from "@/app/lib/printability";
-import { phaseJPreviewAdapter } from "./preview-adapter";
+import type { SlicerArtifactProvenance } from "@/app/lib/slicer-client";
+import { preparationQuaternion } from "@/app/lib/preparation-orientation";
+import {
+  phaseJPreviewAdapter,
+  type PreviewGeometryMetadata,
+  type SlicePreviewRenderer,
+} from "./preview-adapter";
 
 interface SliceViewerProps {
   file: File | null;
+  rotation: number[] | null;
   gcode: string | null;
   status: string;
-  rotation: number[] | null;
   buildVolume: BuildVolumeMm;
-  reportedLayerCount: number | null;
+  previewTrust: PreviewTrust | null;
+  provenance: SlicerArtifactProvenance | undefined;
+  geometry: PreviewGeometryMetadata;
+  onRendererState: (state: "pending" | "ready" | "failed") => void;
 }
 
-const LINE_TYPES: Array<{
-  id: GcodeLineType;
-  label: string;
-  color: number;
-  swatch: string;
-}> = [
-  {
-    id: "external_perimeter",
-    label: "External perimeter",
-    color: 0xff8a3d,
-    swatch: "#ff8a3d",
-  },
-  { id: "perimeter", label: "Perimeter", color: 0xffb347, swatch: "#ffb347" },
-  { id: "outer_wall", label: "Outer wall", color: 0xff8a3d, swatch: "#ff8a3d" },
-  { id: "inner_wall", label: "Inner wall", color: 0xffde59, swatch: "#ffde59" },
-  { id: "infill", label: "Infill", color: 0xc53030, swatch: "#c53030" },
-  {
-    id: "sparse_infill",
-    label: "Sparse infill",
-    color: 0xc53030,
-    swatch: "#c53030",
-  },
-  { id: "support", label: "Support", color: 0x22c55e, swatch: "#22c55e" },
-  {
-    id: "top_surface",
-    label: "Top surface",
-    color: 0xff4141,
-    swatch: "#ff4141",
-  },
-  { id: "unknown", label: "Other", color: 0xe5e7eb, swatch: "#e5e7eb" },
-];
+function SourceModelView({
+  file,
+  rotation,
+  simulation,
+}: {
+  file: File | null;
+  rotation: number[] | null;
+  simulation: boolean;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-function segmentLength(segment: GcodeSegment): number {
-  const dx = segment.to.x - segment.from.x;
-  const dy = segment.to.y - segment.from.y;
-  const dz = segment.to.z - segment.from.z;
-  return Math.sqrt(dx * dx + dy * dy + dz * dz);
-}
-
-function formatDuration(seconds: number): string {
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.round(seconds % 60);
-  if (mins <= 0) return `${secs}s`;
-  return `${mins}m${secs.toString().padStart(2, "0")}s`;
-}
-
-function lineStats(layers: GcodeLayer[]) {
-  const totals = new Map<GcodeLineType, number>();
-  for (const layer of layers) {
-    for (const segment of layer.segments) {
-      if (segment.type === "travel") continue;
-      totals.set(
-        segment.type,
-        (totals.get(segment.type) ?? 0) + segmentLength(segment),
-      );
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !file) return;
+    const sourceCanvas = canvas;
+    const sourceFile = file;
+    let cancelled = false;
+    let frame = 0;
+    let dispose = () => {};
+    async function render() {
+      try {
+        const THREE = await import("three");
+        const { OrbitControls } =
+          await import("three/examples/jsm/controls/OrbitControls.js");
+        const { STLLoader } =
+          await import("three/examples/jsm/loaders/STLLoader.js");
+        const [buffer] = await Promise.all([sourceFile.arrayBuffer()]);
+        if (cancelled) return;
+        const renderer = new THREE.WebGLRenderer({
+          canvas: sourceCanvas,
+          antialias: true,
+        });
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color("#111927");
+        const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 5000);
+        const controls = new OrbitControls(camera, sourceCanvas);
+        const geometry = new STLLoader().parse(buffer);
+        geometry.computeVertexNormals();
+        geometry.computeBoundingBox();
+        const box = geometry.boundingBox;
+        const size = new THREE.Vector3();
+        box?.getSize(size);
+        const material = new THREE.MeshStandardMaterial({
+          color: "#9cc7d6",
+          metalness: 0.05,
+          roughness: 0.7,
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.rotation.x = -Math.PI / 2;
+        const sourceRotation = preparationQuaternion(rotation);
+        if (sourceRotation) {
+          mesh.quaternion.multiply(
+            new THREE.Quaternion(
+              sourceRotation[0],
+              sourceRotation[1],
+              sourceRotation[2],
+              sourceRotation[3],
+            ),
+          );
+        }
+        mesh.updateMatrixWorld(true);
+        const preparedBox = new THREE.Box3().setFromObject(mesh);
+        const preparedCenter = preparedBox.getCenter(new THREE.Vector3());
+        mesh.position.x -= preparedCenter.x;
+        mesh.position.z -= preparedCenter.z;
+        mesh.position.y -= preparedBox.min.y - 0.08;
+        mesh.updateMatrixWorld(true);
+        scene.add(mesh, new THREE.AmbientLight(0xffffff, 0.75));
+        const light = new THREE.DirectionalLight(0xffffff, 0.9);
+        light.position.set(30, 50, 40);
+        scene.add(light);
+        const radius = Math.max(size.length(), 10);
+        camera.position.set(radius, radius * 0.8, radius);
+        controls.target.set(0, Math.max(size.y, size.z) / 2, 0);
+        controls.update();
+        const resize = () => {
+          const rect = sourceCanvas.getBoundingClientRect();
+          renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+          renderer.setSize(
+            Math.max(1, rect.width),
+            Math.max(1, rect.height),
+            false,
+          );
+          camera.aspect = Math.max(1, rect.width) / Math.max(1, rect.height);
+          camera.updateProjectionMatrix();
+        };
+        const animate = () => {
+          resize();
+          controls.update();
+          renderer.render(scene, camera);
+          frame = requestAnimationFrame(animate);
+        };
+        animate();
+        dispose = () => {
+          cancelAnimationFrame(frame);
+          controls.dispose();
+          geometry.dispose();
+          material.dispose();
+          renderer.dispose();
+        };
+      } catch {
+        if (!cancelled) setError("Unable to render the source STL.");
+      }
     }
-  }
-  const totalMm = [...totals.values()].reduce((sum, value) => sum + value, 0);
-  return LINE_TYPES.map((type) => {
-    const lengthMm = totals.get(type.id) ?? 0;
-    const pct = totalMm > 0 ? (lengthMm / totalMm) * 100 : 0;
-    return {
-      ...type,
-      lengthMm,
-      pct,
-      seconds: Math.round(lengthMm * 0.42),
+    render();
+    return () => {
+      cancelled = true;
+      dispose();
     };
-  }).filter((stat) => stat.lengthMm > 0 || stat.id !== "unknown");
-}
+  }, [file, rotation]);
 
-function gcodePreviewLines(gcode: string | null, layerIndex: number): string[] {
-  if (!gcode) return [];
-  const lines = gcode.split(/\r?\n/);
-  let implicitLayer = -1;
-  const marker = lines.findIndex((line) => {
-    if (new RegExp(`^;\\s*LAYER[:_]\\s*${layerIndex}\\b`, "i").test(line)) {
-      return true;
-    }
-    if (/^;\s*LAYER_CHANGE\b/i.test(line)) {
-      implicitLayer += 1;
-      return implicitLayer === layerIndex;
-    }
-    return false;
-  });
-  const start = Math.max(0, (marker >= 0 ? marker : 0) - 3);
-  return lines.slice(start, start + 13).map((line, offset) => {
-    const lineNo = start + offset + 1;
-    return `${lineNo.toString().padStart(5, " ")}  ${line}`;
-  });
-}
-
-function modelBounds(layers: GcodeLayer[]) {
-  const points = layers.flatMap((layer) =>
-    layer.segments.flatMap((segment) => [segment.from, segment.to]),
+  return (
+    <div className="relative min-h-[500px] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[#111927]">
+      <canvas
+        ref={canvasRef}
+        className="min-h-[500px] w-full"
+        data-testid="source-model-canvas"
+        data-preparation-rotation={
+          preparationQuaternion(rotation)?.join(",") ?? "identity"
+        }
+      />
+      <p className="absolute left-4 top-4 max-w-sm rounded bg-black/65 px-3 py-2 text-xs text-white/85">
+        {simulation
+          ? "Source model view. This STL uses the accepted preparation orientation, but the simulation toolpath is fixed and is not comparable source output."
+          : "Source model view. This STL uses the accepted preparation orientation; it is reference geometry, not the generated toolpath."}
+      </p>
+      {error && (
+        <p
+          role="alert"
+          className="absolute bottom-4 left-4 text-sm text-[var(--color-red)]"
+        >
+          {error}
+        </p>
+      )}
+    </div>
   );
-  if (points.length === 0) {
-    return { centerX: 0, centerY: 0, minZ: 0, maxZ: 30, sizeX: 30, sizeY: 30 };
-  }
-  const xs = points.map((point) => point.x);
-  const ys = points.map((point) => point.y);
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
-  return {
-    centerX: (minX + maxX) / 2,
-    centerY: (minY + maxY) / 2,
-    minZ: Math.min(...points.map((point) => point.z)),
-    maxZ: Math.max(...points.map((point) => point.z)),
-    sizeX: Math.max(1, maxX - minX),
-    sizeY: Math.max(1, maxY - minY),
-  };
+}
+
+function AnalysisSummary({ analysis }: { analysis: GcodeArtifactAnalysis }) {
+  const bounds = analysis.bounds;
+  return (
+    <dl className="grid grid-cols-2 gap-3 rounded-lg border border-white/10 bg-black/30 p-3 text-xs text-white/80 md:grid-cols-4">
+      <div>
+        <dt className="text-white/50">Artifact</dt>
+        <dd>
+          {analysis.byteCount.toLocaleString()} bytes ·{" "}
+          {analysis.lineCount.toLocaleString()} lines
+        </dd>
+      </div>
+      <div>
+        <dt className="text-white/50">Extrusion</dt>
+        <dd>
+          {analysis.extrusionMoveCount} moves ·{" "}
+          {analysis.extrusionPathLengthMm.toFixed(1)} mm
+        </dd>
+      </div>
+      <div>
+        <dt className="text-white/50">Bounds</dt>
+        <dd>
+          {bounds
+            ? `${(bounds.maxX - bounds.minX).toFixed(1)} × ${(bounds.maxY - bounds.minY).toFixed(1)} × ${(bounds.maxZ - bounds.minZ).toFixed(1)} mm`
+            : "none"}
+        </dd>
+      </div>
+      <div>
+        <dt className="text-white/50">Normalized SHA-256</dt>
+        <dd
+          className="truncate font-mono"
+          title={analysis.normalizedHash ?? ""}
+        >
+          {analysis.normalizedHash?.slice(0, 12) ?? "pending"}
+        </dd>
+      </div>
+    </dl>
+  );
 }
 
 export function SliceViewer({
   file,
+  rotation,
   gcode,
   status,
-  rotation,
   buildVolume,
-  reportedLayerCount,
+  previewTrust,
+  provenance,
+  geometry,
+  onRendererState,
 }: SliceViewerProps) {
+  const { x: buildVolumeX, y: buildVolumeY, z: buildVolumeZ } = buildVolume;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [layerProgress, setLayerProgress] = useState(100);
-  const [showInfo, setShowInfo] = useState(true);
+  const rendererRef = useRef<SlicePreviewRenderer | null>(null);
   const layers = useMemo(
     () => (gcode ? phaseJPreviewAdapter.parse(gcode) : []),
     [gcode],
   );
-  const reportedTotal = useMemo(
-    () => reportedLayerCount ?? (gcode ? layerTotalFromGcode(gcode) : null),
-    [gcode, reportedLayerCount],
+  const layerMax = Math.max(0, layers.length - 1);
+  const [selectedRange, setSelectedRange] = useState(() => ({
+    artifact: gcode,
+    firstLayer: 0,
+    lastLayer: layerMax,
+  }));
+  const [selectedTravel, setSelectedTravel] = useState(() => ({
+    artifact: gcode,
+    value: false,
+  }));
+  const [view, setView] = useState<"toolpath" | "source">("toolpath");
+  const [rendererState, setRendererState] = useState<{
+    artifact: string | null;
+    ready: boolean;
+    error: string | null;
+  }>({ artifact: null, ready: false, error: null });
+  // G-code can arrive after the viewer mounts. A new artifact derives a full
+  // range and hidden travel without an effect-driven state reset; selections
+  // made against the same artifact remain intact and are safely clamped.
+  const rangeForArtifact =
+    selectedRange.artifact === gcode
+      ? selectedRange
+      : { firstLayer: 0, lastLayer: layerMax };
+  const firstLayer = Math.min(
+    Math.max(0, rangeForArtifact.firstLayer),
+    layerMax,
   );
-  const safeLayerIndex = Math.max(0, layers.length - 1);
-  const activeLayer = layers[safeLayerIndex] ?? null;
-  const visibleLayers = useMemo(
-    () => layers.slice(0, safeLayerIndex + 1),
-    [layers, safeLayerIndex],
+  const lastLayer = Math.max(
+    firstLayer,
+    Math.min(rangeForArtifact.lastLayer, layerMax),
   );
-  const activeLayerSegments = useMemo(
-    () =>
-      activeLayer
-        ? activeLayer.segments.slice(
-            0,
-            Math.ceil(activeLayer.segments.length * (layerProgress / 100)),
-          )
-        : [],
-    [activeLayer, layerProgress],
-  );
-  const stats = useMemo(() => lineStats(layers), [layers]);
-  const codePreview = useMemo(
-    () => gcodePreviewLines(gcode, activeLayer?.index ?? safeLayerIndex),
-    [activeLayer?.index, gcode, safeLayerIndex],
-  );
-  const totalPathMm = stats.reduce((sum, stat) => sum + stat.lengthMm, 0);
-  const hasRenderableSlice = gcode !== null && layers.length > 0;
-  const hasRenderableScene = hasRenderableSlice || file !== null;
+  const showTravel =
+    selectedTravel.artifact === gcode ? selectedTravel.value : false;
+  const rendererReady = rendererState.artifact === gcode && rendererState.ready;
+  const renderError =
+    rendererState.artifact === gcode ? rendererState.error : null;
 
   useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !gcode || !previewTrust?.analysis) return;
+    const rendererBuildVolume = {
+      x: buildVolumeX,
+      y: buildVolumeY,
+      z: buildVolumeZ,
+    };
     let cancelled = false;
-    let frameId = 0;
-    let cleanup = () => {};
-
-    async function renderScene() {
-      const canvas = canvasRef.current;
-      if (!canvas || !hasRenderableScene) return;
-
-      const THREE = await import("three");
-      const { OrbitControls } =
-        await import("three/examples/jsm/controls/OrbitControls.js");
-      const { STLLoader } =
-        await import("three/examples/jsm/loaders/STLLoader.js");
-      if (cancelled) return;
-
-      const renderer = new THREE.WebGLRenderer({
+    onRendererState("pending");
+    phaseJPreviewAdapter
+      .createRenderer({
         canvas,
-        antialias: true,
-        alpha: true,
-      });
-      const scene = new THREE.Scene();
-      const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 5000);
-      const controls = new OrbitControls(camera, renderer.domElement);
-      const bounds = modelBounds(layers);
-      const bedX = buildVolume.x;
-      const bedY = buildVolume.y;
-      const disposables: Array<{ dispose: () => void }> = [];
-
-      const bedGeometry = new THREE.PlaneGeometry(bedX, bedY);
-      const bedMaterial = new THREE.MeshBasicMaterial({
-        color: 0x2b3033,
-        transparent: true,
-        opacity: 0.72,
-        side: THREE.DoubleSide,
-        polygonOffset: true,
-        polygonOffsetFactor: 1,
-        polygonOffsetUnits: 1,
-      });
-      const bed = new THREE.Mesh(bedGeometry, bedMaterial);
-      bed.rotation.x = -Math.PI / 2;
-      scene.add(bed);
-      disposables.push(bedGeometry, bedMaterial);
-
-      const gridSpacing = Math.max(bedX, bedY) > 500 ? 50 : 20;
-      const gridVertices: number[] = [];
-      for (let x = -bedX / 2; x <= bedX / 2 + 0.001; x += gridSpacing) {
-        gridVertices.push(x, 0.12, -bedY / 2, x, 0.12, bedY / 2);
-      }
-      for (let z = -bedY / 2; z <= bedY / 2 + 0.001; z += gridSpacing) {
-        gridVertices.push(-bedX / 2, 0.12, z, bedX / 2, 0.12, z);
-      }
-      const gridGeometry = new THREE.BufferGeometry();
-      gridGeometry.setAttribute(
-        "position",
-        new THREE.Float32BufferAttribute(gridVertices, 3),
-      );
-      const gridMaterial = new THREE.LineBasicMaterial({
-        color: 0x323b43,
-        transparent: true,
-        opacity: 0.68,
-      });
-      const grid = new THREE.LineSegments(gridGeometry, gridMaterial);
-      scene.add(grid);
-      disposables.push(gridGeometry, gridMaterial);
-
-      if (file && !hasRenderableSlice) {
-        const stlBuffer = await file.arrayBuffer();
-        if (cancelled) return;
-        const geometry = new STLLoader().parse(stlBuffer);
-        geometry.computeVertexNormals();
-        geometry.computeBoundingBox();
-        const box = geometry.boundingBox;
-        const center = new THREE.Vector3();
-        const size = new THREE.Vector3();
-        box?.getCenter(center);
-        box?.getSize(size);
-        geometry.translate(-center.x, -center.y, -(box?.min.z ?? 0));
-        const material = new THREE.MeshStandardMaterial({
-          color: 0x9cc7d6,
-          metalness: 0.08,
-          roughness: 0.72,
-          transparent: true,
-          opacity: hasRenderableSlice ? 0.24 : 0.82,
-        });
-        const modelMesh = new THREE.Mesh(geometry, material);
-        modelMesh.rotation.x = -Math.PI / 2;
-        if (rotation) {
-          modelMesh.quaternion.multiply(
-            new THREE.Quaternion(
-              rotation[0],
-              rotation[1],
-              rotation[2],
-              rotation[3],
-            ),
-          );
+        gcode,
+        layers,
+        analysis: previewTrust.analysis,
+        buildVolume: rendererBuildVolume,
+        geometry,
+        options: {
+          startLayer: 0,
+          endLayer: Math.max(0, layers.length - 1),
+          showTravel: false,
+        },
+      })
+      .then((renderer) => {
+        if (cancelled) return renderer.dispose();
+        rendererRef.current = renderer;
+        setRendererState({ artifact: gcode, ready: true, error: null });
+        onRendererState("ready");
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRendererState({
+            artifact: gcode,
+            ready: false,
+            error: "Toolpath preview failed. Printer upload remains blocked.",
+          });
+          onRendererState("failed");
         }
-        scene.add(modelMesh);
-        disposables.push(geometry, material);
-      }
-
-      function pointFromGcode(point: GcodeSegment["from"]) {
-        return new THREE.Vector3(
-          point.x - bounds.centerX,
-          point.z + 0.04,
-          point.y - bounds.centerY,
-        );
-      }
-
-      function addTubeSegment(
-        segment: GcodeSegment,
-        material: import("three").Material,
-        radius: number,
-      ) {
-        const from = pointFromGcode(segment.from);
-        const to = pointFromGcode(segment.to);
-        const delta = new THREE.Vector3().subVectors(to, from);
-        const length = delta.length();
-        if (length <= 0.001) return;
-        const geometry = new THREE.CylinderGeometry(radius, radius, length, 8);
-        const tube = new THREE.Mesh(geometry, material);
-        tube.position.copy(from).addScaledVector(delta, 0.5);
-        tube.quaternion.setFromUnitVectors(
-          new THREE.Vector3(0, 1, 0),
-          delta.normalize(),
-        );
-        scene.add(tube);
-        disposables.push(geometry);
-      }
-
-      function addTubes(
-        selectedLayers: GcodeLayer[],
-        type: GcodeLineType,
-        color: number,
-        opacity: number,
-      ) {
-        if (type === "travel") return;
-        const material = new THREE.MeshBasicMaterial({
-          color,
-          transparent: opacity < 1,
-          opacity,
-        });
-        disposables.push(material);
-        const radius = GCODE_PREVIEW_TUBE_OPTIONS.renderTubes ? 0.22 : 0.12;
-        for (const layer of selectedLayers) {
-          for (const segment of layer.segments.filter(
-            (item) => item.type === type,
-          )) {
-            addTubeSegment(segment, material, radius);
-          }
-        }
-      }
-
-      const previousLayers = visibleLayers.slice(0, -1);
-      phaseJPreviewAdapter.render();
-      if (activeLayer) {
-        for (const type of LINE_TYPES) {
-          addTubes(previousLayers, type.id, type.color, 0.22);
-          addTubes(
-            [{ ...activeLayer, segments: activeLayerSegments }],
-            type.id,
-            type.color,
-            1,
-          );
-        }
-      }
-
-      scene.add(new THREE.AmbientLight(0xffffff, 0.78));
-      const keyLight = new THREE.DirectionalLight(0xffffff, 0.85);
-      keyLight.position.set(0, 40, 35);
-      scene.add(keyLight);
-
-      const height = Math.max(1, bounds.maxZ - bounds.minZ);
-      const target = new THREE.Vector3(0, height * 0.45, 0);
-      const fitWidth = Math.max(bounds.sizeX, 20);
-      const fitDepth = Math.max(bounds.sizeY, 20);
-      const fitHeight = Math.max(height, 12);
-      const fitRadius =
-        Math.sqrt(fitWidth * fitWidth + fitDepth * fitDepth) * 0.5;
-      const distance = Math.max(
-        45,
-        (Math.max(fitRadius, fitHeight) * 1.12) /
-          Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5)),
-      );
-      camera.position.copy(
-        target
-          .clone()
-          .add(new THREE.Vector3(distance * 0.48, distance * 0.68, distance)),
-      );
-      controls.enableDamping = true;
-      controls.enablePan = true;
-      controls.minDistance = distance * 0.2;
-      controls.maxDistance = distance * 3;
-      controls.target.copy(target);
-      controls.update();
-
-      function resize() {
-        const rect = renderer.domElement.getBoundingClientRect();
-        const width = Math.max(1, Math.floor(rect.width));
-        const height = Math.max(1, Math.floor(rect.height));
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        renderer.setSize(width, height, false);
-        camera.aspect = width / height;
-        camera.updateProjectionMatrix();
-      }
-
-      function animate() {
-        resize();
-        controls.update();
-        renderer.render(scene, camera);
-        frameId = window.requestAnimationFrame(animate);
-      }
-
-      animate();
-      cleanup = () => {
-        window.cancelAnimationFrame(frameId);
-        controls.dispose();
-        for (const disposable of disposables) disposable.dispose();
-        renderer.dispose();
-      };
-    }
-
-    renderScene();
-
+      });
     return () => {
       cancelled = true;
-      cleanup();
+      rendererRef.current?.dispose();
+      rendererRef.current = null;
     };
   }, [
-    activeLayer,
-    buildVolume.x,
-    buildVolume.y,
-    file,
-    hasRenderableScene,
-    hasRenderableSlice,
+    buildVolumeX,
+    buildVolumeY,
+    buildVolumeZ,
+    gcode,
+    geometry,
     layers,
-    rotation,
-    activeLayerSegments,
-    visibleLayers,
+    onRendererState,
+    previewTrust?.analysis,
   ]);
+
+  useEffect(() => {
+    rendererRef.current?.update({
+      startLayer: firstLayer,
+      endLayer: lastLayer,
+      showTravel,
+    });
+  }, [firstLayer, lastLayer, showTravel]);
+
+  const layerLabel = layers.length
+    ? `Layers ${firstLayer + 1}–${lastLayer + 1} of ${layers.length}`
+    : status === "failed"
+      ? "Slice failed"
+      : "Waiting for a successful slice";
+  const visibleSampleLayers = [0, Math.floor(layerMax / 2), layerMax].filter(
+    (layer, index, samples) =>
+      layer >= firstLayer &&
+      layer <= lastLayer &&
+      samples.indexOf(layer) === index,
+  );
 
   return (
     <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-[var(--color-text)]">
             Slice Preview
           </h2>
           <p className="mt-1 text-xs font-mono text-[var(--color-muted)]">
-            {activeLayer
-              ? `Layer ${safeLayerIndex + 1}/${layers.length} · Z ${activeLayer.z.toFixed(2)} mm`
-              : status === "failed"
-                ? "Slice failed"
-                : "Waiting for a successful slice"}
+            {layerLabel}
           </p>
         </div>
-        <span className="rounded-md bg-white/5 px-2.5 py-1 text-xs font-mono text-[var(--color-muted)]">
-          {reportedTotal ? `${reportedTotal} reported` : "no layers"}
-        </span>
+        <div className="flex gap-2" aria-label="Preview view">
+          <button
+            type="button"
+            aria-pressed={view === "toolpath"}
+            onClick={() => setView("toolpath")}
+            className="rounded border border-[var(--color-border)] px-3 py-1.5 text-xs text-[var(--color-text)]"
+          >
+            Toolpath
+          </button>
+          <button
+            type="button"
+            aria-pressed={view === "source"}
+            onClick={() => setView("source")}
+            className="rounded border border-[var(--color-border)] px-3 py-1.5 text-xs text-[var(--color-text)]"
+          >
+            Source model
+          </button>
+        </div>
       </div>
-      {hasRenderableSlice && (
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <label className="flex min-w-56 flex-1 items-center gap-2 text-xs text-[var(--color-muted)]">
-            <span>Layer progress</span>
+      {previewTrust && (
+        <div className="mt-4 space-y-3">
+          {provenance?.kind === "mock" && (
+            <p
+              role="alert"
+              className="rounded border border-[var(--color-amber)]/50 bg-[var(--color-amber)]/10 px-3 py-2 text-sm text-[var(--color-amber)]"
+            >
+              Simulation mode — this fixed test toolpath was not generated from
+              the uploaded STL. Printer handoff is disabled.
+            </p>
+          )}
+          <p
+            className={
+              previewTrust.status === "trusted"
+                ? "text-sm text-[var(--color-green)]"
+                : "text-sm text-[var(--color-amber)]"
+            }
+          >
+            {provenance?.kind === "mock"
+              ? "Simulation metrics are shown for UI testing only; they are not printer trust evidence."
+              : previewTrust.status === "trusted"
+                ? "Preview trusted — upload may be enabled after this renderer is ready."
+                : "Preview blocked — resolve the evidence below before upload."}
+          </p>
+          <p className="text-xs text-[var(--color-muted)]">
+            Server reported {previewTrust.reportedLayerCount ?? "no"} layers ·
+            parser rendered {previewTrust.analysis.parsedLayerCount} layers
+          </p>
+          {previewTrust.reasons.length > 0 && (
+            <ul
+              role="alert"
+              className="list-disc space-y-1 pl-5 text-xs text-[var(--color-amber)]"
+            >
+              {previewTrust.reasons.map((reason) => (
+                <li key={reason}>{reason}</li>
+              ))}
+            </ul>
+          )}
+          <AnalysisSummary analysis={previewTrust.analysis} />
+        </div>
+      )}
+      {layers.length > 0 && (
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <label className="text-xs text-[var(--color-muted)]">
+            First visible layer
             <input
-              aria-label="Within-layer progress"
+              aria-label="First visible layer"
               type="range"
-              min={1}
-              max={100}
-              value={layerProgress}
-              onChange={(event) => setLayerProgress(Number(event.target.value))}
-              className="flex-1 accent-[var(--color-teal)]"
+              min={0}
+              max={layerMax}
+              value={firstLayer}
+              onChange={(event) =>
+                setSelectedRange({
+                  artifact: gcode,
+                  firstLayer: Math.min(Number(event.target.value), lastLayer),
+                  lastLayer,
+                })
+              }
+              className="mt-1 w-full accent-[var(--color-teal)]"
             />
-            <span className="font-mono">{layerProgress}%</span>
+          </label>
+          <label className="text-xs text-[var(--color-muted)]">
+            Last visible layer
+            <input
+              aria-label="Last visible layer"
+              type="range"
+              min={0}
+              max={layerMax}
+              value={lastLayer}
+              onChange={(event) =>
+                setSelectedRange({
+                  artifact: gcode,
+                  firstLayer,
+                  lastLayer: Math.max(Number(event.target.value), firstLayer),
+                })
+              }
+              className="mt-1 w-full accent-[var(--color-teal)]"
+            />
+          </label>
+          <label className="flex items-center gap-2 self-end pb-1 text-xs text-[var(--color-muted)]">
+            <input
+              aria-label="Show travel moves"
+              type="checkbox"
+              checked={showTravel}
+              onChange={(event) =>
+                setSelectedTravel({
+                  artifact: gcode,
+                  value: event.target.checked,
+                })
+              }
+            />{" "}
+            Show travel moves
           </label>
         </div>
       )}
       <div className="mt-4">
-        <div className="relative min-h-[620px] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[#111927]">
-          {hasRenderableScene ? (
-            <>
-              <canvas ref={canvasRef} className="h-full min-h-[620px] w-full" />
-
-              {hasRenderableSlice && (
-                <button
-                  type="button"
-                  onClick={() => setShowInfo((current) => !current)}
-                  className="absolute right-5 top-5 rounded-lg border border-white/15 bg-black/60 px-3 py-2 text-xs font-semibold text-white shadow-xl backdrop-blur transition-colors hover:border-[var(--color-teal)]"
-                >
-                  {showInfo ? "Hide Info" : "Show Info"}
-                </button>
-              )}
-
-              {showInfo && hasRenderableSlice && (
-                <>
-                  <div className="absolute right-5 top-16 w-[300px] rounded-lg border border-white/10 bg-black/55 p-4 text-sm text-white shadow-xl backdrop-blur">
-                    <div className="grid grid-cols-[1fr_52px_42px_58px] gap-2 border-b border-white/20 pb-2 text-xs font-semibold text-white/80">
-                      <span>Line Type</span>
-                      <span>Time</span>
-                      <span>%</span>
-                      <span>Usage</span>
-                    </div>
-                    <div className="mt-2 flex flex-col gap-1.5">
-                      {stats.map((stat) => (
-                        <div
-                          key={stat.id}
-                          className="grid grid-cols-[1fr_52px_42px_58px] gap-2 text-xs text-white/85"
-                        >
-                          <span className="flex items-center gap-2">
-                            <span
-                              className="h-2.5 w-2.5 rounded-sm"
-                              style={{ backgroundColor: stat.swatch }}
-                            />
-                            {stat.label}
-                          </span>
-                          <span>{formatDuration(stat.seconds)}</span>
-                          <span>{stat.pct.toFixed(1)}</span>
-                          <span>{(stat.lengthMm / 1000).toFixed(2)}m</span>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="mt-4 border-t border-white/20 pt-3 text-xs text-white/80">
-                      <p className="font-semibold text-white">
-                        Total estimation
-                      </p>
-                      <div className="mt-2 grid grid-cols-[1fr_auto] gap-x-3 gap-y-1">
-                        <span>Total pellet path</span>
-                        <span>{(totalPathMm / 1000).toFixed(2)} m</span>
-                        <span>Model printing time</span>
-                        <span>
-                          {formatDuration(
-                            stats.reduce((sum, stat) => sum + stat.seconds, 0),
-                          )}
-                        </span>
-                        <span>Current layer</span>
-                        <span>{activeLayer?.index ?? 0}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="absolute bottom-5 right-5 w-[300px] rounded-lg border border-white/10 bg-black/55 p-3 font-mono text-xs text-white/80 shadow-xl backdrop-blur">
-                    {codePreview.map((line) => (
-                      <div
-                        key={line}
-                        className={
-                          line.includes(";LAYER") || line.includes(";TYPE")
-                            ? "text-[var(--color-teal)]"
-                            : line.includes("G1")
-                              ? "text-[#ffde59]"
-                              : "text-white/60"
-                        }
-                      >
-                        {line}
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
-            </>
-          ) : (
-            <div className="flex min-h-[620px] items-center justify-center px-6 text-center text-sm text-[var(--color-muted)]">
-              {status === "failed"
-                ? "No preview is available for this failed slice."
-                : "Slice an STL to preview line types, layers, and G-code."}
-            </div>
-          )}
-        </div>
+        {view === "source" ? (
+          <SourceModelView
+            file={file}
+            rotation={rotation}
+            simulation={provenance?.kind === "mock"}
+          />
+        ) : (
+          <div className="relative min-h-[500px] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[#111927]">
+            <canvas
+              ref={canvasRef}
+              className="min-h-[500px] w-full"
+              data-testid="toolpath-canvas"
+              data-visible-layer-range={`${firstLayer}-${lastLayer}`}
+              data-visible-sample-layers={visibleSampleLayers.join(",")}
+            />
+            <p className="absolute left-4 top-4 rounded bg-black/65 px-3 py-2 text-xs text-white/85">
+              Generated extrusion toolpath · travel{" "}
+              {showTravel ? "visible" : "hidden"}
+            </p>
+            {rendererReady && (
+              <p className="sr-only" role="status">
+                Toolpath renderer ready
+              </p>
+            )}
+            {renderError && (
+              <p
+                role="alert"
+                className="absolute bottom-4 left-4 text-sm text-[var(--color-red)]"
+              >
+                {renderError}
+              </p>
+            )}
+          </div>
+        )}
       </div>
     </section>
   );

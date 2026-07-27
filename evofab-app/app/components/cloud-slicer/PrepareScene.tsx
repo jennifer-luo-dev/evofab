@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import type { BoundingBoxMm } from "@/app/lib/slicer-client";
 import type { SlicerFace } from "@/app/lib/slicer-client";
 import type { BuildVolumeMm } from "@/app/lib/printability";
+import { preparationQuaternion } from "@/app/lib/preparation-orientation";
 
 const BED_CLEARANCE_MM = 0.08;
 
@@ -118,13 +119,14 @@ export function PrepareScene({
       });
       const mesh = new THREE.Mesh(geometry, material);
       mesh.rotation.x = -Math.PI / 2;
-      if (rotation) {
+      const preparationRotation = preparationQuaternion(rotation);
+      if (preparationRotation) {
         mesh.quaternion.multiply(
           new THREE.Quaternion(
-            rotation[0],
-            rotation[1],
-            rotation[2],
-            rotation[3],
+            preparationRotation[0],
+            preparationRotation[1],
+            preparationRotation[2],
+            preparationRotation[3],
           ),
         );
       }
