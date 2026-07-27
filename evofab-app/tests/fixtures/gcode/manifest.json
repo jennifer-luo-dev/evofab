@@ -1,0 +1,26 @@
+{
+  "fixtures": [
+    {
+      "filename": "cube-20mm.gcode",
+      "sha256": "1593d6255f9bf815ca3fe408f4e05bfecbb598eb2cdbf0b628cf2af0e4668a70",
+      "byte_count": 5370,
+      "parsed_layer_count": 21,
+      "xy_bounds_mm": { "min": [0, 0], "max": [20, 20] },
+      "z_range_mm": [0.2, 20],
+      "extrusion_move_count": 168,
+      "extrusion_path_length_mm": 3360,
+      "major_features": ["outer_wall", "sparse_infill", "top_surface"]
+    },
+    {
+      "filename": "support-heavy.gcode",
+      "sha256": "4080707d0b1900993ddad9d92c4949343ec679a2a71b62715ffe2dd3d918853c",
+      "byte_count": 4079,
+      "parsed_layer_count": 12,
+      "xy_bounds_mm": { "min": [0, 0], "max": [30, 30] },
+      "z_range_mm": [0.2, 20],
+      "extrusion_move_count": 132,
+      "extrusion_path_length_mm": 2208,
+      "major_features": ["outer_wall", "sparse_infill", "support"]
+    }
+  ]
+}
