@@ -45,6 +45,38 @@ test("parses support feature comments", () => {
   assert.equal(layers[0].segments.at(-1)?.type, "support");
 });
 
+test("recognizes Orca perimeter, infill, top, skirt, and brim comments", () => {
+  const layers = parseGcodeLayers(
+    [
+      ";LAYER_CHANGE",
+      ";Z:0.28",
+      ";TYPE:Skirt",
+      "G1 X0 Y0 Z0.28 E1",
+      ";TYPE:Brim",
+      "G1 X1 Y0 E2",
+      ";TYPE:Outer wall",
+      "G1 X2 Y0 E3",
+      ";TYPE:Inner wall",
+      "G1 X3 Y0 E4",
+      ";TYPE:Sparse infill",
+      "G1 X4 Y0 E5",
+      ";TYPE:Top surface",
+      "G1 X5 Y0 E6",
+    ].join("\n"),
+  );
+  assert.deepEqual(
+    layers[0].segments.map((segment) => segment.type),
+    [
+      "skirt",
+      "brim",
+      "outer_wall",
+      "inner_wall",
+      "sparse_infill",
+      "top_surface",
+    ],
+  );
+});
+
 test("parses Orca layer-change comments and relative extrusion", () => {
   const gcode = [
     "; total layer number: 2",

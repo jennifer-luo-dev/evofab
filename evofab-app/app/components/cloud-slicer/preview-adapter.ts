@@ -3,26 +3,12 @@ import type { GcodeArtifactAnalysis } from "@/app/lib/gcode-artifact-analysis";
 import {
   parseGcodeLayers,
   type GcodeLayer,
-  type GcodeLineType,
 } from "@/app/lib/gcode-layer-parser";
 import {
   GCODE_PREVIEW_TUBE_OPTIONS,
   loadGcodePreview,
 } from "@/app/lib/gcode-preview-adapter";
 import type { BuildVolumeMm } from "@/app/lib/printability";
-
-const TOOL_FOR_TYPE: Record<GcodeLineType, number> = {
-  external_perimeter: 0,
-  outer_wall: 0,
-  perimeter: 1,
-  inner_wall: 1,
-  infill: 2,
-  sparse_infill: 2,
-  support: 3,
-  top_surface: 4,
-  unknown: 5,
-  travel: 6,
-};
 
 const TOOL_COLORS = {
   0: "#ff8a3d",
@@ -31,13 +17,22 @@ const TOOL_COLORS = {
   3: "#22c55e",
   4: "#ff4141",
   5: "#e5e7eb",
-  6: "#64748b",
 };
 
 export interface PreviewRenderOptions {
   startLayer: number;
   endLayer: number;
   showTravel: boolean;
+}
+
+export interface PreviewGeometryMetadata {
+  extrusionWidthMm?: number | null;
+  layerHeightMm?: number | null;
+}
+
+export interface ResolvedPreviewGeometry {
+  extrusionWidthMm: number;
+  layerHeightMm: number;
 }
 
 export interface SlicePreviewRenderer {
@@ -49,50 +44,115 @@ export interface SlicePreviewAdapter {
   parse(gcode: string): GcodeLayer[];
   createRenderer(input: {
     canvas: HTMLCanvasElement;
+    gcode: string;
     layers: GcodeLayer[];
     analysis: GcodeArtifactAnalysis;
     buildVolume: BuildVolumeMm;
+    geometry: PreviewGeometryMetadata;
     options: PreviewRenderOptions;
   }): Promise<SlicePreviewRenderer>;
 }
 
+function positive(value: number | null | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : undefined;
+}
+
+function commentMeasurement(
+  gcode: string,
+  names: string[],
+): number | undefined {
+  const expression = new RegExp(
+    String.raw`^;.*?(?:${names
+      .map((name) => name.replaceAll("_", String.raw`[_\s]+`))
+      .join("|")})\s*(?:=|:)\s*([-+]?\d*\.?\d+)`,
+    "im",
+  );
+  const value = Number(gcode.match(expression)?.[1]);
+  return positive(value);
+}
+
+function median(values: number[]): number | undefined {
+  if (values.length === 0) return undefined;
+  const sorted = [...values].sort((left, right) => left - right);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
 /**
- * gcode-preview does the production WebGL/tube work. The Phase J parser only
- * provides stable feature classification and an equivalent renderer input; it
- * is never used as a source of slice metadata.
+ * Use authoritative result metadata first, then Orca's own profile comments.
+ * If neither is present, gcode-preview uses its package default rather than an
+ * EvoFab-specific pellet width or layer-height guess.
  */
-export function visualizationGcode(layers: GcodeLayer[]): string {
-  const lines = ["; EvoFab Preview V2 visualization", "M83"];
-  let activeTool = -1;
-  for (const layer of layers) {
-    lines.push(`;LAYER:${layer.index}`, `G0 Z${layer.z.toFixed(4)}`);
-    for (const segment of layer.segments) {
-      if (segment.type === "travel") {
-        lines.push(
-          `G0 X${segment.to.x.toFixed(4)} Y${segment.to.y.toFixed(4)} Z${segment.to.z.toFixed(4)}`,
-        );
-        continue;
+export function previewGeometryForArtifact(
+  gcode: string,
+  layers: GcodeLayer[],
+  metadata: PreviewGeometryMetadata,
+): ResolvedPreviewGeometry {
+  const inferredLayerHeight = median(
+    layers
+      .slice(1)
+      .map((layer, index) => Math.abs(layer.z - layers[index].z))
+      .filter((height) => height > 0.01 && height < 5),
+  );
+  return {
+    extrusionWidthMm:
+      positive(metadata.extrusionWidthMm) ??
+      commentMeasurement(gcode, [
+        "extrusion_width",
+        "line_width",
+        "outer_wall_line_width",
+      ]) ??
+      0,
+    layerHeightMm:
+      positive(metadata.layerHeightMm) ??
+      commentMeasurement(gcode, ["layer_height", "first_layer_height"]) ??
+      inferredLayerHeight ??
+      0,
+  };
+}
+
+export function previewFitBounds(
+  layers: GcodeLayer[],
+  fallback: GcodeArtifactAnalysis["bounds"],
+) {
+  // Skirt and brim can be intentionally much larger than the model. Excluding
+  // only those priming features keeps supports and the printable geometry in
+  // frame while avoiding a tiny model in the default camera view.
+  const points = layers.flatMap((layer) =>
+    layer.segments.flatMap((segment, index, segments) => {
+      if (
+        segment.type === "travel" ||
+        segment.type === "skirt" ||
+        segment.type === "brim"
+      ) {
+        return [];
       }
-      const tool = TOOL_FOR_TYPE[segment.type];
-      if (tool !== activeTool) {
-        lines.push(`T${tool}`);
-        activeTool = tool;
-      }
-      lines.push(
-        `G0 X${segment.from.x.toFixed(4)} Y${segment.from.y.toFixed(4)} Z${segment.from.z.toFixed(4)}`,
-        `G1 X${segment.to.x.toFixed(4)} Y${segment.to.y.toFixed(4)} Z${segment.to.z.toFixed(4)} E0.1000`,
-      );
-    }
-  }
-  return `${lines.join("\n")}\n`;
+      const previous = segments[index - 1];
+      // The first model segment after priming starts at the skirt/brim end.
+      // Keep its printable endpoint but do not let that priming coordinate
+      // expand the model-focused default camera.
+      return previous?.type === "skirt" || previous?.type === "brim"
+        ? [segment.to]
+        : [segment.from, segment.to];
+    }),
+  );
+  if (points.length === 0) return fallback;
+  return {
+    minX: Math.min(...points.map((point) => point.x)),
+    maxX: Math.max(...points.map((point) => point.x)),
+    minY: Math.min(...points.map((point) => point.y)),
+    maxY: Math.max(...points.map((point) => point.y)),
+    minZ: Math.min(...points.map((point) => point.z)),
+    maxZ: Math.max(...points.map((point) => point.z)),
+  };
 }
 
 function fitCamera(
   preview: WebGLPreview,
-  analysis: GcodeArtifactAnalysis,
+  bounds: ReturnType<typeof previewFitBounds>,
   volume: BuildVolumeMm,
 ) {
-  const bounds = analysis.bounds;
   if (!bounds) return;
   const width = Math.max(1, bounds.maxX - bounds.minX);
   const depth = Math.max(1, bounds.maxY - bounds.minY);
@@ -110,35 +170,74 @@ function fitCamera(
   preview.controls.update();
 }
 
-export const phaseJPreviewAdapter: SlicePreviewAdapter = {
-  parse: parseGcodeLayers,
-  async createRenderer({ canvas, layers, analysis, buildVolume, options }) {
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() => resolve()),
-    );
-    const { init } = await loadGcodePreview();
-    const preview = init({
-      canvas,
-      buildVolume: { x: buildVolume.x, y: buildVolume.y, z: buildVolume.z },
-      toolColors: TOOL_COLORS,
-      extrusionWidth: 0.45,
-      lineHeight: 0.2,
-      backgroundColor: "#111927",
-      ...GCODE_PREVIEW_TUBE_OPTIONS,
-    });
-    preview.resize();
-    preview.processGCode(visualizationGcode(layers));
-    fitCamera(preview, analysis, buildVolume);
+interface PreviewAdapterDependencies {
+  loadPreview?: typeof loadGcodePreview;
+  schedule?: () => Promise<void>;
+}
 
-    const update = (next: PreviewRenderOptions) => {
-      preview.startLayer = Math.max(0, next.startLayer) + 1;
-      preview.endLayer = Math.max(preview.startLayer, next.endLayer + 1);
-      preview.singleLayerMode = next.startLayer === next.endLayer;
-      preview.renderTravel = next.showTravel;
+export function createSlicePreviewAdapter(
+  dependencies: PreviewAdapterDependencies = {},
+): SlicePreviewAdapter {
+  const schedule =
+    dependencies.schedule ??
+    (() =>
+      new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  const loadPreview = dependencies.loadPreview ?? loadGcodePreview;
+
+  return {
+    parse: parseGcodeLayers,
+    async createRenderer({
+      canvas,
+      gcode,
+      layers,
+      analysis,
+      buildVolume,
+      geometry,
+      options,
+    }) {
+      await schedule();
+      const { init } = await loadPreview();
+      const resolvedGeometry = previewGeometryForArtifact(
+        gcode,
+        layers,
+        geometry,
+      );
+      const preview = init({
+        canvas,
+        buildVolume: { x: buildVolume.x, y: buildVolume.y, z: buildVolume.z },
+        toolColors: TOOL_COLORS,
+        backgroundColor: "#111927",
+        ...GCODE_PREVIEW_TUBE_OPTIONS,
+        ...(resolvedGeometry.extrusionWidthMm > 0
+          ? { extrusionWidth: resolvedGeometry.extrusionWidthMm }
+          : {}),
+        ...(resolvedGeometry.layerHeightMm > 0
+          ? { lineHeight: resolvedGeometry.layerHeightMm }
+          : {}),
+      });
       preview.resize();
-      preview.render();
-    };
-    update(options);
-    return { update, dispose: () => preview.dispose() };
-  },
-};
+      // The visible renderer always receives the canonical slicer artifact.
+      // Classification remains analysis/trust metadata and never reconstructs
+      // or changes the displayed toolpath.
+      preview.processGCode(gcode);
+      fitCamera(
+        preview,
+        previewFitBounds(layers, analysis.bounds),
+        buildVolume,
+      );
+
+      const update = (next: PreviewRenderOptions) => {
+        preview.startLayer = Math.max(0, next.startLayer) + 1;
+        preview.endLayer = Math.max(preview.startLayer, next.endLayer + 1);
+        preview.singleLayerMode = next.startLayer === next.endLayer;
+        preview.renderTravel = next.showTravel;
+        preview.resize();
+        preview.render();
+      };
+      update(options);
+      return { update, dispose: () => preview.dispose() };
+    },
+  };
+}
+
+export const phaseJPreviewAdapter = createSlicePreviewAdapter();

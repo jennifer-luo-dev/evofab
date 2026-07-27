@@ -320,31 +320,31 @@ endsolid asymmetric_mount
   ).toBeVisible();
   await expect(page.getByLabel("First visible layer")).toBeVisible();
   await expect(page.getByText("Layers 1–48 of 48")).toBeVisible();
-  await expect(page.getByTestId("tube-toolpath-canvas")).toHaveAttribute(
+  await expect(page.getByTestId("toolpath-canvas")).toHaveAttribute(
     "data-visible-layer-range",
     "0-47",
   );
-  await expect(page.getByTestId("tube-toolpath-canvas")).toHaveAttribute(
+  await expect(page.getByTestId("toolpath-canvas")).toHaveAttribute(
     "data-visible-sample-layers",
     "0,23,47",
   );
   await expect(
     page.locator('[role="status"]', { hasText: "Toolpath renderer ready" }),
   ).toBeVisible();
-  await expect(page.getByTestId("tube-toolpath-canvas")).toHaveScreenshot(
+  await expect(page.getByTestId("toolpath-canvas")).toHaveScreenshot(
     "mock-support-toolpath-default.png",
-    // Three.js tube edges vary slightly across the local and Linux GPU rasterizers.
+    // gcode-preview tube edges vary slightly across local and Linux GPU rasterizers.
     { animations: "disabled", maxDiffPixelRatio: 0.02 },
   );
 
   await page.getByLabel("First visible layer").fill("12");
   await page.getByLabel("Last visible layer").fill("24");
   await expect(page.getByText("Layers 13–25 of 48")).toBeVisible();
-  await expect(page.getByTestId("tube-toolpath-canvas")).toHaveAttribute(
+  await expect(page.getByTestId("toolpath-canvas")).toHaveAttribute(
     "data-visible-layer-range",
     "12-24",
   );
-  await expect(page.getByTestId("tube-toolpath-canvas")).toHaveAttribute(
+  await expect(page.getByTestId("toolpath-canvas")).toHaveAttribute(
     "data-visible-sample-layers",
     "23",
   );
@@ -356,9 +356,9 @@ endsolid asymmetric_mount
   await expect(
     page.locator('[role="status"]', { hasText: "Toolpath renderer ready" }),
   ).toBeVisible();
-  await expect(page.getByTestId("tube-toolpath-canvas")).toHaveScreenshot(
+  await expect(page.getByTestId("toolpath-canvas")).toHaveScreenshot(
     "mock-support-toolpath-range.png",
-    // Three.js tube edges vary slightly across the local and Linux GPU rasterizers.
+    // gcode-preview tube edges vary slightly across local and Linux GPU rasterizers.
     { animations: "disabled", maxDiffPixelRatio: 0.02 },
   );
   await page.getByRole("button", { name: "Source model" }).click();
@@ -368,7 +368,7 @@ endsolid asymmetric_mount
     "0,0.707107,0,0.707107",
   );
   await page.getByRole("button", { name: "Toolpath" }).click();
-  await expect(page.getByTestId("tube-toolpath-canvas")).toHaveAttribute(
+  await expect(page.getByTestId("toolpath-canvas")).toHaveAttribute(
     "data-visible-layer-range",
     "12-24",
   );

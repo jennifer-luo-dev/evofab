@@ -31,6 +31,7 @@ import {
 } from "@/app/lib/printability";
 import {
   assessPreviewTrust,
+  requiredFeaturesFromSlicerMetadata,
   type PreviewTrust,
 } from "@/app/lib/gcode-artifact-analysis";
 import type {
@@ -69,6 +70,11 @@ interface SlicerJobResult {
   engine: string;
   profile_id: string;
   rotation?: number[] | null;
+  extrusion_width_mm?: number | null;
+  layer_height_mm?: number | null;
+  supports_requested?: boolean | null;
+  supports_generated?: boolean | null;
+  support_feature_detected?: boolean | null;
   supports?: boolean | null;
   provenance?: SlicerArtifactProvenance;
 }
@@ -573,7 +579,11 @@ export function CloudSlicerClient({
       const nextTrust = await assessPreviewTrust(
         nextGcode,
         doneJob.result?.layer_count ?? null,
-        doneJob.result?.supports ? { requiredFeatures: ["support"] } : {},
+        {
+          requiredFeatures: requiredFeaturesFromSlicerMetadata(
+            doneJob.result ?? {},
+          ),
+        },
       );
       setGcode(nextGcode);
       setPreviewTrust(nextTrust);
@@ -1252,6 +1262,11 @@ export function CloudSlicerClient({
                   : "uploaded orientation"
             }
             supports={supports}
+            supportsGenerated={job?.result?.supports_generated}
+            supportDetected={
+              job?.result?.support_feature_detected ??
+              previewTrust?.analysis.features.includes("support")
+            }
             provenance={artifactProvenance}
           />
         )}
@@ -1266,6 +1281,10 @@ export function CloudSlicerClient({
           buildVolume={buildVolume}
           previewTrust={previewTrust}
           provenance={artifactProvenance}
+          geometry={{
+            extrusionWidthMm: job?.result?.extrusion_width_mm,
+            layerHeightMm: job?.result?.layer_height_mm,
+          }}
           onRendererState={handleRendererState}
         />
       )}

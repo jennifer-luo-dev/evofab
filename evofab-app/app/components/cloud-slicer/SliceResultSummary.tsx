@@ -11,6 +11,8 @@ interface SliceResultSummaryProps {
   layerCount: number | null;
   orientationLabel: string;
   supports: boolean;
+  supportsGenerated: boolean | null | undefined;
+  supportDetected: boolean | undefined;
   provenance: SlicerArtifactProvenance | undefined;
 }
 
@@ -34,6 +36,8 @@ export function SliceResultSummary({
   layerCount,
   orientationLabel,
   supports,
+  supportsGenerated,
+  supportDetected,
   provenance,
 }: SliceResultSummaryProps) {
   return (
@@ -89,7 +93,19 @@ export function SliceResultSummary({
             Prepare
           </p>
           <p className="mt-2 font-mono text-xs text-[var(--color-text)]">
-            {orientationLabel} · {supports ? "supports on" : "supports off"}
+            {orientationLabel} · requested {supports ? "yes" : "no"}
+            {" · "}generated{" "}
+            {supportsGenerated == null
+              ? "unknown"
+              : supportsGenerated
+                ? "yes"
+                : "no"}
+            {" · "}feature detected{" "}
+            {supportDetected == null
+              ? "unknown"
+              : supportDetected
+                ? "yes"
+                : "no"}
           </p>
         </div>
       </div>

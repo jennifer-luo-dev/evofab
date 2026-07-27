@@ -25,6 +25,8 @@ export interface SlicerJobResult {
   profile_id: string;
   rotation?: number[] | null;
   drop_to_bed?: boolean;
+  extrusion_width_mm?: number | null;
+  layer_height_mm?: number | null;
   /**
    * Server-owned provenance. Browser-supplied status is never used to decide
    * whether an artifact can reach a printer.
@@ -33,6 +35,12 @@ export interface SlicerJobResult {
   /** Dimensions of the prepared source geometry before G-code generation. */
   prepared_source_bounding_box_mm?: BoundingBoxMm | null;
   transformed_bounding_box_mm?: BoundingBoxMm | null;
+  /** Operator request, not evidence that the slicer emitted support paths. */
+  supports_requested?: boolean | null;
+  /** Authoritative slicer result; only true requires support paths in trust. */
+  supports_generated?: boolean | null;
+  /** Parsed/returned evidence from the canonical result, when supplied. */
+  support_feature_detected?: boolean | null;
   supports?: boolean | null;
 }
 
@@ -205,6 +213,9 @@ const MOCK_RESULT: SlicerJobResult = {
   },
   prepared_source_bounding_box_mm: { x: 24, y: 24, z: 40 },
   transformed_bounding_box_mm: { x: 24, y: 24, z: 40 },
+  supports_requested: null,
+  supports_generated: null,
+  support_feature_detected: null,
   supports: null,
 };
 
@@ -460,6 +471,9 @@ export class SlicerClient {
         prepared_source_bounding_box_mm:
           mockInspectResult(input).bounding_box_mm,
         transformed_bounding_box_mm: mockInspectResult(input).bounding_box_mm,
+        supports_requested: input.supports ?? null,
+        supports_generated: input.supports ?? null,
+        support_feature_detected: input.supports ?? null,
         supports: input.supports ?? null,
       });
       return {

@@ -10,6 +10,7 @@ import type { SlicerArtifactProvenance } from "@/app/lib/slicer-client";
 import { preparationQuaternion } from "@/app/lib/preparation-orientation";
 import {
   phaseJPreviewAdapter,
+  type PreviewGeometryMetadata,
   type SlicePreviewRenderer,
 } from "./preview-adapter";
 
@@ -21,6 +22,7 @@ interface SliceViewerProps {
   buildVolume: BuildVolumeMm;
   previewTrust: PreviewTrust | null;
   provenance: SlicerArtifactProvenance | undefined;
+  geometry: PreviewGeometryMetadata;
   onRendererState: (state: "pending" | "ready" | "failed") => void;
 }
 
@@ -210,11 +212,11 @@ export function SliceViewer({
   buildVolume,
   previewTrust,
   provenance,
+  geometry,
   onRendererState,
 }: SliceViewerProps) {
   const { x: buildVolumeX, y: buildVolumeY, z: buildVolumeZ } = buildVolume;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const tubeCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<SlicePreviewRenderer | null>(null);
   const layers = useMemo(
     () => (gcode ? phaseJPreviewAdapter.parse(gcode) : []),
@@ -236,7 +238,6 @@ export function SliceViewer({
     ready: boolean;
     error: string | null;
   }>({ artifact: null, ready: false, error: null });
-  const tubeBounds = previewTrust?.analysis.bounds ?? null;
   // G-code can arrive after the viewer mounts. A new artifact derives a full
   // range and hidden travel without an effect-driven state reset; selections
   // made against the same artifact remain intact and are safely clamped.
@@ -271,9 +272,11 @@ export function SliceViewer({
     phaseJPreviewAdapter
       .createRenderer({
         canvas,
+        gcode,
         layers,
         analysis: previewTrust.analysis,
         buildVolume: rendererBuildVolume,
+        geometry,
         options: {
           startLayer: 0,
           endLayer: Math.max(0, layers.length - 1),
@@ -306,6 +309,7 @@ export function SliceViewer({
     buildVolumeY,
     buildVolumeZ,
     gcode,
+    geometry,
     layers,
     onRendererState,
     previewTrust?.analysis,
@@ -318,150 +322,6 @@ export function SliceViewer({
       showTravel,
     });
   }, [firstLayer, lastLayer, showTravel]);
-
-  useEffect(() => {
-    const canvas = tubeCanvasRef.current;
-    const bounds = tubeBounds;
-    if (!canvas || !bounds || layers.length === 0) return;
-    const tubeCanvas = canvas;
-    const artifactBounds = bounds;
-    let cancelled = false;
-    let frame = 0;
-    let cleanup = () => {};
-    async function renderTubes() {
-      try {
-        const THREE = await import("three");
-        const { OrbitControls } =
-          await import("three/examples/jsm/controls/OrbitControls.js");
-        if (cancelled) return;
-        const renderer = new THREE.WebGLRenderer({
-          canvas: tubeCanvas,
-          antialias: true,
-          alpha: true,
-        });
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 5000);
-        const controls = new OrbitControls(camera, canvas);
-        const colors: Record<string, number> = {
-          external_perimeter: 0xff8a3d,
-          outer_wall: 0xff8a3d,
-          perimeter: 0xffde59,
-          inner_wall: 0xffde59,
-          infill: 0xc53030,
-          sparse_infill: 0xc53030,
-          support: 0x22c55e,
-          top_surface: 0xff4141,
-          unknown: 0xe5e7eb,
-          travel: 0x64748b,
-        };
-        const materials = new Map<string, import("three").MeshBasicMaterial>();
-        const centerX = (artifactBounds.minX + artifactBounds.maxX) / 2;
-        const centerY = (artifactBounds.minY + artifactBounds.maxY) / 2;
-        for (const layer of layers.slice(firstLayer, lastLayer + 1)) {
-          for (const segment of layer.segments) {
-            if (segment.type === "travel" && !showTravel) continue;
-            const from = new THREE.Vector3(
-              segment.from.x - centerX,
-              segment.from.z,
-              segment.from.y - centerY,
-            );
-            const to = new THREE.Vector3(
-              segment.to.x - centerX,
-              segment.to.z,
-              segment.to.y - centerY,
-            );
-            const delta = new THREE.Vector3().subVectors(to, from);
-            const length = delta.length();
-            if (length <= 0.001) continue;
-            let material = materials.get(segment.type);
-            if (!material) {
-              material = new THREE.MeshBasicMaterial({
-                color: colors[segment.type],
-                transparent: segment.type === "travel",
-                opacity: segment.type === "travel" ? 0.35 : 1,
-              });
-              materials.set(segment.type, material);
-            }
-            const geometry = new THREE.CylinderGeometry(
-              segment.type === "travel" ? 0.04 : 0.22,
-              segment.type === "travel" ? 0.04 : 0.22,
-              length,
-              8,
-            );
-            const mesh = new THREE.Mesh(geometry, material);
-            mesh.position.copy(from).addScaledVector(delta, 0.5);
-            mesh.quaternion.setFromUnitVectors(
-              new THREE.Vector3(0, 1, 0),
-              delta.normalize(),
-            );
-            scene.add(mesh);
-          }
-        }
-        const height = Math.max(1, artifactBounds.maxZ - artifactBounds.minZ);
-        const span = Math.max(
-          artifactBounds.maxX - artifactBounds.minX,
-          artifactBounds.maxY - artifactBounds.minY,
-          height,
-          12,
-        );
-        const target = new THREE.Vector3(0, height / 2, 0);
-        camera.position.set(0, height + span * 2, 0.01);
-        camera.up.set(0, 0, -1);
-        controls.target.copy(target);
-        controls.update();
-        const resize = () => {
-          const rect = tubeCanvas.getBoundingClientRect();
-          renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-          renderer.setSize(
-            Math.max(1, rect.width),
-            Math.max(1, rect.height),
-            false,
-          );
-          camera.aspect = Math.max(1, rect.width) / Math.max(1, rect.height);
-          camera.updateProjectionMatrix();
-        };
-        const animate = () => {
-          resize();
-          controls.update();
-          renderer.render(scene, camera);
-          frame = requestAnimationFrame(animate);
-        };
-        animate();
-        cleanup = () => {
-          cancelAnimationFrame(frame);
-          controls.dispose();
-          scene.traverse((item) => {
-            const mesh = item as import("three").Mesh;
-            mesh.geometry?.dispose?.();
-          });
-          for (const material of materials.values()) material.dispose();
-          renderer.dispose();
-        };
-      } catch {
-        if (!cancelled) {
-          setRendererState({
-            artifact: gcode,
-            ready: false,
-            error: "Toolpath preview failed. Printer upload remains blocked.",
-          });
-          onRendererState("failed");
-        }
-      }
-    }
-    renderTubes();
-    return () => {
-      cancelled = true;
-      cleanup();
-    };
-  }, [
-    firstLayer,
-    gcode,
-    lastLayer,
-    layers,
-    onRendererState,
-    showTravel,
-    tubeBounds,
-  ]);
 
   const layerLabel = layers.length
     ? `Layers ${firstLayer + 1}–${lastLayer + 1} of ${layers.length}`
@@ -611,13 +471,8 @@ export function SliceViewer({
           <div className="relative min-h-[500px] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[#111927]">
             <canvas
               ref={canvasRef}
-              className="absolute inset-0 h-full w-full opacity-0"
-              data-testid="toolpath-canvas"
-            />
-            <canvas
-              ref={tubeCanvasRef}
               className="min-h-[500px] w-full"
-              data-testid="tube-toolpath-canvas"
+              data-testid="toolpath-canvas"
               data-visible-layer-range={`${firstLayer}-${lastLayer}`}
               data-visible-sample-layers={visibleSampleLayers.join(",")}
             />

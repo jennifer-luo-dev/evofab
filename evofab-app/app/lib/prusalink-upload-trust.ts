@@ -2,6 +2,7 @@ import {
   assessSourceOutputCorrelation,
   assessPreviewTrust,
   normalizedGcodeHash,
+  requiredFeaturesFromSlicerMetadata,
   type PreviewTrust,
 } from "./gcode-artifact-analysis";
 import type { SlicerJob } from "./slicer-client";
@@ -70,7 +71,7 @@ export async function validatePrusaUploadArtifact(input: {
   const trust = await assessPreviewTrust(
     sourceGcode,
     sourceJob.result.layer_count ?? null,
-    sourceJob.result.supports ? { requiredFeatures: ["support"] } : {},
+    { requiredFeatures: requiredFeaturesFromSlicerMetadata(sourceJob.result) },
   );
   if (trust.status !== "trusted") {
     return {

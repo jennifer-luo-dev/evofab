@@ -18,7 +18,8 @@ function slicer(
   gcode: string,
   options: {
     layerCount?: number;
-    supports?: boolean;
+    supportsRequested?: boolean;
+    supportsGenerated?: boolean;
     provenance?: "real" | "mock" | "unknown" | null;
     preparedBounds?: { x: number; y: number; z: number } | null;
     transformedBounds?: { x: number; y: number; z: number } | null;
@@ -63,7 +64,8 @@ function slicer(
           prepared_source_bounding_box_mm: options.preparedBounds ?? cubeBounds,
           transformed_bounding_box_mm: options.transformedBounds ?? cubeBounds,
           rotation: options.rotation ?? null,
-          supports: options.supports ?? false,
+          supports_requested: options.supportsRequested ?? false,
+          supports_generated: options.supportsGenerated ?? false,
         },
       };
     },
@@ -118,11 +120,29 @@ test("matching mock artifacts are blocked before any printer storage lifecycle",
 
   const support = await validate(supportHeavyGcode(), {
     layerCount: 12,
-    supports: true,
+    supportsGenerated: true,
     provenance: "mock",
   });
   assert.equal(support.ok, false);
   if (!support.ok) assert.equal(support.code, "PREVIEW_MOCK_ARTIFACT");
+});
+
+test("support request alone does not require generated support paths", async () => {
+  const requestedWithoutGeneration = await validate(cube20mmGcode(), {
+    supportsRequested: true,
+    supportsGenerated: false,
+  });
+  assert.equal(requestedWithoutGeneration.ok, true);
+
+  const generatedWithoutPaths = await validate(cube20mmGcode(), {
+    supportsRequested: true,
+    supportsGenerated: true,
+  });
+  assert.equal(generatedWithoutPaths.ok, false);
+  if (!generatedWithoutPaths.ok) {
+    assert.equal(generatedWithoutPaths.code, "PREVIEW_UNTRUSTED");
+    assert.match(generatedWithoutPaths.message, /support evidence/i);
+  }
 });
 
 test("a forged client real claim cannot override server mock provenance", async () => {

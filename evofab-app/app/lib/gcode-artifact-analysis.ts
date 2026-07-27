@@ -35,6 +35,14 @@ export interface PreviewTrust {
   analysis: GcodeArtifactAnalysis;
 }
 
+/** Support requests are intent; only the slicer declaring generated support is
+ * authoritative enough to require support feature paths in canonical G-code. */
+export function requiredFeaturesFromSlicerMetadata(metadata: {
+  supports_generated?: boolean | null;
+}): GcodeLineType[] {
+  return metadata.supports_generated === true ? ["support"] : [];
+}
+
 export interface SourceOutputCorrelationInput {
   preparedSourceBounds: { x: number; y: number; z: number } | null | undefined;
   transformedResultBounds:
