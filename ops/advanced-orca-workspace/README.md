@@ -2,6 +2,8 @@
 
 This directory is the reviewable, transport-independent foundation for the Windows 3070 pilot. It deliberately exposes only Guacamole's HTTP listener on host loopback. PostgreSQL and guacd have no host-published ports; Tailscale Serve is the sole user-facing ingress. Funnel is prohibited.
 
+Guacamole is attached to the two internal service networks plus the ordinary `ingress` bridge. The `ingress` bridge is required for Docker to realize Guacamole's host-loopback publication; it is not attached to PostgreSQL or guacd and does not make Guacamole reachable from LAN, tailnet, or public interfaces.
+
 ## Guardrails
 
 - Preserve RustDesk and direct Tailscale as recovery paths. Do not alter their services.
@@ -32,7 +34,7 @@ The PostgreSQL initialization script is generated from the same pinned Guacamole
 Before creating the pilot account, open Orca locally and use **Help → Show Configuration Folder**. Then run the following, replacing the source with the UI-revealed location:
 
 ```powershell
-.\Initialize-Workspace.ps1 -PilotUser 'williamliu0211' -SourceOrcaConfig '<UI-revealed Orca configuration folder>'
+.\Initialize-Workspace.ps1 -PilotUser '<pilot-windows-user>' -SourceOrcaConfig '<UI-revealed Orca configuration folder>'
 ```
 
 The script creates a timestamped backup outside OneDrive, a private SHA-256 manifest, the exact restricted workspace tree, the non-administrator account, and an inert workspace-only copy of the user-preset directory. Network/device configuration remains in the private backup and is not copied into the workspace. It does not write to the source profile.
@@ -40,16 +42,16 @@ The script creates a timestamped backup outside OneDrive, a private SHA-256 mani
 ## Database authentication, TOTP, and RDP-first acceptance
 
 1. Access the loopback endpoint locally only; first-login administration credentials are the upstream Guacamole schema defaults and must be changed immediately to a generated, host-managed secret.
-2. Create exactly one database-authenticated Guacamole user, `williamliu0211@gmail.com`. Enroll TOTP with the pilot's authenticator device; this is a required human step because it requires scanning the enrollment code. TOTP is mandatory for every Guacamole login through this stack.
+2. Create exactly one database-authenticated Guacamole user, `<pilot-tailnet-identity>`. Enroll TOTP with the pilot's authenticator device; this is a required human step because it requires scanning the enrollment code. TOTP is mandatory for every Guacamole login through this stack.
 3. Create the RDP connection only after the Windows pilot account and restricted workspace have been verified. Use the Docker Desktop host gateway and NLA; disable clipboard, drive, printer, audio-input, and graphical recording parameters. Set connection and user limits to one.
 4. Run the full rendering/reconnect/logoff/service-survival matrix. Keep RDP only if it passes. If it fails, document the result and use the approved VNC fallback procedure; do not keep both transports active.
 
 ## Tailnet-only publication
 
-Confirm that the tailnet policy permits only the named pilot identity to reach this host's HTTPS port, then publish the loopback listener:
+After the local loopback, direct-exposure, and named-identity policy gates pass, confirm that the tailnet policy permits only the named pilot identity to reach Guacamole's separate HTTPS endpoint. Do not change the dashboard's private Serve route on HTTPS :443:
 
 ```powershell
-tailscale serve --https=443 http://127.0.0.1:8085
+tailscale serve --https=<guacamole-https-port> http://127.0.0.1:8085
 tailscale serve status --json
 tailscale funnel status
 ```
@@ -60,9 +62,9 @@ If Tailscale requests a web-admin approval or the narrow deny-by-default grant c
 {
   "grants": [
     {
-      "src": ["williamliu0211@gmail.com"],
-      "dst": ["tag:advanced-orca-workspace:443"],
-      "ip": ["tcp:443"]
+      "src": ["<pilot-tailnet-identity>"],
+      "dst": ["tag:advanced-orca-workspace:<guacamole-https-port>"],
+      "ip": ["tcp:<guacamole-https-port>"]
     }
   ]
 }
@@ -75,7 +77,7 @@ docker compose --env-file .env -f compose.yaml ps
 docker compose --env-file .env -f compose.yaml logs --tail 200
 docker run --rm -v advanced-orca-workspace-postgres-data:/var/lib/postgresql/data -v ${PWD}\backups:/backup alpine:3.20 tar czf /backup/postgres-$(Get-Date -Format yyyyMMdd-HHmmss).tgz /var/lib/postgresql/data
 docker compose --env-file .env -f compose.yaml down
-tailscale serve reset
+# Do not reset Tailscale Serve here: the dashboard's HTTPS :443 route is managed separately.
 docker compose --env-file .env -f compose.yaml down -v
 ```
 
