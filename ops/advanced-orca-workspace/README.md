@@ -2,7 +2,7 @@
 
 This directory is the reviewable, transport-independent foundation for the Windows 3070 pilot. It deliberately exposes only Guacamole's HTTP listener on host loopback. PostgreSQL and guacd have no host-published ports; Tailscale Serve is the sole user-facing ingress. Funnel is prohibited.
 
-Guacamole is attached to the two internal service networks plus the ordinary `ingress` bridge. The `ingress` bridge is required for Docker to realize Guacamole's host-loopback publication; it is not attached to PostgreSQL or guacd and does not make Guacamole reachable from LAN, tailnet, or public interfaces.
+Guacamole is attached to the two internal service networks plus the ordinary `ingress` bridge. The `ingress` bridge is required for Docker to realize Guacamole's host-loopback publication. It is attached to Guacamole and its proxy (`guacd`) only, allowing the proxy to reach the Windows host gateway for RDP; it is not attached to PostgreSQL and does not make Guacamole or guacd reachable from LAN, tailnet, or public interfaces.
 
 ## Guardrails
 
@@ -21,7 +21,7 @@ Run in an elevated PowerShell window on the 3070, from this directory. The gener
 Copy-Item .env.example .env
 # Replace both database password placeholders in .env with one long random value.
 New-Item -ItemType Directory -Force state\postgres-init | Out-Null
-docker run --rm guacamole/guacamole:1.6.0 /opt/guacamole/bin/initdb.sh --postgresql | Set-Content -NoNewline state\postgres-init\001-guacamole-schema.sql
+docker run --rm guacamole/guacamole:1.6.0 /opt/guacamole/bin/initdb.sh --postgresql | Set-Content -Encoding utf8 state\postgres-init\001-guacamole-schema.sql
 docker compose --env-file .env -f compose.yaml config
 docker compose --env-file .env -f compose.yaml up -d
 docker compose --env-file .env -f compose.yaml ps

@@ -32,6 +32,9 @@ services:
       LOG_LEVEL: info
     networks:
       - transport
+      # Egress-only path to the Windows host gateway for Guacamole's RDP proxy.
+      # guacd has no host-published ports.
+      - ingress
     healthcheck:
       test: ["CMD-SHELL", "/opt/guacamole/sbin/guacd -v >/dev/null 2>&1"]
       interval: 15s
@@ -69,7 +72,7 @@ services:
       - persistence
       - transport
       # Published loopback ports require a non-internal bridge attachment.
-      # This network is deliberately attached only to Guacamole.
+      # This network is deliberately attached only to Guacamole and guacd.
       - ingress
     healthcheck:
       test: ["CMD-SHELL", "test -f /opt/guacamole/webapp/guacamole.war"]
