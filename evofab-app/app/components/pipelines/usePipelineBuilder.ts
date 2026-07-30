@@ -1,15 +1,31 @@
 // usePipelineBuilder.ts
-// Encapsulates all pipeline-step state and mutations for the Pipelines page:
-// adding/editing/deleting steps, reordering them, and grouping two or more
-// into a "synced" unit that runs simultaneously. Keeps PipelineBuilder and
-// its children focused on rendering rather than state management.
+// Encapsulates all pipeline-builder state and mutations for the Pipelines
+// page: adding/editing/deleting steps, reordering, grouping two or more
+// steps into a "synced" unit, and nesting steps inside loops. Keeps
+// PipelineBuilder and its children focused on rendering rather than state
+// management.
+//
+// Structure: `rootOrder` (top-level) and each `LoopGroup.children` are
+// authoritative for both order and containment — a container is an ordered
+// list of `BuilderEntry` references (step ids and/or nested loop ids).
+// `steps`/`groups` are flat content bags; `Step.num`/`Step.groupId` are
+// derived projections of the tree, recomputed by `commit()` after every
+// mutation (see pipelineUtils.deriveStepFields). This is all client-state
+// only until "Run Pipeline," same as every other step edit today — eager
+// per-mutation persistence is separate, out-of-scope follow-up work.
 
 import { useMemo, useRef, useState } from 'react'
 import { actionsForTech, usePipelineConfig } from './PipelineConfigContext'
-import { computeUnits, renumberSteps } from './pipelineUtils'
+import {
+  computeContainerUnits,
+  deriveStepFields,
+  findEntryContainer,
+  validateRepeatSelection,
+  validateSyncSelection,
+} from './pipelineUtils'
 import { DEFAULT_SETTINGS } from '@/app/contexts/PrinterContext'
 import type { PipelineConfig } from './PipelineConfigContext'
-import type { ActionConfig, DraftMode, Step, StepDraft, TechKey } from './types'
+import type { ActionConfig, BuilderEntry, DraftMode, LoopGroup, Step, StepDraft, TechKey } from './types'
 import type { MaterialProfile, PrintSettings } from '@/app/types/job'
 
 /**
@@ -42,39 +58,100 @@ function newDraft(availableTechs: TechKey[], config: PipelineConfig): StepDraft 
   }
 }
 
-/** Owns the pipeline builder's step list, sync grouping, and add/edit draft form state. */
+/** Owns the pipeline builder's step/loop tree, sync grouping, and add/edit draft form state. */
 export function usePipelineBuilder(availableTechs: TechKey[]) {
   const config = usePipelineConfig()
   const [steps, setSteps] = useState<Step[]>([])
-  const [checkedIds, setCheckedIds] = useState<Set<number>>(new Set())
+  const [groups, setGroups] = useState<LoopGroup[]>([])
+  const [rootOrder, setRootOrder] = useState<BuilderEntry[]>([])
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set())
   const [draftMode, setDraftMode] = useState<DraftMode>(null)
   const [draftState, setDraftState] = useState<StepDraft | null>(null)
   const [draftError, setDraftError] = useState<string | null>(null)
-  const idCounter = useRef(1)
+  /** Which container a new step (add mode only) is being added into — `null` is root. */
+  const [draftTargetGroupId, setDraftTargetGroupId] = useState<string | null>(null)
   const groupCounter = useRef(1)
 
-  const units = useMemo(() => computeUnits(steps), [steps])
+  /** Null when the current checked selection is syncable; otherwise the reason it isn't — see `validateSyncSelection`. */
+  const syncError = useMemo(
+    () => validateSyncSelection(steps, checkedIds, rootOrder, groups),
+    [steps, checkedIds, rootOrder, groups]
+  )
+  /** Null when the current checked selection can be wrapped into a new loop; otherwise the reason it can't — see `validateRepeatSelection`. */
+  const repeatError = useMemo(
+    () => validateRepeatSelection(steps, checkedIds, rootOrder, groups),
+    [steps, checkedIds, rootOrder, groups]
+  )
 
-  /** Reorders the unit at `unitIdx` by `dir` (-1 up, +1 down) and renumbers. */
-  function moveUnit(unitIdx: number, dir: -1 | 1) {
+  /** Single choke point for every mutation: re-derives `num`/`groupId` from the (possibly new) tree shape before committing state. */
+  function commit(nextRootOrder: BuilderEntry[], nextGroups: LoopGroup[], nextStepsRaw: Step[]) {
+    setRootOrder(nextRootOrder)
+    setGroups(nextGroups)
+    setSteps(deriveStepFields(nextStepsRaw, nextRootOrder, nextGroups))
+  }
+
+  function orderOf(containerGroupId: string | null, groupsList: LoopGroup[]): BuilderEntry[] {
+    if (containerGroupId === null) return rootOrder
+    return groupsList.find((g) => g.id === containerGroupId)?.children ?? []
+  }
+
+  function withOrder(containerGroupId: string | null, groupsList: LoopGroup[], nextOrder: BuilderEntry[]) {
+    if (containerGroupId === null) return { rootOrder: nextOrder, groups: groupsList }
+    return {
+      rootOrder,
+      groups: groupsList.map((g) => (g.id === containerGroupId ? { ...g, children: nextOrder } : g)),
+    }
+  }
+
+  /** Reorders the unit at `unitIdx` within the given container by `dir` (-1 up, +1 down) — a sync pair or a whole loop moves as one atomic block. */
+  function moveEntry(containerGroupId: string | null, unitIdx: number, dir: -1 | 1) {
+    const order = orderOf(containerGroupId, groups)
+    const stepsById = new Map(steps.map((s) => [s.id, s]))
+    const units = computeContainerUnits(order, stepsById)
     const target = unitIdx + dir
     if (target < 0 || target >= units.length) return
     const reordered = [...units]
     ;[reordered[unitIdx], reordered[target]] = [reordered[target], reordered[unitIdx]]
-    setSteps(renumberSteps(reordered.flat()))
+    const next = withOrder(containerGroupId, groups, reordered.flat())
+    commit(next.rootOrder, next.groups, steps)
   }
 
-  /** Removes a step; if that leaves a sync group with only one member, ungroups it. */
-  function deleteStep(id: number) {
+  /**
+   * Removes a step; if that leaves a sync group with only one member, ungroups it. If removing
+   * it empties its containing loop entirely (no steps, no nested loops left), that loop is
+   * auto-deleted too — mirroring sync's auto-dissolve — cascading upward if that empties its
+   * own parent loop in turn.
+   */
+  function deleteStep(id: string) {
     const removed = steps.find((s) => s.id === id)
-    let next = steps.filter((s) => s.id !== id)
+    let nextSteps = steps.filter((s) => s.id !== id)
     if (removed?.syncGroupId) {
-      const remaining = next.filter((s) => s.syncGroupId === removed.syncGroupId)
+      const remaining = nextSteps.filter((s) => s.syncGroupId === removed.syncGroupId)
       if (remaining.length === 1) {
-        next = next.map((s) => (s.id === remaining[0].id ? { ...s, syncGroupId: null } : s))
+        nextSteps = nextSteps.map((s) => (s.id === remaining[0].id ? { ...s, syncGroupId: null } : s))
       }
     }
-    setSteps(renumberSteps(next))
+
+    let nextRootOrder = rootOrder
+    let nextGroups = groups
+    const container = findEntryContainer(id, rootOrder, groups)
+    let cursor = container?.containerId ?? null
+    const strippedOrder = (container?.order ?? rootOrder).filter((e) => !(e.kind === 'step' && e.id === id))
+    ;({ rootOrder: nextRootOrder, groups: nextGroups } = withOrder(cursor, nextGroups, strippedOrder))
+
+    // Cascade: if that emptied a loop, delete it too, and check its parent in turn.
+    while (cursor !== null) {
+      const group = nextGroups.find((g) => g.id === cursor)
+      if (!group || group.children.length > 0) break
+      const parentId = group.parentGroupId
+      nextGroups = nextGroups.filter((g) => g.id !== cursor)
+      const parentOrder = (parentId === null ? nextRootOrder : (nextGroups.find((g) => g.id === parentId)?.children ?? []))
+        .filter((e) => !(e.kind === 'loop' && e.id === cursor))
+      ;({ rootOrder: nextRootOrder, groups: nextGroups } = withOrder(parentId, nextGroups, parentOrder))
+      cursor = parentId
+    }
+
+    commit(nextRootOrder, nextGroups, nextSteps)
     setCheckedIds((prev) => {
       const next = new Set(prev)
       next.delete(id)
@@ -82,8 +159,8 @@ export function usePipelineBuilder(availableTechs: TechKey[]) {
     })
   }
 
-  /** Toggles a step's checkbox, used to select two or more steps to sync together. */
-  function toggleChecked(id: number) {
+  /** Toggles a step's checkbox, used to select steps to sync (2+) or wrap in a loop (1+). */
+  function toggleChecked(id: string) {
     setCheckedIds((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
@@ -92,29 +169,113 @@ export function usePipelineBuilder(availableTechs: TechKey[]) {
     })
   }
 
-  /** Groups the currently checked steps (must be 2+) into a new sync group, preserving their relative order. */
+  /**
+   * Groups the currently checked steps into a new sync group. Adjacency and same-parent are
+   * already guaranteed by `syncError` being null, so this only needs to tag them — no
+   * structural reordering required. A no-op if the selection is invalid — the UI is expected
+   * to disable the triggering control in that case, this is just the defensive backstop.
+   */
   function syncSelected() {
-    if (checkedIds.size < 2) return
+    if (checkedIds.size < 2 || syncError) return
     const gid = `g${groupCounter.current++}`
-    const selected = steps.filter((s) => checkedIds.has(s.id))
-    const rest = steps.filter((s) => !checkedIds.has(s.id))
-    const firstIdx = steps.findIndex((s) => checkedIds.has(s.id))
-    const insertAt = steps.slice(0, firstIdx).filter((s) => !checkedIds.has(s.id)).length
-    const grouped = selected.map((s) => ({ ...s, syncGroupId: gid }))
-    const next = [...rest.slice(0, insertAt), ...grouped, ...rest.slice(insertAt)]
-    setSteps(renumberSteps(next))
+    const nextSteps = steps.map((s) => (checkedIds.has(s.id) ? { ...s, syncGroupId: gid } : s))
+    commit(rootOrder, groups, nextSteps)
     setCheckedIds(new Set())
   }
 
   /** Ungroups every step in the given sync group back into independent steps. */
   function unsyncGroup(groupId: string) {
-    setSteps(
-      renumberSteps(steps.map((s) => (s.syncGroupId === groupId ? { ...s, syncGroupId: null } : s)))
-    )
+    const nextSteps = steps.map((s) => (s.syncGroupId === groupId ? { ...s, syncGroupId: null } : s))
+    commit(rootOrder, groups, nextSteps)
   }
 
-  /** Opens the draft form: a blank draft when `editId` is omitted, or the given step's values when editing. */
-  function openDraft(editId?: number) {
+  /**
+   * Wraps the currently checked steps in a brand-new loop, preserving their relative order.
+   * A no-op if the selection is invalid (see `repeatError`).
+   */
+  function repeatSelected(iterationCount: number) {
+    if (checkedIds.size < 1 || repeatError) return
+    const containerId = findEntryContainer([...checkedIds][0], rootOrder, groups)?.containerId ?? null
+    const order = orderOf(containerId, groups)
+    const indices = order
+      .map((entry, idx) => (entry.kind === 'step' && checkedIds.has(entry.id) ? idx : -1))
+      .filter((idx) => idx !== -1)
+    if (indices.length === 0) return
+    const first = indices[0]
+    const last = indices[indices.length - 1]
+    const wrapped = order.slice(first, last + 1)
+
+    const newGroupId = crypto.randomUUID()
+    const newGroup: LoopGroup = {
+      id: newGroupId,
+      parentGroupId: containerId,
+      label: '',
+      iterationCount,
+      children: wrapped,
+    }
+    const nextOrder = [...order.slice(0, first), { kind: 'loop' as const, id: newGroupId }, ...order.slice(last + 1)]
+    const next = withOrder(containerId, [...groups, newGroup], nextOrder)
+    commit(next.rootOrder, next.groups, steps)
+    setCheckedIds(new Set())
+  }
+
+  /** Creates a new, empty loop inside the given container (`null` = top-level) and appends it. */
+  function addLoop(containerGroupId: string | null, iterationCount: number, label = '') {
+    const newGroup: LoopGroup = {
+      id: crypto.randomUUID(),
+      parentGroupId: containerGroupId,
+      label,
+      iterationCount,
+      children: [],
+    }
+    const order = [...orderOf(containerGroupId, groups), { kind: 'loop' as const, id: newGroup.id }]
+    const next = withOrder(containerGroupId, [...groups, newGroup], order)
+    commit(next.rootOrder, next.groups, steps)
+  }
+
+  function updateLoopIterationCount(groupId: string, iterationCount: number) {
+    if (iterationCount < 2) return
+    setGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, iterationCount } : g)))
+  }
+
+  function updateLoopLabel(groupId: string, label: string) {
+    setGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, label } : g)))
+  }
+
+  /** Deletes a loop and everything defined inside it (steps and nested loops), recursively. */
+  function deleteLoop(groupId: string) {
+    const groupsById = new Map(groups.map((g) => [g.id, g]))
+    const target = groupsById.get(groupId)
+    if (!target) return
+
+    const removedGroupIds = new Set<string>([groupId])
+    const removedStepIds = new Set<string>()
+    function collect(order: BuilderEntry[]) {
+      for (const entry of order) {
+        if (entry.kind === 'step') removedStepIds.add(entry.id)
+        else {
+          removedGroupIds.add(entry.id)
+          const g = groupsById.get(entry.id)
+          if (g) collect(g.children)
+        }
+      }
+    }
+    collect(target.children)
+
+    const nextSteps = steps.filter((s) => !removedStepIds.has(s.id))
+    const nextGroups = groups.filter((g) => !removedGroupIds.has(g.id))
+    const parentOrder = orderOf(target.parentGroupId, groups).filter((e) => !(e.kind === 'loop' && e.id === groupId))
+    const next = withOrder(target.parentGroupId, nextGroups, parentOrder)
+    commit(next.rootOrder, next.groups, nextSteps)
+    setCheckedIds((prev) => {
+      const next = new Set(prev)
+      for (const id of removedStepIds) next.delete(id)
+      return next
+    })
+  }
+
+  /** Opens the draft form: a blank draft when `editId` is omitted, or the given step's values when editing. `targetGroupId` scopes a new step into that loop's body (`null` = top-level); ignored when editing, since editing never moves a step between containers. */
+  function openDraft(editId?: string, targetGroupId: string | null = null) {
     if (editId !== undefined) {
       const existing = steps.find((s) => s.id === editId)
       if (!existing) return
@@ -132,6 +293,7 @@ export function usePipelineBuilder(availableTechs: TechKey[]) {
     } else {
       setDraftState(newDraft(availableTechs, config))
       setDraftMode('add')
+      setDraftTargetGroupId(targetGroupId)
     }
     setDraftError(null)
   }
@@ -140,6 +302,7 @@ export function usePipelineBuilder(availableTechs: TechKey[]) {
     setDraftMode(null)
     setDraftState(null)
     setDraftError(null)
+    setDraftTargetGroupId(null)
   }
 
   /** Switching technology resets the action, machine, and inputs, since they're tech-specific. */
@@ -216,7 +379,7 @@ export function usePipelineBuilder(availableTechs: TechKey[]) {
     })
   }
 
-  /** Validates and commits the current draft as a new step or an update to the step it's editing. */
+  /** Validates and commits the current draft as a new step (into `draftTargetGroupId`) or an update to the step it's editing. */
   function commitDraft() {
     if (!draftState) return
     if (!draftState.machine) {
@@ -224,27 +387,24 @@ export function usePipelineBuilder(availableTechs: TechKey[]) {
       return
     }
     if (draftMode === 'edit' && draftState.id !== undefined) {
-      setSteps((prev) =>
-        renumberSteps(
-          prev.map((s) =>
-            s.id === draftState.id
-              ? {
-                  ...s,
-                  tech: draftState.tech,
-                  action: draftState.action,
-                  machine: draftState.machine,
-                  inputs: { ...draftState.inputs },
-                  files: { ...(draftState.files ?? {}) },
-                  printSettings: draftState.printSettings,
-                  materialProfileId: draftState.materialProfileId ?? null,
-                }
-              : s
-          )
-        )
+      const nextSteps = steps.map((s) =>
+        s.id === draftState.id
+          ? {
+              ...s,
+              tech: draftState.tech,
+              action: draftState.action,
+              machine: draftState.machine,
+              inputs: { ...draftState.inputs },
+              files: { ...(draftState.files ?? {}) },
+              printSettings: draftState.printSettings,
+              materialProfileId: draftState.materialProfileId ?? null,
+            }
+          : s
       )
+      commit(rootOrder, groups, nextSteps)
     } else {
       const step: Step = {
-        id: idCounter.current++,
+        id: crypto.randomUUID(),
         tech: draftState.tech,
         action: draftState.action,
         machine: draftState.machine,
@@ -254,24 +414,36 @@ export function usePipelineBuilder(availableTechs: TechKey[]) {
         materialProfileId: draftState.materialProfileId ?? null,
         syncGroupId: null,
         num: 0,
+        groupId: draftTargetGroupId,
       }
-      setSteps((prev) => renumberSteps([...prev, step]))
+      const order = [...orderOf(draftTargetGroupId, groups), { kind: 'step' as const, id: step.id }]
+      const next = withOrder(draftTargetGroupId, groups, order)
+      commit(next.rootOrder, next.groups, [...steps, step])
     }
     closeDraft()
   }
 
   return {
     steps,
-    units,
+    groups,
+    rootOrder,
     checkedIds,
     toggleChecked,
     syncSelected,
+    syncError,
     unsyncGroup,
-    moveUnit,
+    repeatSelected,
+    repeatError,
+    addLoop,
+    updateLoopIterationCount,
+    updateLoopLabel,
+    deleteLoop,
+    moveEntry,
     deleteStep,
     draftMode,
     draftState,
     draftError,
+    draftTargetGroupId,
     openDraft,
     closeDraft,
     changeDraftTech,

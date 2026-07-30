@@ -24,8 +24,8 @@ import platform
 import threading
 import time
 from contextlib import asynccontextmanager
-from math import sqrt
-from typing import Optional
+from math import degrees, radians, sqrt
+from typing import Literal, Optional
 
 import cv2
 import httpx
@@ -54,6 +54,32 @@ _SAFETY_PLANES = [
     ("south", (-1.0,  0.0,  0.0),  0.200),   # x ≤ 200 mm
     ("table", ( 0.0,  0.0,  1.0), -0.025),   # z ≥  25 mm
 ]
+
+# UR joint order, matching rtde_receive's getActualQ()/getActualQd() index order.
+JOINT_NAMES = ["base", "shoulder", "elbow", "wrist_1", "wrist_2", "wrist_3"]
+
+# Placeholder software joint limits, degrees — NOT pulled from the actual UR
+# controller configuration (unlike _SAFETY_PLANES, which is). Verify against
+# the real teach-pendant joint-range settings before relying on this for
+# safety; elbow's tighter range mirrors the typical UR default, the rest are
+# left at the controller's usual ±360° allowance.
+_JOINT_LIMITS_DEG = {
+    "base": (-360.0, 360.0),
+    "shoulder": (-360.0, 360.0),
+    "elbow": (-160.0, 160.0),
+    "wrist_1": (-360.0, 360.0),
+    "wrist_2": (-360.0, 360.0),
+    "wrist_3": (-360.0, 360.0),
+}
+
+# Placeholder speed/accel ceilings that speed_pct/acceleration_pct (0-100)
+# scale against for each move type — not real controller-configured maxima,
+# just conservative values in the same spirit as move_node.py's default
+# VEL_SCALE/ACCEL_SCALE (0.10). Tune once real hardware limits are known.
+_CARTESIAN_VEL_MAX = 0.3    # m/s
+_CARTESIAN_ACCEL_MAX = 0.3  # m/s²
+_JOINT_VEL_MAX = 1.0        # rad/s
+_JOINT_ACCEL_MAX = 1.0      # rad/s²
 
 # How often each WebSocket handler checks for state changes.
 POLL_HZ = 10
@@ -125,6 +151,9 @@ def _rtde_reader() -> None:
                     "reg18": rtde.getOutputIntRegister(18),
                     # Actual TCP pose [x, y, z, rx, ry, rz] in metres / radians
                     "tcp_pose": [round(v, 4) for v in pose],
+                    # Actual joint angles, degrees, in JOINT_NAMES order — powers the
+                    # joint dial's "seed from current angle" and live readout.
+                    "joint_positions_deg": [round(degrees(v), 2) for v in rtde.getActualQ()],
                 }
 
                 time.sleep(1 / POLL_HZ)
@@ -200,36 +229,113 @@ async def robot_ws(websocket: WebSocket) -> None:
         disconnect.cancel()
 
 
-class MoveRequest(BaseModel):
+class CartesianTarget(BaseModel):
     x: float
     y: float
     z: float
 
 
-def _execute_move(x: float, y: float, z: float) -> tuple[bool, str]:
-    """Blocking: validate safety planes, send URscript movej, confirm arrival.
-    """
+class JointTarget(BaseModel):
+    joint: str
+    angle_deg: float
+
+
+class MoveRequest(BaseModel):
+    """Unified move request — Cartesian and joint-space targets share one
+    endpoint/output shape (see MoveOutput in stepExecutors.ts/robot.ts) since
+    downstream pipeline steps only care where the arm ended up, not how it
+    got there. `position` is required (and `mode`/`joints` ignored) when
+    target_type='cartesian'; `mode`/`joints` are required (and `position`
+    ignored) when target_type='joint'. Cross-field shape is checked by
+    `shape_error()` rather than a pydantic validator, since the error message
+    needs to flow back through the same HTTPException path as other 422s."""
+
+    target_type: Literal["cartesian", "joint"]
+    position: Optional[CartesianTarget] = None
+    mode: Optional[Literal["absolute", "relative"]] = None
+    joints: Optional[list[JointTarget]] = None
+    speed_pct: float = 25.0
+    acceleration_pct: float = 25.0
+
+    def shape_error(self) -> Optional[str]:
+        if self.target_type == "cartesian":
+            if self.position is None:
+                return "position is required for a cartesian move"
+            return None
+        if not self.joints:
+            return "joints is required for a joint move"
+        if self.mode is None:
+            return "mode is required for a joint move"
+        names = [j.joint for j in self.joints]
+        if len(set(names)) != len(names):
+            return "duplicate joint in joints"
+        unknown = [n for n in names if n not in JOINT_NAMES]
+        if unknown:
+            return f"unknown joint(s): {', '.join(unknown)}"
+        return None
+
+
+def _failed_result(error: str, duration_ms: int = 0) -> dict:
+    return {
+        "status": "failed",
+        "final_joint_positions_deg": {},
+        "final_tcp_pose": None,
+        "duration_ms": duration_ms,
+        "error": error,
+    }
+
+
+def _final_state(recv) -> dict:
+    """Joint angles (degrees) + TCP pose from RTDE — the shared "where did we end
+    up" snapshot both move paths return, computed once here from the robot's
+    own reported state rather than re-derived (FK) by every downstream consumer."""
+    q_deg = [round(degrees(v), 2) for v in recv.getActualQ()]
+    pose = recv.getActualTCPPose()
+    return {
+        "final_joint_positions_deg": dict(zip(JOINT_NAMES, q_deg)),
+        "final_tcp_pose": {
+            "x": round(pose[0], 4), "y": round(pose[1], 4), "z": round(pose[2], 4),
+            "rx": round(pose[3], 5), "ry": round(pose[4], 5), "rz": round(pose[5], 5),
+        },
+    }
+
+
+def _execute_cartesian_move(position: CartesianTarget, speed_pct: float, acceleration_pct: float) -> dict:
+    """Blocking: validate safety planes, send URscript movej(p[...]), confirm arrival."""
+    x, y, z = position.x, position.y, position.z
     violations = [
         name
         for name, (nx, ny, nz), d in _SAFETY_PLANES
         if nx * x + ny * y + nz * z + d < 0.0
     ]
     if violations:
-        return False, f"Safety plane violation: {', '.join(violations)}"
+        return {
+            "status": "limit_violation",
+            "final_joint_positions_deg": {},
+            "final_tcp_pose": None,
+            "duration_ms": 0,
+            "error": f"Safety plane violation: {', '.join(violations)}",
+        }
 
     try:
         import socket
         import rtde_receive
     except ImportError:
-        return False, "ur-rtde not installed"
+        return _failed_result("ur-rtde not installed")
 
+    started_at = time.time()
     try:
         # Snapshot position and joint angles before the move.
         recv = rtde_receive.RTDEReceiveInterface(ROBOT_IP)
         before = recv.getActualTCPPose()
 
-        # Preserve current TCP orientation so the move only changes position.
+        # Preserve current TCP orientation so the move only changes position —
+        # no orientation control exists in the picker UI (yet), matching the
+        # UR7e's job so far (top-down grip moves).
         rx, ry, rz = before[3], before[4], before[5]
+
+        v = (speed_pct / 100.0) * _CARTESIAN_VEL_MAX
+        a = (acceleration_pct / 100.0) * _CARTESIAN_ACCEL_MAX
 
         # Send URscript via port 30002 (secondary client interface).
         # Requires Remote Control mode on the teach pendant.
@@ -239,7 +345,7 @@ def _execute_move(x: float, y: float, z: float) -> tuple[bool, str]:
         # velocity blow-up near singularities (C15A40).
         script = (
             f"set_payload(1.07, [0.0, 0.0, 0.058])\n"
-            f"movej(p[{x:.4f},{y:.4f},{z:.4f},{rx:.6f},{ry:.6f},{rz:.6f}], a=0.3, v=0.3)\n"
+            f"movej(p[{x:.4f},{y:.4f},{z:.4f},{rx:.6f},{ry:.6f},{rz:.6f}], a={a:.4f}, v={v:.4f})\n"
         )
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(5)
@@ -247,13 +353,22 @@ def _execute_move(x: float, y: float, z: float) -> tuple[bool, str]:
         sock.sendall(script.encode("utf-8"))
         sock.close()
 
-        # Poll until robot stops moving or 30 s elapses
+        # Poll until robot stops moving, a protective stop fires, or 30 s elapses.
         deadline = time.time() + 30.0
         started = False
         while time.time() < deadline:
             time.sleep(0.1)
             if not recv.isConnected():
                 break
+            if _latest_state.get("is_protective_stopped"):
+                final = _final_state(recv)
+                recv.disconnect()
+                return {
+                    "status": "protective_stop",
+                    **final,
+                    "duration_ms": round((time.time() - started_at) * 1000),
+                    "error": "Protective stop during move.",
+                }
             spd = recv.getActualTCPSpeed()
             moving = sqrt(spd[0] ** 2 + spd[1] ** 2 + spd[2] ** 2) > 0.001
             if moving:
@@ -262,26 +377,141 @@ def _execute_move(x: float, y: float, z: float) -> tuple[bool, str]:
                 break  # was moving, now stopped → motion complete
 
         after = recv.getActualTCPPose()
+        final = _final_state(recv)
         recv.disconnect()
+        duration_ms = round((time.time() - started_at) * 1000)
 
         dist_to_target = sqrt((after[0] - x) ** 2 + (after[1] - y) ** 2 + (after[2] - z) ** 2)
         total_moved = sqrt((after[0] - before[0]) ** 2 + (after[1] - before[1]) ** 2 + (after[2] - before[2]) ** 2)
 
         if not started and total_moved < 0.001:
-            return False, (
-                "Robot did not move. "
-                "Enable Remote Control on the teach pendant: "
-                "Settings → System → Remote Control → enable, then tap Remote on the home screen."
-            )
+            return {
+                "status": "failed",
+                **final,
+                "duration_ms": duration_ms,
+                "error": (
+                    "Robot did not move. "
+                    "Enable Remote Control on the teach pendant: "
+                    "Settings → System → Remote Control → enable, then tap Remote on the home screen."
+                ),
+            }
         if dist_to_target < 0.005:
-            return True, f"Moved to ({x:.3f}, {y:.3f}, {z:.3f}) m."
-        return False, (
-            f"Robot moved {total_moved * 1000:.1f} mm but stopped "
-            f"{dist_to_target * 1000:.1f} mm from target."
-        )
+            return {"status": "success", **final, "duration_ms": duration_ms}
+        return {
+            "status": "failed",
+            **final,
+            "duration_ms": duration_ms,
+            "error": (
+                f"Robot moved {total_moved * 1000:.1f} mm but stopped "
+                f"{dist_to_target * 1000:.1f} mm from target."
+            ),
+        }
 
     except Exception as exc:
-        return False, str(exc)
+        return _failed_result(str(exc), round((time.time() - started_at) * 1000))
+
+
+def _execute_joint_move(
+    mode: str, joints: list[JointTarget], speed_pct: float, acceleration_pct: float
+) -> dict:
+    """Blocking: resolve targets to absolute degrees per joint (unlisted joints hold
+    their current position), validate against _JOINT_LIMITS_DEG, send a joint-space
+    URscript movej([...]), confirm arrival."""
+    try:
+        import socket
+        import rtde_receive
+    except ImportError:
+        return _failed_result("ur-rtde not installed")
+
+    started_at = time.time()
+    try:
+        recv = rtde_receive.RTDEReceiveInterface(ROBOT_IP)
+        current_deg = dict(zip(JOINT_NAMES, (degrees(v) for v in recv.getActualQ())))
+
+        target_deg = dict(current_deg)
+        for j in joints:
+            target_deg[j.joint] = j.angle_deg if mode == "absolute" else current_deg[j.joint] + j.angle_deg
+
+        violations = [
+            f"{name} ({target_deg[name]:.1f}° not in [{lo:.0f}, {hi:.0f}])"
+            for name, (lo, hi) in _JOINT_LIMITS_DEG.items()
+            if not (lo <= target_deg[name] <= hi)
+        ]
+        if violations:
+            recv.disconnect()
+            return {
+                "status": "limit_violation",
+                "final_joint_positions_deg": current_deg,
+                "final_tcp_pose": None,
+                "duration_ms": 0,
+                "error": f"Joint limit violation: {', '.join(violations)}",
+            }
+
+        target_rad = [radians(target_deg[name]) for name in JOINT_NAMES]
+        v = (speed_pct / 100.0) * _JOINT_VEL_MAX
+        a = (acceleration_pct / 100.0) * _JOINT_ACCEL_MAX
+        joints_str = ",".join(f"{r:.6f}" for r in target_rad)
+        script = f"movej([{joints_str}], a={a:.4f}, v={v:.4f})\n"
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(5)
+        sock.connect((ROBOT_IP, 30002))
+        sock.sendall(script.encode("utf-8"))
+        sock.close()
+
+        # Poll until robot stops moving, a protective stop fires, or 30 s elapses.
+        deadline = time.time() + 30.0
+        started = False
+        while time.time() < deadline:
+            time.sleep(0.1)
+            if not recv.isConnected():
+                break
+            if _latest_state.get("is_protective_stopped"):
+                final = _final_state(recv)
+                recv.disconnect()
+                return {
+                    "status": "protective_stop",
+                    **final,
+                    "duration_ms": round((time.time() - started_at) * 1000),
+                    "error": "Protective stop during move.",
+                }
+            qd = recv.getActualQd()
+            moving = sqrt(sum(w ** 2 for w in qd)) > 0.001
+            if moving:
+                started = True
+            elif started:
+                break
+
+        final = _final_state(recv)
+        recv.disconnect()
+        duration_ms = round((time.time() - started_at) * 1000)
+
+        reached = all(
+            abs(final["final_joint_positions_deg"][name] - target_deg[name]) < 0.5
+            for name in JOINT_NAMES
+        )
+        if not started and not reached:
+            return {
+                "status": "failed",
+                **final,
+                "duration_ms": duration_ms,
+                "error": (
+                    "Robot did not move. "
+                    "Enable Remote Control on the teach pendant: "
+                    "Settings → System → Remote Control → enable, then tap Remote on the home screen."
+                ),
+            }
+        if reached:
+            return {"status": "success", **final, "duration_ms": duration_ms}
+        return {
+            "status": "failed",
+            **final,
+            "duration_ms": duration_ms,
+            "error": "Robot stopped before reaching the target joint angles.",
+        }
+
+    except Exception as exc:
+        return _failed_result(str(exc), round((time.time() - started_at) * 1000))
 
 
 class GripperRequest(BaseModel):
@@ -387,12 +617,27 @@ async def robot_gripper(body: GripperRequest) -> dict:
 
 @app.post("/robot/move")
 async def robot_move(body: MoveRequest) -> dict:
-    """Execute a Cartesian move on the UR7e via RTDEControlInterface.moveL()."""
+    """Execute either a Cartesian (movej(p[...])) or joint-space (movej([...]))
+    move on the UR7e, dispatching on body.target_type. Both paths return the
+    same MoveOutput shape (final_joint_positions_deg + final_tcp_pose) since
+    downstream pipeline steps only care where the arm ended up, not how it
+    got there. A 422 here means the request itself was malformed (missing
+    position/joints, unknown joint name, ...); a runtime outcome that isn't a
+    clean success (protective_stop, limit_violation, failed) is still a 200 —
+    see MoveOutput.status — so callers get the full final-state snapshot
+    either way, not just an error string."""
+    shape_error = body.shape_error()
+    if shape_error:
+        raise HTTPException(status_code=422, detail=shape_error)
+
     loop = asyncio.get_running_loop()
-    ok, msg = await loop.run_in_executor(None, _execute_move, body.x, body.y, body.z)
-    if ok:
-        return {"ok": True, "message": msg}
-    raise HTTPException(status_code=422, detail=msg)
+    if body.target_type == "cartesian":
+        return await loop.run_in_executor(
+            None, _execute_cartesian_move, body.position, body.speed_pct, body.acceleration_pct
+        )
+    return await loop.run_in_executor(
+        None, _execute_joint_move, body.mode, body.joints, body.speed_pct, body.acceleration_pct
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -494,17 +739,20 @@ def _annotate_curvature(frame_bgr: np.ndarray, analyzer: ActuatorAnalyzer = None
         box_color = (180, 212, 0) if result.status == "TRACKING" else (60, 160, 160)
         cv2.rectangle(display, (bx, by), (bx + bw, by + bh), box_color, 2)
 
-    # Fitted curvature arc — draw the circle segment spanning the skeleton extent
+    # Fitted curvature arc — draw the circle segment spanning the fitted
+    # start/end. Uses CurvatureResult's own already-unwrapped
+    # theta_start_deg/theta_end_deg (geometry.py's single source of truth
+    # for the arc's angular extent) rather than recomputing min/max angles
+    # from raw skeleton pixels here: plain arctan2 over all pixels has no
+    # concept of "the short way around" the +/-180 seam, and drew the
+    # wrong-side arc whenever the true sweep straddled it.
     if result.status == "TRACKING" and result.radius_px > 1:
-        ys, xs = np.where(skeleton > 0)
-        if len(ys) >= 2:
-            cx, cy = result.center_px
-            r = int(round(result.radius_px))
-            angles = np.degrees(np.arctan2(ys.astype(float) - cy, xs.astype(float) - cx))
-            a_min, a_max = float(angles.min()), float(angles.max())
-            pad = max(5.0, (a_max - a_min) * 0.1)
-            cv2.ellipse(display, (cx, cy), (r, r), 0, a_min - pad, a_max + pad, (0, 180, 255), 2, cv2.LINE_AA)
-            cv2.circle(display, (cx, cy), 5, (0, 180, 255), -1, cv2.LINE_AA)
+        cx, cy = result.center_px
+        r = int(round(result.radius_px))
+        lo, hi = sorted((result.theta_start_deg, result.theta_end_deg))
+        pad = max(5.0, (hi - lo) * 0.1)
+        cv2.ellipse(display, (cx, cy), (r, r), 0, lo - pad, hi + pad, (0, 180, 255), 2, cv2.LINE_AA)
+        cv2.circle(display, (cx, cy), 5, (0, 180, 255), -1, cv2.LINE_AA)
 
     txt_color = (180, 212, 0) if result.status == "TRACKING" else (80, 100, 90)
     cv2.putText(display, result.status, (12, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.8, txt_color, 2)

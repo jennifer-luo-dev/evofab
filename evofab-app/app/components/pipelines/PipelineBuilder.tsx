@@ -1,22 +1,14 @@
 // PipelineBuilder.tsx
 // Numbered step-by-step pipeline editor: name the pipeline, add/edit/reorder/
-// delete steps, and group two or more steps to run at the same instant.
+// delete steps, group two or more steps to run at the same instant, and nest
+// steps inside loops.
 
 'use client';
 
-import { Fragment, type ReactNode } from 'react';
 import { useState } from 'react';
 import { cn } from '@/app/lib/utils';
-import {
-  MACHINE_TYPE_ICONS,
-  DownIcon,
-  EditIcon,
-  TrashIcon,
-  UpIcon,
-} from '@/app/components/ui/icons';
-import { PipelineStepRow } from './PipelineStepRow';
-import { StepConnector } from './StepConnector';
-import { StepDraftForm } from './StepDraftForm';
+import { ContainerView } from './ContainerView';
+import { InlineCountPrompt } from './InlineCountPrompt';
 import {
   StepMonitorCard,
   type RunningCameraState,
@@ -24,79 +16,35 @@ import {
   type RunningPrinterState,
   type RunningRobotState,
 } from './StepMonitorCard';
-import { SyncedStepGroup } from './SyncedStepGroup';
 import { usePipelineConfig } from './PipelineConfigContext';
-import { summarizeStepInputs } from './pipelineUtils';
+import { unrollForExecution } from './pipelineUtils';
 import { usePipelineBuilder } from './usePipelineBuilder';
 import { STEP_EXECUTORS, StepNotImplementedError, type StepExecutorContext } from './stepExecutors';
-import { PipelineStatusBadge } from '@/app/components/history/PipelineStatusBadge';
 import type { PipelineRunStatus } from '@/app/components/history/types';
-import type { Step, TechKey } from './types';
+import type { TechKey, UnrolledStep } from './types';
 
 interface PipelineBuilderProps {
   selectedTechs: Set<TechKey>;
   onBackToTechSelect: () => void;
 }
 
-/** Small icon-only action button used in a step row's trailing controls. */
-function RowIconButton({
-  title,
-  onClick,
-  children,
-}: {
-  title: string;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      title={title}
-      onClick={onClick}
-      className="p-1.25 rounded-md text-muted hover:bg-bg hover:text-text"
-    >
-      {children}
-    </button>
-  );
-}
-
-/** Pipeline name input, sync toolbar, step list, and add/edit-step controls. */
+/** Pipeline name input, sync/repeat toolbar, step+loop tree, and add-step/add-loop controls. */
 export function PipelineBuilder({ selectedTechs, onBackToTechSelect }: PipelineBuilderProps) {
-  const { techs, techLabel, actionsByTech, printers, machineIdByName } = usePipelineConfig();
+  const { techs, actionsByTech, printers, machineIdByName } = usePipelineConfig();
   const [name, setName] = useState('');
-  const [stepStatus, setStepStatus] = useState<Record<number, PipelineRunStatus>>({});
+  const [stepStatus, setStepStatus] = useState<Record<string, PipelineRunStatus>>({});
   const [running, setRunning] = useState(false);
   const [runningPrinter, setRunningPrinter] = useState<RunningPrinterState | null>(null);
   const [runningRobot, setRunningRobot] = useState<RunningRobotState | null>(null);
   const [runningCamera, setRunningCamera] = useState<RunningCameraState | null>(null);
   const [runningClassification, setRunningClassification] =
     useState<RunningClassificationState | null>(null);
-  const [currentStepId, setCurrentStepId] = useState<number | null>(null);
+  const [currentStepId, setCurrentStepId] = useState<string | null>(null);
   const [pipelineRunId, setPipelineRunId] = useState<string | null>(null);
+  const [addingRepeat, setAddingRepeat] = useState(false);
   const availableTechs = techs.filter((t) => selectedTechs.has(t.key));
-  const {
-    steps,
-    units,
-    checkedIds,
-    toggleChecked,
-    syncSelected,
-    unsyncGroup,
-    moveUnit,
-    deleteStep,
-    draftMode,
-    draftState,
-    draftError,
-    openDraft,
-    closeDraft,
-    changeDraftTech,
-    changeDraftAction,
-    changeDraftMachine,
-    setDraftInput,
-    setDraftFile,
-    setDraftPrintSetting,
-    setDraftMaterialProfile,
-    commitDraft,
-  } = usePipelineBuilder(availableTechs.map((t) => t.key));
+  const builder = usePipelineBuilder(availableTechs.map((t) => t.key));
+  const { steps, groups, rootOrder, checkedIds, syncSelected, syncError, repeatSelected, repeatError } = builder;
 
   const checkedCount = checkedIds.size;
 
@@ -114,14 +62,20 @@ export function PipelineBuilder({ selectedTechs, onBackToTechSelect }: PipelineB
   }
 
   /**
-   * Runs the pipeline: persists it (and its steps) to `pipelines`/`pipeline_steps` first so the
-   * run survives a reload and shows up in Activity History immediately, then runs each step in
-   * order through its technology's executor (see stepExecutors.ts — STEP_EXECUTORS), reporting
-   * status back to the persisted run as it goes. A technology with no registered executor (or
-   * whose executor throws StepNotImplementedError, e.g. robot_arm's Gripper Cycle today) is
-   * marked `skipped` rather than failing the run. Stops on the first real failure.
+   * Runs the pipeline: unrolls the tree (see pipelineUtils.unrollForExecution — every loop's
+   * body cloned `iterationCount` times with fresh per-iteration `syncGroupId`s and remapped
+   * `step_output` references, plus one inert, never-dispatched definition row per loop-body
+   * step), persists both the definitions and the real executable rows to
+   * `pipelines`/`pipeline_steps`/`pipeline_step_groups` first so the run survives a reload and
+   * shows up in Activity History immediately, then runs each *executable* row in order through
+   * its technology's executor (see stepExecutors.ts — STEP_EXECUTORS), reporting status back to
+   * the persisted run as it goes. A technology with no registered executor (or whose executor
+   * throws StepNotImplementedError, e.g. robot_arm's Gripper Cycle today) is marked `skipped`
+   * rather than failing the run. Stops on the first real failure.
    */
   async function runPipeline() {
+    const { executable, definitions } = unrollForExecution(rootOrder, groups, steps, actionsByTech);
+
     setRunning(true);
     setStepStatus({});
     setRunningPrinter(null);
@@ -131,18 +85,35 @@ export function PipelineBuilder({ selectedTechs, onBackToTechSelect }: PipelineB
     setCurrentStepId(null);
     setPipelineRunId(null);
 
+    function toStepPayload(s: UnrolledStep) {
+      return {
+        id: s.id,
+        machineTypeId: techs.find((t) => t.key === s.tech)?.id ?? null,
+        machineId: machineIdByName[s.machine] ?? null,
+        actionTypeId: (actionsByTech[s.tech] ?? []).find((a) => a.key === s.action)?.id ?? null,
+        syncGroupId: s.syncGroupId,
+        groupId: s.groupId,
+        iterationPath: s.iterationPath,
+        dependsOnStepId: s.dependsOnStepId,
+        inputs: s.inputs,
+      };
+    }
+
     const createRes = await fetch('/api/pipelines', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: name || 'Untitled Pipeline',
-        steps: steps.map((s) => ({
-          machineTypeId: techs.find((t) => t.key === s.tech)?.id ?? null,
-          machineId: machineIdByName[s.machine] ?? null,
-          actionTypeId: (actionsByTech[s.tech] ?? []).find((a) => a.key === s.action)?.id ?? null,
-          syncGroupId: s.syncGroupId,
-          inputs: s.inputs,
+        groups: groups.map((g) => ({
+          id: g.id,
+          parentGroupId: g.parentGroupId,
+          label: g.label,
+          iterationCount: g.iterationCount,
         })),
+        // Definitions after executables: they're inert (never dispatched — see the
+        // `iteration_path IS NOT NULL OR group_id IS NULL` filter everywhere execution/History
+        // reads steps), so their exact step_order position doesn't matter, only that it's valid.
+        steps: [...executable, ...definitions].map(toStepPayload),
       }),
     });
     if (!createRes.ok) {
@@ -150,14 +121,14 @@ export function PipelineBuilder({ selectedTechs, onBackToTechSelect }: PipelineB
       setRunning(false);
       return;
     }
-    const { pipeline, steps: dbSteps } = await createRes.json();
+    const { pipeline } = await createRes.json();
     setPipelineRunId(pipeline.id);
-    // steps[i] <-> dbSteps[i]: both built from the same ordered `steps` array.
-    const dbStepIdByLocalId = new Map(steps.map((s, i) => [s.id, dbSteps[i]?.id as string | undefined]));
+    // The client generates each step's id up front and the API persists it verbatim as
+    // `pipeline_steps.id`, so a local step's id already is its db id — no lookup needed.
 
     // Mutated in place as each step completes, not React state — an executor needs the latest
     // entries synchronously (mid-loop), before React would have re-rendered with a state update.
-    const stepOutputsByNum: Record<number, Record<string, unknown>> = {};
+    const stepOutputsById: Record<string, Record<string, unknown>> = {};
 
     const executorContext: StepExecutorContext = {
       machineIdByName,
@@ -167,13 +138,13 @@ export function PipelineBuilder({ selectedTechs, onBackToTechSelect }: PipelineB
       setRunningRobot,
       setRunningCamera,
       setRunningClassification,
-      stepOutputsByNum,
+      stepOutputsById,
     };
 
     let allSucceeded = true;
 
-    for (const step of steps) {
-      const dbStepId = dbStepIdByLocalId.get(step.id);
+    for (const step of executable) {
+      const dbStepId = step.id;
       setCurrentStepId(step.id);
       setStepStatus((prev) => ({ ...prev, [step.id]: 'running' }));
       if (dbStepId) void reportStepStatus(dbStepId, 'running');
@@ -187,7 +158,7 @@ export function PipelineBuilder({ selectedTechs, onBackToTechSelect }: PipelineB
 
       try {
         const outputs = await executor(step, executorContext);
-        stepOutputsByNum[step.num] = outputs;
+        stepOutputsById[step.id] = outputs;
         setStepStatus((prev) => ({ ...prev, [step.id]: 'complete' }));
         if (dbStepId) void reportStepStatus(dbStepId, 'complete', outputs);
       } catch (err) {
@@ -218,55 +189,6 @@ export function PipelineBuilder({ selectedTechs, onBackToTechSelect }: PipelineB
     setRunning(false);
   }
 
-  function renderRow(step: Step, unitIdx: number, numberLabel: string | number, synced: boolean) {
-    const Icon = MACHINE_TYPE_ICONS[step.tech] ?? MACHINE_TYPE_ICONS.DEFAULT;
-    const action = (actionsByTech[step.tech] ?? []).find((a) => a.key === step.action);
-
-    return (
-      <PipelineStepRow
-        key={step.id}
-        icon={<Icon className="w-4 h-4" />}
-        number={numberLabel}
-        title={
-          <>
-            <span>{action?.label ?? step.action}</span> — {step.machine}
-          </>
-        }
-        meta={summarizeStepInputs(step, actionsByTech) || techLabel[step.tech]}
-        synced={synced}
-        highlighted={step.id === currentStepId}
-        leading={
-          <input
-            type="checkbox"
-            checked={checkedIds.has(step.id)}
-            onChange={() => toggleChecked(step.id)}
-            className="w-3.75 h-3.75 accent-teal shrink-0"
-          />
-        }
-        // Edit Actions: Reorder, Edit, Delete
-        trailing={
-          <>
-            {stepStatus[step.id] && (
-              <PipelineStatusBadge status={stepStatus[step.id]} className="mr-1" />
-            )}
-            <RowIconButton title="Move up" onClick={() => moveUnit(unitIdx, -1)}>
-              <UpIcon />
-            </RowIconButton>
-            <RowIconButton title="Move down" onClick={() => moveUnit(unitIdx, 1)}>
-              <DownIcon />
-            </RowIconButton>
-            <RowIconButton title="Edit" onClick={() => openDraft(step.id)}>
-              <EditIcon />
-            </RowIconButton>
-            <RowIconButton title="Delete" onClick={() => deleteStep(step.id)}>
-              <TrashIcon />
-            </RowIconButton>
-          </>
-        }
-      />
-    );
-  }
-
   return (
     <div>
       <div className="flex flex-wrap items-start justify-between gap-4 mb-5">
@@ -278,7 +200,7 @@ export function PipelineBuilder({ selectedTechs, onBackToTechSelect }: PipelineB
             className="text-[15px] font-semibold bg-transparent border-b-[1.5px] border-transparent focus:border-teal focus:outline-none text-text py-1 w-65"
           />
           <p className="text-[13.5px] text-muted mt-1.5">
-            Add steps one at a time. Select two or more to run them at the same instant.
+            Add steps one at a time. Select steps to sync them or repeat them in a loop.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -316,74 +238,68 @@ export function PipelineBuilder({ selectedTechs, onBackToTechSelect }: PipelineB
         )}
       >
         <div className="max-w-170">
-          <div className="flex items-center gap-2.5 mb-2.5 min-h-7.5 text-xs text-muted">
-            {checkedCount >= 2 ? (
-              <button
-                type="button"
-                onClick={syncSelected}
-                className="inline-flex items-center gap-1.5 px-3.75 py-2 rounded-lg text-xs font-semibold bg-teal-dim text-teal border border-teal"
-              >
-                ⚡ Sync Selected
-              </button>
-            ) : (
-              <span>Select two or more steps to run them at the same time</span>
+          <div className="flex items-center gap-2.5 mb-2.5 min-h-7.5 text-xs text-muted flex-wrap">
+            {checkedCount >= 2 && (
+              <>
+                <button
+                  type="button"
+                  onClick={syncSelected}
+                  disabled={!!syncError}
+                  title={syncError ?? undefined}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 px-3.75 py-2 rounded-lg text-xs font-semibold border',
+                    syncError
+                      ? 'bg-surface text-muted border-border cursor-not-allowed'
+                      : 'bg-teal-dim text-teal border-teal'
+                  )}
+                >
+                  ⚡ Sync Selected
+                </button>
+                {syncError && <span className="text-red">{syncError}</span>}
+              </>
             )}
-          </div>
-
-          <div>
-            {units.map((unit, uIdx) => (
-              <Fragment key={unit[0].id}>
-                {unit.length > 1 ? (
-                  <SyncedStepGroup
-                    stepNumber={unit[0].num}
-                    onUnsync={() => unsyncGroup(unit[0].syncGroupId as string)}
-                  >
-                    {unit.map((step, sIdx) =>
-                      renderRow(step, uIdx, sIdx === 0 ? step.num : '↳', true)
+            {checkedCount >= 1 &&
+              (addingRepeat ? (
+                <InlineCountPrompt
+                  label="Repeat Selected ×"
+                  onConfirm={(n) => {
+                    repeatSelected(n);
+                    setAddingRepeat(false);
+                  }}
+                  onCancel={() => setAddingRepeat(false)}
+                />
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setAddingRepeat(true)}
+                    disabled={!!repeatError}
+                    title={repeatError ?? undefined}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 px-3.75 py-2 rounded-lg text-xs font-semibold border',
+                      repeatError
+                        ? 'bg-surface text-muted border-border cursor-not-allowed'
+                        : 'bg-teal-dim text-teal border-teal'
                     )}
-                  </SyncedStepGroup>
-                ) : (
-                  renderRow(unit[0], uIdx, unit[0].num, false)
-                )}
-                {uIdx < units.length - 1 && <StepConnector />}
-              </Fragment>
-            ))}
-            {units.length === 0 && (
-              <div className="text-center py-6.5 px-2.5 text-muted text-[12.5px]">
-                No steps yet — click &ldquo;+ Add Step&rdquo; to begin.
-              </div>
+                  >
+                    🔁 Repeat Selected
+                  </button>
+                  {repeatError && <span className="text-red">{repeatError}</span>}
+                </>
+              ))}
+            {checkedCount === 0 && (
+              <span>Select steps to sync them, or repeat them in a loop</span>
             )}
           </div>
 
-          {draftMode && draftState && (
-            <StepDraftForm
-              draft={draftState}
-              mode={draftMode}
-              error={draftError}
-              availableTechs={availableTechs}
-              steps={steps}
-              onChangeTech={changeDraftTech}
-              onChangeAction={changeDraftAction}
-              onChangeMachine={changeDraftMachine}
-              onChangeInput={setDraftInput}
-              onChangeFile={setDraftFile}
-              onChangePrintSetting={setDraftPrintSetting}
-              onChangeMaterialProfile={setDraftMaterialProfile}
-              onCancel={closeDraft}
-              onCommit={commitDraft}
-            />
-          )}
-
-          <button
-            type="button"
-            onClick={() => openDraft()}
-            className={cn(
-              'mt-2 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold',
-              'text-teal border border-dashed border-border'
-            )}
-          >
-            + Add Step
-          </button>
+          <ContainerView
+            containerGroupId={null}
+            depth={0}
+            builder={builder}
+            stepStatus={stepStatus}
+            currentStepId={currentStepId}
+            availableTechs={availableTechs}
+          />
         </div>
 
         {runningPrinter && <StepMonitorCard running={runningPrinter} />}

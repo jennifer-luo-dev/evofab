@@ -126,10 +126,8 @@ export function PipelineHistoryDetail({ pipeline, onBack }: PipelineHistoryDetai
           {progressUnits.map((unit, uIdx) => (
             <Fragment key={`${unit[0].num}-${unit[0].tech}`}>
               {unit.length > 1 ? (
-                <SyncedStepGroup stepNumber={unit[0].num}>
-                  {unit.map((step, sIdx) =>
-                    renderProgressRow(step, sIdx === 0 ? step.num : '↳', true)
-                  )}
+                <SyncedStepGroup>
+                  {unit.map((step) => renderProgressRow(step, step.num, true))}
                 </SyncedStepGroup>
               ) : (
                 renderProgressRow(unit[0], unit[0].num, false)

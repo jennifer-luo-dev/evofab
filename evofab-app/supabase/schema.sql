@@ -115,6 +115,17 @@ CREATE TABLE public.pipelines (
   completed_at timestamp with time zone,
   CONSTRAINT pipelines_pkey PRIMARY KEY (id)
 );
+CREATE TABLE public.pipeline_step_groups (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  pipeline_id uuid NOT NULL,
+  parent_group_id uuid,
+  label text,
+  iteration_count integer NOT NULL CHECK (iteration_count >= 2),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT pipeline_step_groups_pkey PRIMARY KEY (id),
+  CONSTRAINT pipeline_step_groups_pipeline_id_fkey FOREIGN KEY (pipeline_id) REFERENCES public.pipelines(id),
+  CONSTRAINT pipeline_step_groups_parent_group_id_fkey FOREIGN KEY (parent_group_id) REFERENCES public.pipeline_step_groups(id)
+);
 CREATE TABLE public.pipeline_steps (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   pipeline_id uuid NOT NULL,
@@ -124,6 +135,13 @@ CREATE TABLE public.pipeline_steps (
   action_type_id uuid NOT NULL,
   depends_on_step_id uuid,
   sync_group_id text,
+  -- Loop membership: null on an ordinary always-real step. When group_id is set and
+  -- iteration_path is still null, this row is a loop body *definition* (one per distinct
+  -- action in the loop, regardless of iteration_count) — what the builder reads and edits.
+  -- iteration_path is populated only when the pipeline is queued and the group is unrolled
+  -- into real per-iteration rows (e.g. {3} or {2,7} for a nested loop).
+  group_id uuid,
+  iteration_path integer[],
   inputs jsonb NOT NULL DEFAULT '{}'::jsonb,
   outputs jsonb NOT NULL DEFAULT '{}'::jsonb,
   status text NOT NULL DEFAULT 'pending'::text CHECK (status = ANY (ARRAY['pending'::text, 'queued'::text, 'waiting_dependency'::text, 'running'::text, 'complete'::text, 'failed'::text, 'skipped'::text])),
@@ -132,11 +150,13 @@ CREATE TABLE public.pipeline_steps (
   started_at timestamp with time zone,
   completed_at timestamp with time zone,
   CONSTRAINT pipeline_steps_pkey PRIMARY KEY (id),
+  CONSTRAINT pipeline_steps_pipeline_step_order_unique UNIQUE (pipeline_id, step_order) DEFERRABLE INITIALLY DEFERRED,
   CONSTRAINT pipeline_steps_pipeline_id_fkey FOREIGN KEY (pipeline_id) REFERENCES public.pipelines(id),
   CONSTRAINT pipeline_steps_machine_type_id_fkey FOREIGN KEY (machine_type_id) REFERENCES public.machine_types(id),
   CONSTRAINT pipeline_steps_machine_id_fkey FOREIGN KEY (machine_id) REFERENCES public.machines(id),
   CONSTRAINT pipeline_steps_action_type_id_fkey FOREIGN KEY (action_type_id) REFERENCES public.action_types(id),
-  CONSTRAINT pipeline_steps_depends_on_step_id_fkey FOREIGN KEY (depends_on_step_id) REFERENCES public.pipeline_steps(id)
+  CONSTRAINT pipeline_steps_depends_on_step_id_fkey FOREIGN KEY (depends_on_step_id) REFERENCES public.pipeline_steps(id),
+  CONSTRAINT pipeline_steps_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.pipeline_step_groups(id)
 );
 CREATE TABLE public.pipeline_step_logs (
   id uuid NOT NULL DEFAULT gen_random_uuid(),

@@ -26,7 +26,8 @@ import cv2
 import numpy as np
 import uvicorn
 from fastapi import FastAPI, HTTPException, Response
-from pyorbbecsdk import Config, OBFormat, OBSensorType, Pipeline
+from fastapi.middleware.cors import CORSMiddleware
+from pyorbbecsdk import Config, OBFormat, OBPropertyID, OBSensorType, Pipeline
 from pyorbbecsdk import Context
 
 ORBBEC_SERIAL = "CP4R84P00081"
@@ -36,12 +37,46 @@ JPEG_QUALITY = 85
 
 app = FastAPI()
 
+# Matches main.py's CORS config: the browser only needs this for fetch()
+# calls (e.g. reading X-Distance-Mm off /capture) — plain <img src> loads
+# to this bridge work cross-origin without it, which is why the live feed
+# on camera-test worked before any of this was added. expose_headers is
+# required separately from allow_origins: without it, fetch() can see the
+# response succeeded but response.headers.get(...) returns null for any
+# non-standard header, silently dropping the frame timestamp/distance.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["X-Frame-Timestamp-Ms", "X-Distance-Mm"],
+)
+
 ctx = Context()
 device = ctx.query_devices().get_device_by_serial_number(ORBBEC_SERIAL)
 pipeline = Pipeline(device)
 config = Config()
 config.enable_video_stream(OBSensorType.COLOR_SENSOR)
+
+depth_profile = pipeline.get_stream_profile_list(OBSensorType.DEPTH_SENSOR).get_default_video_stream_profile()
+config.enable_stream(depth_profile)
+
+pipeline.enable_frame_sync()
 pipeline.start(config)  # starts once, stays open for the life of the process
+
+# Auto-exposure stays on, but its own default ceiling can be too low to
+# cope with a dim room (captured frames come back essentially black even
+# though the sensor is working) — raise the max exposure/gain auto-exposure
+# is allowed to use to whatever this device actually reports as its max,
+# rather than assuming a value. Best-effort: if either property isn't
+# supported on this device/SDK, leave auto-exposure at its own default.
+for _prop_id in (OBPropertyID.OB_PROP_COLOR_AE_MAX_EXPOSURE_INT, OBPropertyID.OB_PROP_COLOR_AE_MAX_GAIN_INT):
+    try:
+        _rng = device.get_int_property_range(_prop_id)
+        device.set_int_property(_prop_id, _rng.max)
+    except Exception:
+        pass
 
 
 def _frame_to_bgr(frame) -> np.ndarray:
@@ -67,6 +102,20 @@ def _frame_to_bgr(frame) -> np.ndarray:
     raise ValueError(f"Unsupported color format: {fmt}")
 
 
+def _median_nonzero_depth_mm(depth_frame) -> float | None:
+    """Reduces a DepthFrame to a single distance reading: the median of all
+    nonzero pixels (0 conventionally means "no return"), scaled to mm via
+    the frame's own reported depth_scale rather than an assumed value."""
+    width = depth_frame.get_width()
+    height = depth_frame.get_height()
+    scale = depth_frame.get_depth_scale()
+    raw = np.frombuffer(depth_frame.get_data(), dtype=np.uint16).reshape((height, width))
+    nonzero = raw[raw != 0]
+    if nonzero.size == 0:
+        return None
+    return float(np.median(nonzero)) * scale
+
+
 @app.get("/status")
 def status() -> dict:
     try:
@@ -82,6 +131,7 @@ def status() -> dict:
 def capture() -> Response:
     frames = pipeline.wait_for_frames(WAIT_FOR_FRAMES_TIMEOUT_MS)
     color_frame = frames.get_color_frame() if frames else None
+    depth_frame = frames.get_depth_frame() if frames else None
     if color_frame is None:
         raise HTTPException(status_code=503, detail="No frame available from Orbbec")
 
@@ -89,13 +139,18 @@ def capture() -> Response:
     ok, jpeg = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to encode capture")
+
+    distance_mm = _median_nonzero_depth_mm(depth_frame) if depth_frame is not None else None
     # TEMPORARY diagnostic header — hardware frame timestamp (ms), to check
     # whether repeated /capture calls are returning genuinely advancing
     # frames or a stale/frozen one. Remove once confirmed.
     return Response(
         content=jpeg.tobytes(),
         media_type="image/jpeg",
-        headers={"X-Frame-Timestamp-Ms": str(color_frame.get_timestamp())},
+        headers={
+            "X-Frame-Timestamp-Ms": str(color_frame.get_timestamp()),
+            "X-Distance-Mm": str(distance_mm) if distance_mm is not None else "",
+        },
     )
 
 

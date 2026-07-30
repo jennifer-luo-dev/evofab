@@ -9,10 +9,55 @@ import { useState } from 'react';
 import { usePipelineConfig } from './PipelineConfigContext';
 import { FileUploadZone } from '@/app/components/setup/FileUploadZone';
 import { PrintSettingsPanel } from '@/app/components/setup/PrintSettingsPanel';
-import { PositionPickerTrigger } from '@/app/components/position-picker/PositionPickerTrigger';
-import { PositionPickerModal } from '@/app/components/position-picker/PositionPickerModal';
-import type { ActionConfig, Step, StepDraft, StepInputConfig, TechKey, TechOption } from './types';
+import { MoveTargetTrigger } from '@/app/components/position-picker/MoveTargetTrigger';
+import { MoveTargetModal, type MoveTargetResult } from '@/app/components/position-picker/MoveTargetModal';
+import { JOINT_LABELS, type JointName } from '@/app/lib/robot';
+import { isAncestorOrSameContainer } from './pipelineUtils';
+import type { ActionConfig, LoopGroup, Step, StepDraft, StepInputConfig, TechKey, TechOption } from './types';
 import type { MaterialProfile, PrintSettings } from '@/app/types/job';
+
+/** `robot_arm`'s "move" action's own input keys — handled entirely by MoveTargetModal, so they're
+ * filtered out of the generic input-field list below (same treatment as `isPrinter`'s
+ * `print_profile_id`, which has its own dedicated panel too). */
+const ROBOT_MOVE_INPUT_KEYS = ['target_type', 'x', 'y', 'z', 'mode', 'joints', 'speed_pct', 'acceleration_pct'];
+
+/** Reconstructs MoveTargetModal's `initial` prop from a draft/step's flat `inputs` record —
+ * the inverse of the `onChangeInput(...)` calls in MoveTargetModal's `onConfirm` below. */
+function parseMoveTargetFromInputs(inputs: Record<string, string>): MoveTargetResult {
+  let joints: { joint: JointName; angle_deg: number }[] = [];
+  try {
+    const parsed = JSON.parse(inputs.joints || '[]');
+    if (Array.isArray(parsed)) joints = parsed;
+  } catch {
+    joints = [];
+  }
+  return {
+    targetType: inputs.target_type === 'joint' ? 'joint' : 'cartesian',
+    position: {
+      x: parseFloat(inputs.x) || 0,
+      y: parseFloat(inputs.y) || 0,
+      z: parseFloat(inputs.z) || 0,
+    },
+    jointMode: inputs.mode === 'relative' ? 'relative' : 'absolute',
+    joints,
+    speedPct: parseFloat(inputs.speed_pct) || 25,
+    accelerationPct: parseFloat(inputs.acceleration_pct) || 25,
+  };
+}
+
+/** One-line human-readable summary of the current move target, shown next to the trigger button. */
+function summarizeMoveTarget(inputs: Record<string, string>): string {
+  const target = parseMoveTargetFromInputs(inputs);
+  if (target.targetType === 'cartesian') {
+    return `Cartesian → (${target.position.x.toFixed(3)}, ${target.position.y.toFixed(3)}, ${target.position.z.toFixed(3)}) m`;
+  }
+  if (target.joints.length === 0) return 'Joint — no joints selected yet';
+  const deltaPrefix = target.jointMode === 'relative' ? 'Δ' : '';
+  const joints = target.joints
+    .map((j) => `${JOINT_LABELS[j.joint]}: ${deltaPrefix}${j.angle_deg}°`)
+    .join(', ');
+  return `Joint (${target.jointMode}) → ${joints}`;
+}
 
 interface StepDraftFormProps {
   draft: StepDraft;
@@ -21,6 +66,10 @@ interface StepDraftFormProps {
   availableTechs: TechOption[];
   /** Existing steps, used to populate "reference another step's output" inputs. */
   steps: Step[];
+  /** All loop definitions, used to restrict "reference another step's output" candidates to the same container or an ancestor loop. */
+  groups: LoopGroup[];
+  /** The container this draft belongs to (`null` = top-level) — the step_output picker only offers steps here or in an ancestor. */
+  currentContainerId: string | null;
   onChangeTech: (tech: TechOption['key']) => void;
   onChangeAction: (action: string) => void;
   onChangeMachine: (machine: string) => void;
@@ -41,6 +90,8 @@ function DraftInputField({
   steps,
   excludeStepId,
   actionsByTech,
+  groups,
+  currentContainerId,
   onChange,
   onFileChange,
 }: {
@@ -49,8 +100,10 @@ function DraftInputField({
   file: File | null;
   buildVolume?: string | null;
   steps: Step[];
-  excludeStepId?: number;
+  excludeStepId?: string;
   actionsByTech: Partial<Record<TechKey, ActionConfig[]>>;
+  groups: LoopGroup[];
+  currentContainerId: string | null;
   onChange: (value: string) => void;
   onFileChange: (file: File | null) => void;
 }) {
@@ -73,9 +126,17 @@ function DraftInputField({
   if (input.type === 'step_output') {
     const candidates = steps.filter((s) => {
       if (s.id === excludeStepId) return false;
-      if (!input.expects) return true;
-      const action = (actionsByTech[s.tech] ?? []).find((a) => a.key === s.action);
-      return (action?.outputs ?? []).some((o) => o.type === input.expects);
+      if (!input.expects) {
+        // no-op, falls through to the ancestor-or-same-container check below
+      } else {
+        const action = (actionsByTech[s.tech] ?? []).find((a) => a.key === s.action);
+        if (!(action?.outputs ?? []).some((o) => o.type === input.expects)) return false;
+      }
+      // Only a step in this same container or an ancestor loop has exactly one coherent
+      // clone once iterations are unrolled (see unrollForExecution's truncate-to-common-
+      // ancestor remap) — a step in an unrelated branch (a sibling loop, or nested under a
+      // different ancestor) has no single right target, so it's not offered at all.
+      return isAncestorOrSameContainer(s.groupId, currentContainerId, groups);
     });
     return (
       <div className="flex-1 min-w-37.5">
@@ -91,7 +152,7 @@ function DraftInputField({
           {candidates.map((s) => {
             const action = (actionsByTech[s.tech] ?? []).find((a) => a.key === s.action);
             return (
-              <option key={s.id} value={s.num}>
+              <option key={s.id} value={s.id}>
                 Step {s.num} — {action?.label ?? s.action}
               </option>
             );
@@ -150,6 +211,8 @@ export function StepDraftForm({
   error,
   availableTechs,
   steps,
+  groups,
+  currentContainerId,
   onChangeTech,
   onChangeAction,
   onChangeMachine,
@@ -175,7 +238,9 @@ export function StepDraftForm({
   // proper picker; the generic select control has no resolved options for it (its
   // `source` isn't a static option list), so it would only render disabled.
   const visibleInputs = (action?.inputs ?? []).filter(
-    (input) => !(isPrinter && input.key === 'print_profile_id')
+    (input) =>
+      !(isPrinter && input.key === 'print_profile_id') &&
+      !(isRobotMove && ROBOT_MOVE_INPUT_KEYS.includes(input.key))
   );
 
   return (
@@ -258,27 +323,36 @@ export function StepDraftForm({
               steps={steps}
               excludeStepId={draft.id}
               actionsByTech={actionsByTech}
+              groups={groups}
+              currentContainerId={currentContainerId}
               onChange={(value) => onChangeInput(input.key, value)}
               onFileChange={(file) => onChangeFile(input.key, file)}
             />
           ))}
-          {isRobotMove && <PositionPickerTrigger onClick={() => setPickerOpen(true)} />}
+        </div>
+      )}
+
+      {isRobotMove && (
+        <div className="flex items-center gap-2.5 mb-2.5">
+          <MoveTargetTrigger onClick={() => setPickerOpen(true)} />
+          <p className="text-xs text-muted">{summarizeMoveTarget(draft.inputs)}</p>
         </div>
       )}
 
       {isRobotMove && pickerOpen && (
-        <PositionPickerModal
-          initial={{
-            x: parseFloat(draft.inputs.x) || 0,
-            y: parseFloat(draft.inputs.y) || 0,
-            z: parseFloat(draft.inputs.z) || 0,
-          }}
+        <MoveTargetModal
+          initial={parseMoveTargetFromInputs(draft.inputs)}
           machineId={machineIdByName[draft.machine]}
           onCancel={() => setPickerOpen(false)}
-          onConfirm={(pos) => {
-            onChangeInput('x', String(pos.x));
-            onChangeInput('y', String(pos.y));
-            onChangeInput('z', String(pos.z));
+          onConfirm={(result) => {
+            onChangeInput('target_type', result.targetType);
+            onChangeInput('x', String(result.position.x));
+            onChangeInput('y', String(result.position.y));
+            onChangeInput('z', String(result.position.z));
+            onChangeInput('mode', result.jointMode);
+            onChangeInput('joints', JSON.stringify(result.joints));
+            onChangeInput('speed_pct', String(result.speedPct));
+            onChangeInput('acceleration_pct', String(result.accelerationPct));
             setPickerOpen(false);
           }}
         />

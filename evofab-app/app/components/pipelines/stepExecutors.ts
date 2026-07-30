@@ -24,6 +24,7 @@ import type {
 import type { PrinterWithStatus } from '@/app/types/printer'
 import { DEFAULT_SETTINGS } from '@/app/contexts/PrinterContext'
 import { getWebcamStreamUrl, getGcodeMetadata } from '@/app/lib/moonraker'
+import type { JointName, MoveTargetBody } from '@/app/lib/robot'
 
 /** Thrown by an executor whose hardware integration doesn't exist yet — see the //TODO executors below. `runPipeline` treats this as `status: 'skipped'` rather than `'failed'`, matching today's behavior for any tech with no executor at all. */
 export class StepNotImplementedError extends Error {}
@@ -45,12 +46,12 @@ export interface StepExecutorContext {
   /** Classification-model-only: reflects the in-progress classification into the "Now Running" side panel (StepMonitorCard). */
   setRunningClassification: Dispatch<SetStateAction<RunningClassificationState | null>>
   /**
-   * Outputs already produced earlier in this same run, keyed by `Step.num` — lets a step whose
+   * Outputs already produced earlier in this same run, keyed by `Step.id` — lets a step whose
    * input is `type: 'step_output'` (e.g. classification_model's `photo_source`) resolve the
    * referenced step's outputs. Mutated in place by `runPipeline` as each step completes, so later
    * executors in the same run always see the latest entries.
    */
-  stepOutputsByNum: Record<number, StepOutputs>
+  stepOutputsById: Record<string, StepOutputs>
 }
 
 export type StepExecutor = (step: Step, ctx: StepExecutorContext) => Promise<StepOutputs>
@@ -209,16 +210,20 @@ async function runPrinterStep(step: Step, ctx: StepExecutorContext): Promise<Ste
 }
 
 // ---------------------------------------------------------------------------
-// robot_arm — Move is implemented; Gripper Cycle is still a stub (see below).
-// Resolves `step.machine` -> `machines.ip/port` via /api/robot-move (mirrors
-// /api/actuate -> app/lib/arduino.ts), which forwards to the FastAPI bridge's
-// POST /robot/move. Unlike the Arduino bridge, that endpoint blocks
-// server-side until the move settles (or a safety/timeout check fails, in
-// which case it 422s) — see app/api/python/main.py's _execute_move — so
-// there's no client-side wait-for-completion step here, unlike printer steps.
-// Requires an `action_types` row for robot_arm's `move` action key with
-// `input_schema` inputs `x`/`y`/`z` (type: 'number', metres, robot base
-// frame) to appear in the step-builder form — see app/robot-test/page.tsx's
+// robot_arm — Move is implemented (both Cartesian and joint-space targets,
+// discriminated by `step.inputs.target_type` — see MoveTargetModal); Gripper
+// Cycle is still a stub (see below). Resolves `step.machine` ->
+// `machines.ip/port` via /api/robot-move (mirrors /api/actuate ->
+// app/lib/arduino.ts), which forwards to the FastAPI bridge's POST
+// /robot/move. That endpoint blocks server-side until the move settles, and
+// always responds 200 with a MoveResult body (status: success/failed/
+// protective_stop/limit_violation) rather than using HTTP error codes for a
+// runtime outcome — see app/api/python/main.py's _execute_cartesian_move /
+// _execute_joint_move — so there's no client-side wait-for-completion step
+// here, unlike printer steps, and any non-'success' status is thrown as an
+// Error below to fail the pipeline step, matching every other executor's
+// convention. Requires an `action_types` row for robot_arm's `move` action
+// key (see supabase/action_types_rows.sql) — see app/robot-test/page.tsx's
 // `sendMove` for the original manual proof-of-concept this mirrors.
 // ---------------------------------------------------------------------------
 
@@ -226,37 +231,76 @@ async function moveRobotArm(step: Step, ctx: StepExecutorContext): Promise<StepO
   const machineId = ctx.machineIdByName[step.machine]
   if (!machineId) throw new Error(`Robot arm "${step.machine}" not found`)
 
-  const x = parseFloat(step.inputs.x)
-  const y = parseFloat(step.inputs.y)
-  const z = parseFloat(step.inputs.z)
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
-    throw new Error('Target x, y, and z coordinates are required for this step')
+  const speed_pct = parseFloat(step.inputs.speed_pct) || 25
+  const acceleration_pct = parseFloat(step.inputs.acceleration_pct) || 25
+
+  let body: MoveTargetBody
+  if (step.inputs.target_type === 'joint') {
+    let joints: { joint: JointName; angle_deg: number }[] = []
+    try {
+      const parsed = JSON.parse(step.inputs.joints || '[]')
+      if (Array.isArray(parsed)) joints = parsed
+    } catch {
+      joints = []
+    }
+    if (joints.length === 0) throw new Error('Select at least one joint to rotate')
+    body = {
+      target_type: 'joint',
+      mode: step.inputs.mode === 'relative' ? 'relative' : 'absolute',
+      joints,
+      speed_pct,
+      acceleration_pct,
+    }
+  } else {
+    const x = parseFloat(step.inputs.x)
+    const y = parseFloat(step.inputs.y)
+    const z = parseFloat(step.inputs.z)
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+      throw new Error('Target x, y, and z coordinates are required for this step')
+    }
+    body = { target_type: 'cartesian', position: { x, y, z }, speed_pct, acceleration_pct }
   }
 
   ctx.setRunningPrinter(null)
   ctx.setRunningCamera(null)
   ctx.setRunningClassification(null)
-  ctx.setRunningRobot({ kind: 'robot', machineName: step.machine, target: { x, y, z }, startedAt: Date.now() })
+  ctx.setRunningRobot({ kind: 'robot', machineName: step.machine, target: body, startedAt: Date.now(), result: null })
 
   const res = await fetch('/api/robot-move', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ machineId, x, y, z }),
+    body: JSON.stringify({ machineId, ...body }),
   })
-  const resBody = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(resBody.error ?? `Robot move failed (${res.status})`)
+  const result = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(result.error ?? `Robot move failed (${res.status})`)
 
-  return { x, y, z, summary: resBody.message ?? `Moved to (${x}, ${y}, ${z})` }
+  ctx.setRunningRobot((prev) => (prev ? { ...prev, result } : prev))
+
+  if (result.status !== 'success') throw new Error(result.error ?? `Move ${result.status}`)
+
+  return {
+    status: result.status,
+    final_joint_positions_deg: result.final_joint_positions_deg,
+    final_tcp_pose: result.final_tcp_pose,
+    duration_ms: result.duration_ms,
+    summary:
+      body.target_type === 'cartesian'
+        ? `Moved to (${body.position.x}, ${body.position.y}, ${body.position.z})`
+        : `Rotated ${body.joints.map((j) => j.joint).join(', ')}`,
+  }
 }
 
 /**
- * TODO: Robot Arm — Gripper Cycle. See app/robot-test/page.tsx
- * `GripperControl.handleRunGripper` for the proof-of-concept: POST
- * { position, speed, force } to `${bridge}/robot/gripper`, which runs
- * `gripper_basic.urp` (activate, open, close).
+ * TEMPORARY: Robot Arm — Gripper Cycle isn't wired to hardware yet, so this
+ * just waits 2 minutes to stand in for the real cycle time. See
+ * app/robot-test/page.tsx `GripperControl.handleRunGripper` for the
+ * proof-of-concept this will eventually call: POST { position, speed, force }
+ * to `${bridge}/robot/gripper`, which runs `gripper_basic.urp` (activate,
+ * open, close).
  */
 async function cycleGripper(_step: Step, _ctx: StepExecutorContext): Promise<StepOutputs> {
-  throw new StepNotImplementedError('Robot Arm Gripper Cycle is not implemented yet')
+  await new Promise((resolve) => setTimeout(resolve, 2 * 60 * 1000))
+  return { summary: 'Gripper cycle complete (simulated — hardware integration pending)' }
 }
 
 /** Dispatches to the robot_arm action's specific executor once seeded action keys exist. */
@@ -273,7 +317,7 @@ async function runRobotArmStep(step: Step, ctx: StepExecutorContext): Promise<St
 // than a bare string, so a future multi-frame/multi-camera capture can return
 // more than one photo without a schema change. A later classification_model
 // step's `photo_source` input (`expects: 'image_array'`) resolves this via
-// `stepOutputsByNum`. Deliberately not run through the curvature-vision
+// `stepOutputsById`. Deliberately not run through the curvature-vision
 // pipeline here — that's classifyPhoto's job, on its own step.
 //
 // Note per the context doc: a camera capture synced to an actuation pulse is
@@ -325,7 +369,7 @@ async function runCameraStep(step: Step, ctx: StepExecutorContext): Promise<Step
 
 /**
  * Classification Model — Classify. Resolves `photo_source` (a `step_output`
- * input holding the referenced step's `Step.num`, per DraftInputField) to
+ * input holding the referenced step's real `Step.id`, per DraftInputField) to
  * that step's `outputs.image_keys` — an `image_array` output, per the
  * action_types schema, so a camera step could return more than one photo in
  * future; today it's always a one-element array, so `[0]` is the whole photo
@@ -335,10 +379,8 @@ async function classifyPhoto(step: Step, ctx: StepExecutorContext): Promise<Step
   const machineId = ctx.machineIdByName[step.machine]
   if (!machineId) throw new Error(`Classification model "${step.machine}" not found`)
 
-  const sourceStepNum = parseInt(step.inputs.photo_source, 10)
-  const sourceOutputs = Number.isFinite(sourceStepNum)
-    ? ctx.stepOutputsByNum[sourceStepNum]
-    : undefined
+  const sourceStepId = step.inputs.photo_source
+  const sourceOutputs = sourceStepId ? ctx.stepOutputsById[sourceStepId] : undefined
   const imageKeys = sourceOutputs?.image_keys
   const imageUrl = Array.isArray(imageKeys) ? imageKeys[0] : undefined
   if (typeof imageUrl !== 'string' || !imageUrl) {

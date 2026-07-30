@@ -61,16 +61,27 @@ export default function RobotTestPage() {
       const res = await fetch("http://localhost:8001/robot/move", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ x: coords.x, y: coords.y, z: coords.z }),
+        body: JSON.stringify({
+          target_type: "cartesian",
+          position: coords,
+          speed_pct: 25,
+          acceleration_pct: 25,
+        }),
       });
       const data = await res.json();
-      if (res.ok) {
+      // A non-2xx here means the request itself was malformed (data.detail); a runtime
+      // outcome that isn't a clean success still comes back 200 with data.status/data.error
+      // — see app/api/python/main.py's POST /robot/move.
+      if (res.ok && data.status === "success") {
         setStatus("success");
-        setMessage(data.message ?? "Move command sent.");
+        setMessage(
+          data.error ??
+            `Moved to (${coords.x.toFixed(3)}, ${coords.y.toFixed(3)}, ${coords.z.toFixed(3)}) m.`
+        );
         return true;
       } else {
         setStatus("error");
-        setMessage(data.detail ?? "Server returned an error.");
+        setMessage(data.error ?? data.detail ?? "Server returned an error.");
         return false;
       }
     } catch (err) {

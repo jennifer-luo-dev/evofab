@@ -13,7 +13,7 @@ import { JOG_STEP_OPTIONS } from './constants'
 interface JogControlsProps {
   position: Position
   bounds: AxisBounds
-  /** Called with the jogged position — the caller decides whether this also fires a live robot move (see PositionPickerModal, which treats every jog as discrete, exactly like app/robot-test/page.tsx's handleJog). */
+  /** Called with the jogged position — the caller decides whether this also fires a live robot move (see MoveTargetModal, which treats every jog as discrete, exactly like app/robot-test/page.tsx's handleJog). */
   onChange: (next: Position) => void
   disabled?: boolean
 }

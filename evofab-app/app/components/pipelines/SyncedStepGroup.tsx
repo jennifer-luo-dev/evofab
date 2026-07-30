@@ -7,31 +7,37 @@ import type { ReactNode } from 'react'
 import { LinkIcon } from '@/app/components/ui/icons'
 
 interface SyncedStepGroupProps {
-  stepNumber: number
   onUnsync?: () => void
   children: ReactNode
 }
 
-/** Labeled bracket around the step rows belonging to one sync group. */
-export function SyncedStepGroup({ stepNumber, onUnsync, children }: SyncedStepGroupProps) {
+/**
+ * Labeled bracket around the step rows belonging to one sync group. No longer takes a single
+ * `stepNumber` — synced steps each keep their own distinct display number (see
+ * `deriveStepFields`), so this only needs to convey "these run together," not which numbers.
+ */
+export function SyncedStepGroup({ onUnsync, children }: SyncedStepGroupProps) {
   return (
     <div>
       <div className="flex items-center gap-1.25 mt-1.5 mb-1 ml-0.5 text-[11px] font-semibold text-teal">
         <LinkIcon className="w-3 h-3" />
-        <span>
-          Step {stepNumber} · synced — run together
-          {onUnsync && (
-            <button
-              type="button"
-              onClick={onUnsync}
-              className="ml-1.5 text-muted underline font-semibold"
-            >
-              Unsync
-            </button>
-          )}
+        <span className="inline-flex items-center px-2 py-px rounded-full bg-teal-dim border border-teal">
+          Synced
         </span>
+        <span>run together</span>
+        {onUnsync && (
+          <button
+            type="button"
+            onClick={onUnsync}
+            className="ml-1.5 text-muted underline font-semibold"
+          >
+            Unsync
+          </button>
+        )}
       </div>
-      <div className="flex flex-col gap-0.75">{children}</div>
+      <div className="flex flex-col gap-0.75 border-l-2 border-dashed border-teal pl-2 ml-1.5">
+        {children}
+      </div>
     </div>
   )
 }

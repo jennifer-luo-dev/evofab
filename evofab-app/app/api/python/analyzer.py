@@ -12,6 +12,8 @@ from typing import Optional, Tuple
 import cv2
 import numpy as np
 
+from geometry import skeleton_longest_path
+
 # detect_base's dark-blob heuristics for the rigid clamp. Tuned to the
 # clamp's expected size/shape at typical working distance — recalibrate
 # BASE_AREA_PX_MIN/MAX (and, if the clamp's real proportions differ,
@@ -327,11 +329,24 @@ class ActuatorAnalyzer:
 
     def extract_spine(self, mask: np.ndarray) -> np.ndarray:
         """
-        Uses thinning (skeletonization) to find the neutral bending axis.
+        Uses thinning (skeletonization) to find the neutral bending axis,
+        then prunes the result down to the single longest connected path
+        (base end to free end) via geometry.skeleton_longest_path.
+        Thinning a corrugated PneuNet mask produces small spurs/branches
+        at each bellows fold, not a clean single-pixel centerline; left
+        in, they drag compute_spine_curvature's circle fit away from the
+        actual visible curve (confirmed visually — the fitted arc didn't
+        hug the wavy raw-skeleton trace in the annotated debug overlay).
         Requires opencv-contrib-python. Falls back to an empty mask if unavailable.
         """
         try:
-            return cv2.ximgproc.thinning(mask)
+            raw_skeleton = cv2.ximgproc.thinning(mask)
         except AttributeError:
             # opencv-contrib not installed — return zeros so callers get NO_TARGET
             return np.zeros_like(mask)
+
+        path = skeleton_longest_path(raw_skeleton)
+        pruned = np.zeros_like(raw_skeleton)
+        if len(path) > 0:
+            pruned[path[:, 1], path[:, 0]] = 255
+        return pruned

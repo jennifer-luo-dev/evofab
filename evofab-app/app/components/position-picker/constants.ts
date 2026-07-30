@@ -7,7 +7,9 @@
 // allows. Swap these for per-machine reach limits once that's plumbed
 // through machineRobotArm config.
 
+import type { JointName } from '@/app/lib/robot'
 import type { AxisBounds, Position } from './positionMath'
+import type { Bounds } from './jointMath'
 
 export const ROBOT_BOUNDS: AxisBounds = {
   x: { min: -0.5, max: 0.2 },
@@ -27,3 +29,29 @@ export const JOG_STEP_OPTIONS = [
 
 /** XY-pad drag snap grid, metres (5 mm). */
 export const XY_PAD_GRID_SIZE = 0.005
+
+/** Frontend copy of the UR7e's software joint limits, degrees — cosmetic
+ * only, same disclaimer as ROBOT_BOUNDS above: the FastAPI bridge's own
+ * per-joint check (app/api/python/main.py _JOINT_LIMITS_DEG) is the actual
+ * source of truth and will reject an out-of-range rotation regardless of
+ * what this dial allows. */
+export const JOINT_LIMITS_DEG: Record<JointName, Bounds> = {
+  base: { min: -360, max: 360 },
+  shoulder: { min: -360, max: 360 },
+  elbow: { min: -160, max: 160 },
+  wrist_1: { min: -360, max: 360 },
+  wrist_2: { min: -360, max: 360 },
+  wrist_3: { min: -360, max: 360 },
+}
+
+/** Dial/typed-field range for relative-mode deltas — generous and flat
+ * across joints since the bridge re-validates the resulting absolute angle
+ * against JOINT_LIMITS_DEG regardless of what the delta dial allows. */
+export const RELATIVE_DELTA_BOUNDS: Bounds = { min: -180, max: 180 }
+
+/** Per-joint jog step sizes, degrees. */
+export const JOINT_JOG_STEP_OPTIONS = [
+  { label: '1°', value: 1 },
+  { label: '5°', value: 5 },
+  { label: '15°', value: 15 },
+] as const

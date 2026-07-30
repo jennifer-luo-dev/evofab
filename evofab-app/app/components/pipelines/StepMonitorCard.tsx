@@ -14,6 +14,7 @@ import { PrinterMetricsCard } from '@/app/components/monitor/PrinterMetricsCard'
 import { MetricBox } from '@/app/components/ui/MetricBox'
 import { RobotStatusRow } from '@/app/components/ui/RobotStatusRow'
 import { useRobot } from '@/app/contexts/RobotContext'
+import { JOINT_LABELS, type MoveResult, type MoveTargetBody } from '@/app/lib/robot'
 import type { PrinterWithStatus } from '@/app/types/printer'
 
 export interface RunningPrinterState {
@@ -35,9 +36,11 @@ export interface RunningPrinterState {
 export interface RunningRobotState {
   kind: 'robot'
   machineName: string
-  /** Move target, metres, robot base frame — as sent to POST /api/robot-move. */
-  target: { x: number; y: number; z: number }
+  /** Cartesian or joint-space target — the same discriminated body sent to POST /api/robot-move. */
+  target: MoveTargetBody
   startedAt: number
+  /** `null` while the move request is in flight — filled in once the bridge responds (mirrors ClassificationMonitor's same null-until-resolved pattern). */
+  result: MoveResult | null
 }
 
 export interface RunningCameraState {
@@ -124,10 +127,10 @@ export function StepMonitorCard({ running }: StepMonitorCardProps) {
   )
 }
 
-/** Live "now executing" card for a robot_arm Move step: target vs. actual TCP pose, straight from RobotContext. */
+/** Live "now executing" card for a robot_arm Move step (Cartesian or joint-space): target, live TCP/joint telemetry from RobotContext, and the bridge's final result once resolved. */
 function RobotMonitor({ running }: { running: RunningRobotState }) {
   const robot = useRobot()
-  const { machineName, target } = running
+  const { machineName, target, result } = running
 
   return (
     <div className="flex flex-col gap-4 lg:sticky lg:top-6">
@@ -135,7 +138,9 @@ function RobotMonitor({ running }: { running: RunningRobotState }) {
         <h2 className="text-xs font-semibold uppercase tracking-widest text-muted mb-1">
           Now Running
         </h2>
-        <p className="text-[13.5px] text-text font-mono truncate">{machineName} — Move</p>
+        <p className="text-[13.5px] text-text font-mono truncate">
+          {machineName} — {target.target_type === 'cartesian' ? 'Move' : `Rotate (${target.mode})`}
+        </p>
       </div>
 
       <div className="rounded-lg border border-border bg-surface p-4 space-y-1 text-sm font-mono">
@@ -149,22 +154,42 @@ function RobotMonitor({ running }: { running: RunningRobotState }) {
         <h3 className="text-[10px] uppercase tracking-widest text-muted font-medium mb-1.5">
           Target
         </h3>
-        <div className="grid grid-cols-3 gap-2">
-          <MetricBox label="X" value={target.x.toFixed(3)} unit="m" />
-          <MetricBox label="Y" value={target.y.toFixed(3)} unit="m" />
-          <MetricBox label="Z" value={target.z.toFixed(3)} unit="m" />
-        </div>
+        {target.target_type === 'cartesian' ? (
+          <div className="grid grid-cols-3 gap-2">
+            <MetricBox label="X" value={target.position.x.toFixed(3)} unit="m" />
+            <MetricBox label="Y" value={target.position.y.toFixed(3)} unit="m" />
+            <MetricBox label="Z" value={target.position.z.toFixed(3)} unit="m" />
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-2">
+            {target.joints.map((j) => (
+              <MetricBox key={j.joint} label={JOINT_LABELS[j.joint]} value={j.angle_deg.toFixed(1)} unit="°" />
+            ))}
+          </div>
+        )}
       </div>
 
       {robot.tcp_pose && (
         <div>
           <h3 className="text-[10px] uppercase tracking-widest text-muted font-medium mb-1.5">
-            Actual TCP
+            Live TCP
           </h3>
           <div className="grid grid-cols-3 gap-2">
             <MetricBox label="X" value={robot.tcp_pose[0].toFixed(3)} unit="m" />
             <MetricBox label="Y" value={robot.tcp_pose[1].toFixed(3)} unit="m" />
             <MetricBox label="Z" value={robot.tcp_pose[2].toFixed(3)} unit="m" />
+          </div>
+        </div>
+      )}
+
+      {result && (
+        <div>
+          <h3 className="text-[10px] uppercase tracking-widest text-muted font-medium mb-1.5">
+            Result
+          </h3>
+          <div className="rounded-lg border border-border bg-surface p-3 flex items-center justify-between text-sm font-mono">
+            <span className="text-muted">Status</span>
+            <span className={result.status === 'success' ? 'text-teal' : 'text-amber-400'}>{result.status}</span>
           </div>
         </div>
       )}

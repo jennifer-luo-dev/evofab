@@ -1,6 +1,6 @@
 // historyUtils.ts
 // Pure helpers for grouping a pipeline run's progress steps, mirroring
-// pipelineUtils.ts's computeUnits but over ProgressStep's `group` field
+// pipelineUtils.ts's computeContainerUnits but over ProgressStep's `group` field
 // rather than a Step's `syncGroupId`.
 
 import type { ProgressStep } from './types'

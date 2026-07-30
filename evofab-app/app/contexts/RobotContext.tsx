@@ -30,6 +30,9 @@ export interface RobotState {
   speed_fraction: number;
   // Actual TCP pose from RTDE: [x, y, z, rx, ry, rz] metres / radians
   tcp_pose?: [number, number, number, number, number, number];
+  // Actual joint angles from RTDE, degrees, in JOINT_NAMES order (see app/lib/robot.ts):
+  // [base, shoulder, elbow, wrist_1, wrist_2, wrist_3]
+  joint_positions_deg?: [number, number, number, number, number, number];
 }
 
 const DISCONNECTED: RobotState = {

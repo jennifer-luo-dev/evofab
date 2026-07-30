@@ -57,6 +57,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       'id, step_order, status, sync_group_id, outputs, completed_at, machine_id, machines(name), machine_types(type_key), action_types(display_name)'
     )
     .eq('pipeline_id', id)
+    // Excludes inert loop-body definition rows (group_id set, iteration_path still null) —
+    // they never dispatch, so they'd otherwise show up here stuck at `pending` forever.
+    // Matches the same filter the (client-driven, for now) execution loop already applies.
+    .or('iteration_path.not.is.null,group_id.is.null')
     .order('step_order')
 
   if (stepsError) return NextResponse.json({ error: stepsError.message }, { status: 500 })
