@@ -19,9 +19,14 @@ interface MachineClassificationModelDetail {
   z_max_m: number | null
 }
 
-/** POST /api/classify — Body: `{ machineId, imageUrl }`. `imageUrl` is `outputs.image_keys[0]` from the source camera step. */
+/** POST /api/classify — Body: `{ machineId, imageUrl, depth_b64?, depth_width?, depth_height?, depth_scale? }`.
+ * `imageUrl` is `outputs.image_keys[0]` from the source camera step; the
+ * depth_* fields, if present, are that same step's `outputs.depth_*`
+ * (base64 raw uint16 depth array + dimensions/scale, see runCameraStep) —
+ * forwarded to the classification bridge so masking can depth-gate
+ * contours instead of falling back to brightness-only. */
 export async function POST(req: NextRequest) {
-  const { machineId, imageUrl } = await req.json()
+  const { machineId, imageUrl, depth_b64, depth_width, depth_height, depth_scale } = await req.json()
 
   if (!machineId || !imageUrl) {
     return NextResponse.json({ error: 'machineId and imageUrl are required' }, { status: 400 })
@@ -56,11 +61,25 @@ export async function POST(req: NextRequest) {
 
   const port = machine.port ?? DEFAULT_BRIDGE_PORT
 
+  const depth =
+    typeof depth_b64 === 'string' &&
+    typeof depth_width === 'number' &&
+    typeof depth_height === 'number' &&
+    typeof depth_scale === 'number'
+      ? {
+          data: new Blob([Buffer.from(depth_b64, 'base64')]),
+          width: depth_width,
+          height: depth_height,
+          scale: depth_scale,
+        }
+      : null
+
   try {
     const result = await classifyImage(machine.ip, port, imageBlob, {
       z_min: detail?.z_min_m,
       z_max: detail?.z_max_m,
       threshold: detail?.threshold,
+      depth,
     })
     return NextResponse.json(result, { status: 200 })
   } catch (err) {

@@ -14,7 +14,7 @@ const POLL_INTERVAL_MS = 5000
 
 /** Fetches live Moonraker status for a printer, falling back to an offline status on error. */
 async function fetchLiveStatus(printer: PrinterWithStatus): Promise<PrinterWithStatus> {
-  const url = `http://${printer.ip}:${printer.port}/printer/objects/query?print_stats&extruder&heater_bed&virtual_sdcard`
+  const url = `http://${printer.ip}:${printer.port}/printer/objects/query?print_stats&extruder&heater_bed&virtual_sdcard&display_status`
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(3000) })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)

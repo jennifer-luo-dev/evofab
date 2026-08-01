@@ -17,11 +17,19 @@ import {
   type RunningRobotState,
 } from './StepMonitorCard';
 import { usePipelineConfig } from './PipelineConfigContext';
-import { unrollForExecution } from './pipelineUtils';
+import { freshenRunIds, groupExecutableBySync, unrollForExecution } from './pipelineUtils';
 import { usePipelineBuilder } from './usePipelineBuilder';
 import { STEP_EXECUTORS, StepNotImplementedError, type StepExecutorContext } from './stepExecutors';
 import type { PipelineRunStatus } from '@/app/components/history/types';
 import type { TechKey, UnrolledStep } from './types';
+
+/** Maps a step's tech to the "Now Running" panel state it drives, so a batch can clear only the panels *not* about to be (re)used this batch rather than all four — see runPipeline's batch loop. */
+const RUNNING_KIND_BY_TECH: Partial<Record<TechKey, 'printer' | 'robot' | 'camera' | 'classification'>> = {
+  printer: 'printer',
+  robot_arm: 'robot',
+  camera: 'camera',
+  classification_model: 'classification',
+};
 
 interface PipelineBuilderProps {
   selectedTechs: Set<TechKey>;
@@ -39,17 +47,30 @@ export function PipelineBuilder({ selectedTechs, onBackToTechSelect }: PipelineB
   const [runningCamera, setRunningCamera] = useState<RunningCameraState | null>(null);
   const [runningClassification, setRunningClassification] =
     useState<RunningClassificationState | null>(null);
-  const [currentStepId, setCurrentStepId] = useState<string | null>(null);
+  const [currentStepIds, setCurrentStepIds] = useState<Set<string>>(new Set());
   const [pipelineRunId, setPipelineRunId] = useState<string | null>(null);
   const [addingRepeat, setAddingRepeat] = useState(false);
   const availableTechs = techs.filter((t) => selectedTechs.has(t.key));
   const builder = usePipelineBuilder(availableTechs.map((t) => t.key));
-  const { steps, groups, rootOrder, checkedIds, syncSelected, syncError, repeatSelected, repeatError } = builder;
+  const {
+    steps,
+    groups,
+    rootOrder,
+    checkedIds,
+    syncSelected,
+    syncError,
+    repeatSelected,
+    repeatError,
+  } = builder;
 
   const checkedCount = checkedIds.size;
 
   /** Reports a pipeline step's status (and optional outputs) to the persisted run so it survives a reload. Best-effort — logs but doesn't throw, since a logging failure shouldn't abort the actual print. */
-  async function reportStepStatus(dbStepId: string, status: PipelineRunStatus, outputs?: Record<string, unknown>) {
+  async function reportStepStatus(
+    dbStepId: string,
+    status: PipelineRunStatus,
+    outputs?: Record<string, unknown>
+  ) {
     try {
       await fetch(`/api/pipeline-steps/${dbStepId}`, {
         method: 'PATCH',
@@ -75,6 +96,17 @@ export function PipelineBuilder({ selectedTechs, onBackToTechSelect }: PipelineB
    */
   async function runPipeline() {
     const { executable, definitions } = unrollForExecution(rootOrder, groups, steps, actionsByTech);
+    // Persisted separately from `executable`/`definitions`, which keep the builder's own step
+    // ids (see unrollForExecution's doc comment) so live status highlighting below still lines
+    // up with `steps` state — this freshened copy is only what actually hits the database, so
+    // running the same unmodified pipeline twice in a row doesn't collide with the prior run's
+    // still-there rows.
+    const {
+      executable: payloadExecutable,
+      definitions: payloadDefinitions,
+      groups: payloadGroups,
+      dbIdByRunId,
+    } = freshenRunIds(executable, definitions, groups, actionsByTech);
 
     setRunning(true);
     setStepStatus({});
@@ -82,7 +114,7 @@ export function PipelineBuilder({ selectedTechs, onBackToTechSelect }: PipelineB
     setRunningRobot(null);
     setRunningCamera(null);
     setRunningClassification(null);
-    setCurrentStepId(null);
+    setCurrentStepIds(new Set());
     setPipelineRunId(null);
 
     function toStepPayload(s: UnrolledStep) {
@@ -104,16 +136,11 @@ export function PipelineBuilder({ selectedTechs, onBackToTechSelect }: PipelineB
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: name || 'Untitled Pipeline',
-        groups: groups.map((g) => ({
-          id: g.id,
-          parentGroupId: g.parentGroupId,
-          label: g.label,
-          iterationCount: g.iterationCount,
-        })),
+        groups: payloadGroups,
         // Definitions after executables: they're inert (never dispatched — see the
         // `iteration_path IS NOT NULL OR group_id IS NULL` filter everywhere execution/History
         // reads steps), so their exact step_order position doesn't matter, only that it's valid.
-        steps: [...executable, ...definitions].map(toStepPayload),
+        steps: [...payloadExecutable, ...payloadDefinitions].map(toStepPayload),
       }),
     });
     if (!createRes.ok) {
@@ -123,8 +150,6 @@ export function PipelineBuilder({ selectedTechs, onBackToTechSelect }: PipelineB
     }
     const { pipeline } = await createRes.json();
     setPipelineRunId(pipeline.id);
-    // The client generates each step's id up front and the API persists it verbatim as
-    // `pipeline_steps.id`, so a local step's id already is its db id — no lookup needed.
 
     // Mutated in place as each step completes, not React state — an executor needs the latest
     // entries synchronously (mid-loop), before React would have re-rendered with a state update.
@@ -141,19 +166,22 @@ export function PipelineBuilder({ selectedTechs, onBackToTechSelect }: PipelineB
       stepOutputsById,
     };
 
-    let allSucceeded = true;
-
-    for (const step of executable) {
-      const dbStepId = step.id;
-      setCurrentStepId(step.id);
-      setStepStatus((prev) => ({ ...prev, [step.id]: 'running' }));
-      if (dbStepId) void reportStepStatus(dbStepId, 'running');
+    // Runs one step's executor and reports its outcome; never throws — a synced batch dispatches
+    // several of these via Promise.all, and one member's rejection must not cut the others off
+    // mid-flight (they've already told real hardware to move/print/capture). Returns whether the
+    // step succeeded (a StepNotImplementedError, like a genuine completion, counts as success —
+    // matches the previous sequential loop's `continue`-past-skips behavior).
+    async function runOneStep(step: UnrolledStep): Promise<boolean> {
+      // `step.id` is the builder's own id (kept stable for live status highlighting); the
+      // persisted row for this run has a freshened id — see `freshenRunIds` — so status PATCHes
+      // must go through this lookup rather than `step.id` itself.
+      const dbStepId = dbIdByRunId.get(step.id) ?? null;
 
       const executor = STEP_EXECUTORS[step.tech];
       if (!executor) {
         setStepStatus((prev) => ({ ...prev, [step.id]: 'skipped' }));
         if (dbStepId) void reportStepStatus(dbStepId, 'skipped');
-        continue;
+        return true;
       }
 
       try {
@@ -161,15 +189,53 @@ export function PipelineBuilder({ selectedTechs, onBackToTechSelect }: PipelineB
         stepOutputsById[step.id] = outputs;
         setStepStatus((prev) => ({ ...prev, [step.id]: 'complete' }));
         if (dbStepId) void reportStepStatus(dbStepId, 'complete', outputs);
+        return true;
       } catch (err) {
         if (err instanceof StepNotImplementedError) {
           setStepStatus((prev) => ({ ...prev, [step.id]: 'skipped' }));
           if (dbStepId) void reportStepStatus(dbStepId, 'skipped');
-          continue;
+          return true;
         }
         console.error('Pipeline step failed', err);
         setStepStatus((prev) => ({ ...prev, [step.id]: 'failed' }));
         if (dbStepId) void reportStepStatus(dbStepId, 'failed');
+        return false;
+      }
+    }
+
+    let allSucceeded = true;
+
+    // Consecutive rows sharing a `syncGroupId` (see groupExecutableBySync) are dispatched
+    // together via Promise.all so they start at the same instant, rather than one after another;
+    // everything else runs as a singleton batch, preserving today's strictly-sequential behavior.
+    // Stops before the next batch on any failure within a batch — a batch's other member(s) are
+    // always awaited to completion first (Promise.all itself guarantees that), never aborted
+    // mid-flight.
+    for (const batch of groupExecutableBySync(executable)) {
+      // Only clear "Now Running" panels for techs *not* about to run this batch — a tech that IS
+      // in this batch sets its own panel state itself (see stepExecutors.ts), and clearing it
+      // here first would risk a race with that same-tick update.
+      const batchKinds = new Set(
+        batch.map((s) => RUNNING_KIND_BY_TECH[s.tech]).filter((k): k is NonNullable<typeof k> => !!k)
+      );
+      if (!batchKinds.has('printer')) setRunningPrinter(null);
+      if (!batchKinds.has('robot')) setRunningRobot(null);
+      if (!batchKinds.has('camera')) setRunningCamera(null);
+      if (!batchKinds.has('classification')) setRunningClassification(null);
+
+      setCurrentStepIds(new Set(batch.map((s) => s.id)));
+      setStepStatus((prev) => {
+        const next = { ...prev };
+        for (const step of batch) next[step.id] = 'running';
+        return next;
+      });
+      for (const step of batch) {
+        const dbStepId = dbIdByRunId.get(step.id) ?? null;
+        if (dbStepId) void reportStepStatus(dbStepId, 'running');
+      }
+
+      const results = await Promise.all(batch.map(runOneStep));
+      if (results.some((ok) => !ok)) {
         allSucceeded = false;
         break;
       }
@@ -181,7 +247,7 @@ export function PipelineBuilder({ selectedTechs, onBackToTechSelect }: PipelineB
       body: JSON.stringify({ status: allSucceeded ? 'complete' : 'failed' }),
     }).catch((err) => console.error('Failed to finalize pipeline status', err));
 
-    setCurrentStepId(null);
+    setCurrentStepIds(new Set());
     setRunningPrinter(null);
     setRunningRobot(null);
     setRunningCamera(null);
@@ -253,7 +319,7 @@ export function PipelineBuilder({ selectedTechs, onBackToTechSelect }: PipelineB
                       : 'bg-teal-dim text-teal border-teal'
                   )}
                 >
-                  ⚡ Sync Selected
+                  Sync
                 </button>
                 {syncError && <span className="text-red">{syncError}</span>}
               </>
@@ -282,14 +348,12 @@ export function PipelineBuilder({ selectedTechs, onBackToTechSelect }: PipelineB
                         : 'bg-teal-dim text-teal border-teal'
                     )}
                   >
-                    🔁 Repeat Selected
+                    Repeat
                   </button>
                   {repeatError && <span className="text-red">{repeatError}</span>}
                 </>
               ))}
-            {checkedCount === 0 && (
-              <span>Select steps to sync them, or repeat them in a loop</span>
-            )}
+            {checkedCount === 0 && <span>Select steps to sync them, or repeat them in a loop</span>}
           </div>
 
           <ContainerView
@@ -297,7 +361,7 @@ export function PipelineBuilder({ selectedTechs, onBackToTechSelect }: PipelineB
             depth={0}
             builder={builder}
             stepStatus={stepStatus}
-            currentStepId={currentStepId}
+            currentStepIds={currentStepIds}
             availableTechs={availableTechs}
           />
         </div>

@@ -32,13 +32,19 @@ export function parseMoonrakerStatus(
   const ext = result.extruder ?? {}
   const bed = result.heater_bed ?? {}
   const vsd = result.virtual_sdcard ?? {}
+  const disp = result.display_status ?? {}
+  // display_status.progress is Klipper's M73/time-based estimate (what the slicer embeds and
+  // what a printer's own screen shows); virtual_sdcard.progress is raw file-byte position, which
+  // reads differently since gcode density varies a lot across a print. Prefer display_status so
+  // the app matches the printer's own display, falling back to virtual_sdcard if it's absent.
+  const progressRatio = typeof disp.progress === 'number' ? disp.progress : vsd.progress
   return {
     printer_id: printerId,
     online: true,
     status: MOONRAKER_STATE_MAP[ps.state] ?? 'idle',
     print_state: ps.state ?? null,
     filename: ps.filename || null,
-    progress: typeof vsd.progress === 'number' ? vsd.progress * 100 : 0,
+    progress: typeof progressRatio === 'number' ? progressRatio * 100 : 0,
     layer_current: ps.info?.current_layer ?? null,
     layer_total: ps.info?.total_layer ?? null,
     hotend_temp: ext.temperature ?? null,

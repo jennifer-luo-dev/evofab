@@ -11,13 +11,26 @@ interface CameraFeedCardProps {
   live?: boolean
   showCrosshair?: boolean
   streamUrl?: string | null
+  /**
+   * The actual source feeding this card — e.g. a printer's own onboard webcam (Moonraker's
+   * `/server/webcams/list` stream) vs. the Orbbec 335L structured-light camera used for
+   * photo/classification steps. Every current caller streams from a printer, not the Orbbec, so
+   * this must be passed explicitly rather than assumed — defaults to a generic, non-committal
+   * label when the caller doesn't know the specific source.
+   */
+  label?: string
 }
 
 /**
- * Camera feed card showing the Orbbec 335L MJPEG stream.
+ * Camera feed card showing a live MJPEG stream from whichever camera `label` identifies.
  * Falls back to a standby state if the stream URL is absent or the image fails to load.
  */
-export function CameraFeedCard({ live = false, showCrosshair = false, streamUrl }: CameraFeedCardProps) {
+export function CameraFeedCard({
+  live = false,
+  showCrosshair = false,
+  streamUrl,
+  label = 'Webcam',
+}: CameraFeedCardProps) {
   const [streamError, setStreamError] = useState(false)
   const showStream = !!streamUrl && !streamError
   return (
@@ -26,7 +39,7 @@ export function CameraFeedCard({ live = false, showCrosshair = false, streamUrl 
         <h3 className="text-xs font-semibold uppercase tracking-widest text-[var(--color-muted)]">
           Camera
         </h3>
-        <span className="font-mono text-xs text-[var(--color-teal)]">Orbbec 335L</span>
+        <span className="font-mono text-xs text-[var(--color-teal)]">{label}</span>
       </div>
 
       <div className="relative w-full bg-black rounded-lg overflow-hidden" style={{ aspectRatio: '16/9' }}>

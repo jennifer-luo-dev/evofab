@@ -254,11 +254,62 @@ export function findSyncGroupViolation(steps: { syncGroupId: string | null }[]):
 }
 
 /**
+ * Groups a run's flat, ordered `executable` rows into dispatch batches: consecutive rows
+ * sharing a non-null `syncGroupId` become one batch, to be started at the same instant; every
+ * other row is its own singleton batch. Safe to do by simple adjacency (no container/iteration
+ * bookkeeping needed here, unlike `computeContainerUnits`) because `unrollForExecution` already
+ * guarantees a synced pair's clones land next to each other in this array and that each loop
+ * iteration gets its own fresh `syncGroupId` — so two adjacent rows sharing one never span two
+ * iterations or two unrelated groups.
+ */
+export function groupExecutableBySync(executable: UnrolledStep[]): UnrolledStep[][] {
+  const batches: UnrolledStep[][] = []
+  let i = 0
+  while (i < executable.length) {
+    const gid = executable[i].syncGroupId
+    if (!gid) {
+      batches.push([executable[i]])
+      i++
+      continue
+    }
+    const batch = [executable[i]]
+    let j = i + 1
+    while (j < executable.length && executable[j].syncGroupId === gid) {
+      batch.push(executable[j])
+      j++
+    }
+    batches.push(batch)
+    i = j
+  }
+  return batches
+}
+
+/** A step's `step_output`-type input keys, resolved via its action's `input_schema`. */
+export function stepOutputKeys(
+  step: Pick<Step, 'tech' | 'action'>,
+  actionsByTech: Partial<Record<TechKey, ActionConfig[]>>
+): string[] {
+  const action = (actionsByTech[step.tech] ?? []).find((a) => a.key === step.action)
+  return (action?.inputs ?? []).filter((i) => i.type === 'step_output').map((i) => i.key)
+}
+
+/**
  * Unrolls the builder's tree into what actually gets persisted and executed at Run Pipeline
  * time: `definitions` (exactly one inert row per loop-body step, `iterationPath: null`, never
  * dispatched — mirrors the loop's single definition) and `executable` (every always-real
  * top-level step once, plus `iterationCount` real clones per loop-body step, each tagged with
  * an `iterationPath` — `[i]` at depth 1, `[i,j]` at depth 2, etc., outermost index first).
+ *
+ * Ids here are still the builder's own (an always-real step's row keeps `def.id` verbatim, only
+ * a loop clone gets a fresh one) — deliberately, so live status highlighting during a run
+ * (`PipelineBuilder`'s `stepStatus`/`currentStepId`, keyed by these same ids and matched against
+ * `steps` state in `ContainerView`) keeps working. What actually gets persisted to
+ * `pipeline_steps`/`pipeline_step_groups` is a further-freshened copy of this output — see
+ * `freshenRunIds` — since a builder-level step/loop id is otherwise only generated once, at
+ * creation, and stays the same across as many "Run Pipeline" clicks as the user makes without
+ * touching the builder; replaying it into a second run's insert is a duplicate primary-key error,
+ * and since the parent `pipelines` row is already committed by the time that insert fails, that
+ * error used to leave the run stuck at `status: 'running'` in History forever.
  *
  * Two things get remapped per clone so nothing inside a cloned block can resolve to a
  * different iteration's clone (or to an inert definition that never runs):
@@ -298,11 +349,6 @@ export function unrollForExecution(
       current = groupsById.get(current)?.parentGroupId ?? null
     }
     return depth
-  }
-
-  function stepOutputKeys(step: Step): string[] {
-    const action = (actionsByTech[step.tech] ?? []).find((a) => a.key === step.action)
-    return (action?.inputs ?? []).filter((i) => i.type === 'step_output').map((i) => i.key)
   }
 
   // --- Definitions: exactly one row per loop-body step, un-multiplied, order preserved. ---
@@ -369,7 +415,7 @@ export function unrollForExecution(
   // --- Remap step_output references: each clone's reference must resolve to the correct clone. ---
   for (const { row, originalId } of executableEntries) {
     const originalStep = stepsById.get(originalId)!
-    for (const key of stepOutputKeys(originalStep)) {
+    for (const key of stepOutputKeys(originalStep, actionsByTech)) {
       const refId = row.inputs[key]
       if (!refId) continue
       const refStep = stepsById.get(refId)
@@ -393,6 +439,55 @@ export function unrollForExecution(
   }
 
   return { executable: executableEntries.map((e) => e.row), definitions }
+}
+
+/**
+ * Builds the actual persistence payload from `unrollForExecution`'s output: every step id
+ * (executable and definition rows alike) and every loop id gets a brand new uuid, with
+ * `groupId`/`parentGroupId`/`dependsOnStepId` and any `step_output`-type `inputs` entries
+ * remapped to match. Kept separate from `unrollForExecution` itself (whose ids stay the
+ * builder's own) because those builder-space ids are also what live status highlighting
+ * during the run keys off of — see `unrollForExecution`'s doc comment — so this remap must
+ * happen only in the copy that gets persisted, not the one driving the run's local UI state.
+ * Returns `dbIdByRunId`, keyed by the pre-remap (builder-space) step id, so the caller can look
+ * up the persisted id for `PATCH /api/pipeline-steps/[id]` calls keyed by that same builder id.
+ */
+export function freshenRunIds(
+  executable: UnrolledStep[],
+  definitions: UnrolledStep[],
+  groups: { id: string; parentGroupId: string | null; label: string; iterationCount: number }[],
+  actionsByTech: Partial<Record<TechKey, ActionConfig[]>>
+): { executable: UnrolledStep[]; definitions: UnrolledStep[]; groups: UnrolledGroup[]; dbIdByRunId: Map<string, string> } {
+  const stepIdMap = new Map<string, string>()
+  for (const s of [...executable, ...definitions]) stepIdMap.set(s.id, crypto.randomUUID())
+  const groupIdMap = new Map(groups.map((g) => [g.id, crypto.randomUUID()]))
+
+  function remapStep(s: UnrolledStep): UnrolledStep {
+    const inputs = { ...s.inputs }
+    for (const key of stepOutputKeys(s, actionsByTech)) {
+      const ref = inputs[key]
+      if (ref && stepIdMap.has(ref)) inputs[key] = stepIdMap.get(ref)!
+    }
+    return {
+      ...s,
+      id: stepIdMap.get(s.id)!,
+      groupId: s.groupId ? (groupIdMap.get(s.groupId) ?? s.groupId) : null,
+      dependsOnStepId: s.dependsOnStepId ? (stepIdMap.get(s.dependsOnStepId) ?? s.dependsOnStepId) : null,
+      inputs,
+    }
+  }
+
+  return {
+    executable: executable.map(remapStep),
+    definitions: definitions.map(remapStep),
+    groups: groups.map((g) => ({
+      id: groupIdMap.get(g.id)!,
+      parentGroupId: g.parentGroupId ? (groupIdMap.get(g.parentGroupId) ?? g.parentGroupId) : null,
+      label: g.label,
+      iterationCount: g.iterationCount,
+    })),
+    dbIdByRunId: stepIdMap,
+  }
 }
 
 /**

@@ -96,6 +96,14 @@ async function runArduinoBoardStep(step: Step, ctx: StepExecutorContext): Promis
 /** Safety cap so a stuck/unreachable printer can't hang Run Pipeline forever (~30 min at 2s/poll). */
 const POLL_INTERVAL_MS = 2000
 const MAX_POLLS = 900
+/**
+ * Consecutive bad polls (offline/error/unreachable) required before treating the printer as
+ * genuinely down. `/api/printers` only gives Moonraker a 3s timeout per poll, so a single wifi
+ * blip or momentarily-slow Moonraker response is expected noise, not a failure — without this
+ * tolerance one bad poll out of hundreds during a long print kills the whole run even though the
+ * printer never actually stopped (it keeps printing regardless of whether our poller can reach it).
+ */
+const OFFLINE_TOLERANCE_POLLS = 4
 /** Moonraker's metadata scan can briefly lag behind the upload finishing — a few short retries covers it. */
 const METADATA_RETRY_MS = 1000
 const METADATA_MAX_RETRIES = 5
@@ -105,7 +113,9 @@ const METADATA_MAX_RETRIES = 5
  * `runningPrinter`'s live status/progress and the extrapolated-time fallback along the way.
  * Requires having observed the printer actually enter `printing`/`paused` at least once before
  * an `idle` reading counts as completion — otherwise a stale "still idle" poll right after
- * start would look like it's done.
+ * start would look like it's done. Similarly requires several *consecutive* offline/error
+ * readings (see OFFLINE_TOLERANCE_POLLS) before declaring the print failed, so a single
+ * transient poll failure doesn't kill an otherwise-healthy print.
  */
 async function waitForPrintCompletion(
   machineId: string,
@@ -113,18 +123,33 @@ async function waitForPrintCompletion(
   setRunningPrinter: StepExecutorContext['setRunningPrinter']
 ) {
   let sawPrinting = false
+  let consecutiveBadPolls = 0
   for (let i = 0; i < MAX_POLLS; i++) {
     await sleep(POLL_INTERVAL_MS)
 
     const res = await fetch('/api/printers')
-    if (!res.ok) continue
+    if (!res.ok) {
+      consecutiveBadPolls++
+      if (consecutiveBadPolls >= OFFLINE_TOLERANCE_POLLS) throw new Error('Lost contact with the printer list')
+      continue
+    }
     const { printers: live = [] }: { printers: PrinterWithStatus[] } = await res.json()
     const printer = live.find((p) => p.id === machineId)
     const st = printer?.printer_status
-    if (!printer || !st) continue
+    if (!printer || !st) {
+      consecutiveBadPolls++
+      if (consecutiveBadPolls >= OFFLINE_TOLERANCE_POLLS) throw new Error('Printer disappeared mid-print')
+      continue
+    }
 
-    if (!st.online) throw new Error('Printer went offline mid-print')
-    if (st.status === 'error') throw new Error('Printer reported an error')
+    if (!st.online || st.status === 'error') {
+      consecutiveBadPolls++
+      if (consecutiveBadPolls >= OFFLINE_TOLERANCE_POLLS) {
+        throw new Error(st.online ? 'Printer reported an error' : 'Printer went offline mid-print')
+      }
+      continue
+    }
+    consecutiveBadPolls = 0
 
     const elapsedSeconds = (Date.now() - startedAt) / 1000
     const extrapolatedSeconds = st.progress > 0 ? elapsedSeconds / (st.progress / 100) : null
@@ -176,9 +201,6 @@ async function runPrinterStep(step: Step, ctx: StepExecutorContext): Promise<Ste
 
   const streamUrl = await getWebcamStreamUrl(printer.ip, printer.port).catch(() => null)
   const startedAt = Date.now()
-  ctx.setRunningRobot(null)
-  ctx.setRunningCamera(null)
-  ctx.setRunningClassification(null)
   ctx.setRunningPrinter({
     kind: 'printer',
     printer,
@@ -261,9 +283,6 @@ async function moveRobotArm(step: Step, ctx: StepExecutorContext): Promise<StepO
     body = { target_type: 'cartesian', position: { x, y, z }, speed_pct, acceleration_pct }
   }
 
-  ctx.setRunningPrinter(null)
-  ctx.setRunningCamera(null)
-  ctx.setRunningClassification(null)
   ctx.setRunningRobot({ kind: 'robot', machineName: step.machine, target: body, startedAt: Date.now(), result: null })
 
   const res = await fetch('/api/robot-move', {
@@ -336,9 +355,6 @@ async function runCameraStep(step: Step, ctx: StepExecutorContext): Promise<Step
 
   const delay = parseFloat(step.inputs.delay)
 
-  ctx.setRunningPrinter(null)
-  ctx.setRunningRobot(null)
-  ctx.setRunningClassification(null)
   ctx.setRunningCamera({ kind: 'camera', machineName: step.machine, startedAt: Date.now(), imageUrl: null })
 
   if (Number.isFinite(delay) && delay > 0) await sleep(delay * 1000)
@@ -353,7 +369,18 @@ async function runCameraStep(step: Step, ctx: StepExecutorContext): Promise<Step
 
   ctx.setRunningCamera((prev) => (prev ? { ...prev, imageUrl: body.image_url } : prev))
 
-  return { image_keys: [body.image_url], summary: 'Photo captured' }
+  return {
+    image_keys: [body.image_url],
+    // Carried alongside the photo so a later classification_model step
+    // (classifyPhoto) can forward real per-pixel depth to /classify instead
+    // of falling back to brightness-only masking — see camera-capture's
+    // route.ts header comment.
+    depth_b64: body.depth_b64,
+    depth_width: body.depth_width,
+    depth_height: body.depth_height,
+    depth_scale: body.depth_scale,
+    summary: 'Photo captured',
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -387,9 +414,21 @@ async function classifyPhoto(step: Step, ctx: StepExecutorContext): Promise<Step
     throw new Error('No source photo — select a camera step for Photo Source')
   }
 
-  ctx.setRunningPrinter(null)
-  ctx.setRunningRobot(null)
-  ctx.setRunningCamera(null)
+  // Depth captured alongside the source photo, if the camera step got it
+  // (see runCameraStep) — passed through to /api/classify so masking can
+  // depth-gate contours instead of falling back to brightness-only
+  // (picking the largest bright blob, which this rig's reflective
+  // enclosure walls can fool — see main.py's _annotate_curvature).
+  const depthB64 = sourceOutputs?.depth_b64
+  const depthWidth = sourceOutputs?.depth_width
+  const depthHeight = sourceOutputs?.depth_height
+  const depthScale = sourceOutputs?.depth_scale
+  const hasDepth =
+    typeof depthB64 === 'string' &&
+    typeof depthWidth === 'number' &&
+    typeof depthHeight === 'number' &&
+    typeof depthScale === 'number'
+
   ctx.setRunningClassification({
     kind: 'classification',
     machineName: step.machine,
@@ -401,7 +440,18 @@ async function classifyPhoto(step: Step, ctx: StepExecutorContext): Promise<Step
   const res = await fetch('/api/classify', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ machineId, imageUrl }),
+    body: JSON.stringify(
+      hasDepth
+        ? {
+            machineId,
+            imageUrl,
+            depth_b64: depthB64,
+            depth_width: depthWidth,
+            depth_height: depthHeight,
+            depth_scale: depthScale,
+          }
+        : { machineId, imageUrl }
+    ),
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(body.error ?? `Classification request failed (${res.status})`)

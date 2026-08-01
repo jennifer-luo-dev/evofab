@@ -55,7 +55,18 @@ export function HistoryResultsTable({ results, exportName }: HistoryResultsTable
             <tr key={i} className="border-b border-border last:border-b-0">
               <td className="py-2.25 px-1.5">{r.type}</td>
               <td className="py-2.25 px-1.5 font-mono text-muted">{r.ts}</td>
-              <td className="py-2.25 px-1.5">{r.result}</td>
+              <td className="py-2.25 px-1.5">
+                {r.imageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={r.imageUrl}
+                    alt={r.result}
+                    className="h-32 w-52 object-cover rounded border border-border"
+                  />
+                ) : (
+                  r.result
+                )}
+              </td>
             </tr>
           ))}
         </tbody>

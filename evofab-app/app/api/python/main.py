@@ -18,6 +18,7 @@
 # Run: uvicorn main:app
 
 import asyncio
+import base64
 import json
 import os
 import platform
@@ -670,24 +671,17 @@ _serial_conn = None  # serial.Serial | None
 # this is a live/latency-check view, not a stored result.
 CAPTURE_TIMEOUT_S = 2.0
 
-# STATUS:BUSY fires the instant the valve opens, not when the actuator has
-# finished responding — air takes time to flow through the tubing and
-# visibly inflate/bend the actuator. Capturing immediately on STATUS:BUSY
-# caught it still at rest; this delay lets the physical actuation catch up
-# before the frame is grabbed. Empirically tuned — revisit if actuator
-# response time changes (different tubing length, pressure, actuator).
-CAPTURE_DELAY_S = 0.5
-
 _capture_lock: threading.Lock = threading.Lock()
 _capture_request: Optional[dict] = None  # {"channel": int, "armed_at": float (monotonic)}
 _last_capture_meta: Optional[dict] = None  # {"channel", "synced", "latency_ms", "timestamp", curvature fields}
 _last_capture_jpeg: Optional[bytes] = None  # the annotated image (mask/skeleton/fit drawn on), not raw
 
 # Vision pipeline (analyzer.py mask -> skeleton, geometry.py circle fit).
-# RGB-only input (no depth stream requested from the Orbbec — see
-# camera_orbbec_service.py's Config), so ActuatorAnalyzer always takes its
-# brightness-threshold branch — z_min/z_max are unused in that mode, kept at
-# analyzer.py's own defaults.
+# generate_mask auto-detects brightness vs. depth-gated mode from its input
+# range — _annotate_curvature passes real depth (from camera_orbbec_service
+# .py's /capture/depth_and_color) when the caller has it, and falls back to
+# the color frame (brightness threshold) otherwise. z_min/z_max only take
+# effect in depth mode.
 _analyzer = ActuatorAnalyzer()
 
 # Pixels-per-metre scaling for geometry.py's circle fit, carried over from
@@ -699,26 +693,105 @@ _analyzer = ActuatorAnalyzer()
 PPM = 2800.0
 
 
-def _annotate_curvature(frame_bgr: np.ndarray, analyzer: ActuatorAnalyzer = None):
+def _fetch_depth_and_color(timeout: float = ORBBEC_CAPTURE_TIMEOUT_S):
+    """Fetches a synced color+depth capture from the Orbbec bridge's
+    GET /capture/depth_and_color and decodes both. Returns
+    (frame_bgr, depth_raw, depth_scale) — depth_scale follows that
+    endpoint's convention (raw_value * depth_scale = mm). Raises
+    httpx.HTTPError on request failure, same as a plain
+    httpx.get(...).raise_for_status() would; raises KeyError/ValueError on
+    a malformed response body."""
+    resp = httpx.get(f"{ORBBEC_SERVICE_URL}/capture/depth_and_color", timeout=timeout)
+    resp.raise_for_status()
+    data = resp.json()
+
+    frame = cv2.imdecode(np.frombuffer(base64.b64decode(data["color_jpeg_b64"]), np.uint8), cv2.IMREAD_COLOR)
+    depth_raw = np.frombuffer(base64.b64decode(data["depth_b64"]), dtype=np.uint16).reshape(
+        (data["depth_height"], data["depth_width"])
+    )
+    return frame, depth_raw, float(data["depth_scale"])
+
+
+def _annotate_curvature(frame_bgr: np.ndarray, analyzer: ActuatorAnalyzer = None,
+                         depth_raw: Optional[np.ndarray] = None, depth_scale: Optional[float] = None):
     """Runs mask -> skeleton -> circle-fit on one frame and draws the result
     (mask tint, skeleton, fitted arc + center) on a copy of it, so the fit
     can be visually checked against the image it came from. Returns
     (annotated_bgr, CurvatureResult). `analyzer` defaults to the module-level
     actuation-capture instance; POST /classify passes its own, built from a
-    machine's machine_classification_model tuning columns."""
+    machine's machine_classification_model tuning columns.
+
+    depth_raw/depth_scale, if both given, are used to depth-validate each
+    brightness-mask contour by its region's median depth (z_min/z_max,
+    metres) rather than picking the largest bright contour outright — see
+    camera_orbbec_service.py's GET /capture/depth_and_color. Depth alone
+    can't isolate the actuator on this rig: confirmed on a real capture
+    that the actuator and its own (dark) clamp sit at nearly the same
+    distance from the camera, so a depth window includes both — it's only
+    useful for rejecting near-camera clutter (e.g. a light fixture at the
+    top of the rig) that also happens to be bright enough to fool
+    brightness thresholding alone (the reflection-blob failure mode from
+    earlier — a specular highlight can still outsize the actuator's own
+    contour). This validates whole contours rather than AND-ing the depth
+    mask into the brightness mask pixel-by-pixel: confirmed empirically
+    that the pixel-level AND produces a jagged combined boundary (depth and
+    brightness are independently noisy, and the resized depth mask has its
+    own blocky resolution seams) that fragments the skeleton into far more
+    spurious branches than the brightness mask has on its own, degenerating
+    the circle fit. depth_scale follows that endpoint's convention
+    (raw_value * depth_scale = mm, not already metres). depth_raw is
+    resized to frame_bgr's resolution with nearest-neighbor if they differ,
+    since this device has no D2C (depth-to-color) alignment configured —
+    that's a real approximation, not a calibrated per-pixel correspondence:
+    if the two sensors' fields of view differ noticeably, the resized depth
+    won't line up exactly with what's visible in frame_bgr at the same
+    pixel. Without depth_raw/depth_scale, the largest bright contour is
+    picked outright, same as before depth support existed."""
     if analyzer is None:
         analyzer = _analyzer
+
     raw_mask = analyzer.generate_mask(frame_bgr)
 
-    # Restrict to the largest connected blob before skeletonizing. The
-    # brightness threshold in analyzer.generate_mask also picks up scattered
-    # bright patches from the reflective test-rig background, not just the
+    depth_mm = None
+    if depth_raw is not None and depth_scale is not None:
+        fh, fw = frame_bgr.shape[:2]
+        if depth_raw.shape != (fh, fw):
+            depth_raw = cv2.resize(depth_raw, (fw, fh), interpolation=cv2.INTER_NEAREST)
+        depth_mm = depth_raw.astype(np.float64) * depth_scale
+
+    # Restrict to one connected blob before skeletonizing. The brightness
+    # threshold in analyzer.generate_mask also picks up scattered bright
+    # patches from the reflective test-rig background, not just the
     # actuator — skeletonizing the whole raw mask fit a circle to that
     # background speckle instead of the actuator (confirmed by dumping the
-    # raw mask directly). Assumes the actuator is the largest bright blob in
-    # frame; revisit if the background ever out-sizes it.
+    # raw mask directly).
     contours, _ = cv2.findContours(raw_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    largest = max(contours, key=cv2.contourArea) if contours else None
+
+    largest = None
+    if depth_mm is not None:
+        z_min_mm = analyzer.z_min * 1000.0
+        z_max_mm = analyzer.z_max * 1000.0
+        best_area = -1.0
+        for c in contours:
+            region = np.zeros_like(raw_mask)
+            cv2.drawContours(region, [c], -1, 255, thickness=cv2.FILLED)
+            depths = depth_mm[region > 0]
+            depths = depths[depths != 0]
+            if depths.size == 0:
+                continue  # no valid depth in this contour — can't confirm it's the actuator
+            median_depth = float(np.median(depths))
+            if not (z_min_mm <= median_depth <= z_max_mm):
+                continue
+            area = cv2.contourArea(c)
+            if area > best_area:
+                best_area = area
+                largest = c
+    else:
+        # No depth available: fall back to "largest bright blob in frame" —
+        # assumes the actuator is that blob; revisit if the background ever
+        # out-sizes it.
+        largest = max(contours, key=cv2.contourArea) if contours else None
+
     if largest is not None:
         mask = np.zeros_like(raw_mask)
         cv2.drawContours(mask, [largest], -1, 255, thickness=cv2.FILLED)
@@ -739,20 +812,17 @@ def _annotate_curvature(frame_bgr: np.ndarray, analyzer: ActuatorAnalyzer = None
         box_color = (180, 212, 0) if result.status == "TRACKING" else (60, 160, 160)
         cv2.rectangle(display, (bx, by), (bx + bw, by + bh), box_color, 2)
 
-    # Fitted curvature arc — draw the circle segment spanning the fitted
-    # start/end. Uses CurvatureResult's own already-unwrapped
-    # theta_start_deg/theta_end_deg (geometry.py's single source of truth
-    # for the arc's angular extent) rather than recomputing min/max angles
-    # from raw skeleton pixels here: plain arctan2 over all pixels has no
-    # concept of "the short way around" the +/-180 seam, and drew the
-    # wrong-side arc whenever the true sweep straddled it.
+    # Fitted curvature arc — draw the circle segment spanning the skeleton extent
     if result.status == "TRACKING" and result.radius_px > 1:
-        cx, cy = result.center_px
-        r = int(round(result.radius_px))
-        lo, hi = sorted((result.theta_start_deg, result.theta_end_deg))
-        pad = max(5.0, (hi - lo) * 0.1)
-        cv2.ellipse(display, (cx, cy), (r, r), 0, lo - pad, hi + pad, (0, 180, 255), 2, cv2.LINE_AA)
-        cv2.circle(display, (cx, cy), 5, (0, 180, 255), -1, cv2.LINE_AA)
+        ys, xs = np.where(skeleton > 0)
+        if len(ys) >= 2:
+            cx, cy = result.center_px
+            r = int(round(result.radius_px))
+            angles = np.degrees(np.arctan2(ys.astype(float) - cy, xs.astype(float) - cx))
+            a_min, a_max = float(angles.min()), float(angles.max())
+            pad = max(5.0, (a_max - a_min) * 0.1)
+            cv2.ellipse(display, (cx, cy), (r, r), 0, a_min - pad, a_max + pad, (0, 180, 255), 2, cv2.LINE_AA)
+            cv2.circle(display, (cx, cy), 5, (0, 180, 255), -1, cv2.LINE_AA)
 
     txt_color = (180, 212, 0) if result.status == "TRACKING" else (80, 100, 90)
     cv2.putText(display, result.status, (12, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.8, txt_color, 2)
@@ -773,9 +843,10 @@ def _resolve_capture(channel: int, synced: bool, event_ts: float, armed_at: floa
     it, and records the annotated result as the last capture. event_ts is
     the monotonic time STATUS:BUSY was read (or the timeout deadline, on the
     fallback path). armed_at identifies which arm request this resolves —
-    since the synced path runs on a delay timer, a fast re-fire could
-    otherwise let a stale timer clear/overwrite a newer request; if
-    _capture_request has since moved on, this is a no-op.
+    since this runs on its own thread while the HTTP round-trip to the
+    Orbbec bridge is in flight, a fast re-fire could otherwise let a stale
+    call clear/overwrite a newer request; if _capture_request has since
+    moved on, this is a no-op.
 
     NOTE on latency_ms below: this used to be a true hardware-capture
     timestamp — camera_manager.py's CameraManager stamped frame_ts the
@@ -797,18 +868,18 @@ def _resolve_capture(channel: int, synced: bool, event_ts: float, armed_at: floa
         _capture_request = None
 
     try:
-        resp = httpx.get(f"{ORBBEC_SERVICE_URL}/capture", timeout=ORBBEC_CAPTURE_TIMEOUT_S)
-        resp.raise_for_status()
+        frame, depth_raw, depth_scale = _fetch_depth_and_color()
     except httpx.HTTPError:
         return  # camera service unreachable / no frame available — nothing to save
+    except (KeyError, ValueError):
+        return  # malformed response body — nothing to save
 
     frame_ts = time.monotonic()
-    frame = cv2.imdecode(np.frombuffer(resp.content, np.uint8), cv2.IMREAD_COLOR)
     if frame is None:
         return
 
     try:
-        annotated, curvature = _annotate_curvature(frame)
+        annotated, curvature = _annotate_curvature(frame, depth_raw=depth_raw, depth_scale=depth_scale)
     except Exception:
         annotated, curvature = frame, None
 
@@ -899,11 +970,11 @@ def _serial_reader() -> None:
     own after that long even with no data.
 
     _resolve_capture now blocks on an HTTP round-trip to the Orbbec bridge
-    (camera_orbbec_service.py) rather than an instant in-memory read, so the
-    timeout-fallback call below is dispatched on its own thread — same as
-    the synced path's threading.Timer above — instead of calling it inline.
-    Blocking this loop directly would delay draining the Arduino's serial
-    output for as long as that HTTP call takes.
+    (camera_orbbec_service.py) rather than an instant in-memory read, so both
+    the synced path (below) and the timeout-fallback path above dispatch it
+    on their own thread instead of calling it inline. Blocking this loop
+    directly would delay draining the Arduino's serial output for as long as
+    that HTTP call takes.
     """
     global _serial_conn
     while True:
@@ -939,12 +1010,10 @@ def _serial_reader() -> None:
                     with _capture_lock:
                         req = _capture_request
                     if req is not None and req["channel"] == channel:
-                        # Delay the actual grab so the actuator has time to
-                        # visibly respond — see CAPTURE_DELAY_S.
-                        threading.Timer(
-                            CAPTURE_DELAY_S,
-                            _resolve_capture,
+                        threading.Thread(
+                            target=_resolve_capture,
                             args=(channel, True, event_ts, req["armed_at"]),
+                            daemon=True,
                         ).start()
         except Exception:
             _serial_conn = None
@@ -1125,14 +1194,27 @@ _last_classify_jpeg: Optional[bytes] = None  # annotated result of the most rece
 @app.post("/classify")
 async def classify_frame(
     file: UploadFile = File(...),
-    z_min: float = Form(0.40),
-    z_max: float = Form(0.55),
+    z_min: float = Form(0.58),
+    z_max: float = Form(0.70),
     threshold: int = Form(200),
+    depth_file: Optional[UploadFile] = File(None),
+    depth_width: Optional[int] = Form(None),
+    depth_height: Optional[int] = Form(None),
+    depth_scale: Optional[float] = Form(None),
 ) -> dict:
     """Classifies an uploaded photo with the same mask -> skeleton -> circle-fit
     pipeline the actuation-capture path uses, but built fresh per request from
     the given z_min/z_max/threshold (a machine_classification_model row) instead
-    of the module-level actuation _analyzer/PPM."""
+    of the module-level actuation _analyzer/PPM.
+
+    depth_file/depth_width/depth_height/depth_scale are optional: the raw
+    uint16 depth array (row-major, depth_height x depth_width) and its
+    mm-per-raw-unit scale, matching camera_orbbec_service.py's
+    GET /capture/depth_and_color convention. If all four are given, masking
+    uses real depth-gating (z_min/z_max) instead of brightness thresholding
+    — see _annotate_curvature. If any are missing, falls back to brightness
+    thresholding as before (e.g. for callers uploading a plain photo with
+    no accompanying depth capture)."""
     global _last_classify_jpeg
 
     data = await file.read()
@@ -1140,8 +1222,16 @@ async def classify_frame(
     if frame is None:
         raise HTTPException(status_code=422, detail="Could not decode uploaded image")
 
+    depth_raw = None
+    if depth_file is not None and depth_width is not None and depth_height is not None and depth_scale is not None:
+        depth_bytes = await depth_file.read()
+        try:
+            depth_raw = np.frombuffer(depth_bytes, dtype=np.uint16).reshape((depth_height, depth_width))
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=f"Could not reshape depth data: {e}")
+
     analyzer = ActuatorAnalyzer(z_min=z_min, z_max=z_max, threshold=threshold)
-    annotated, result = _annotate_curvature(frame, analyzer)
+    annotated, result = _annotate_curvature(frame, analyzer, depth_raw=depth_raw, depth_scale=depth_scale)
 
     ok, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
     _last_classify_jpeg = buf.tobytes() if ok else None

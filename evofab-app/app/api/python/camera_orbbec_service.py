@@ -22,6 +22,8 @@
 # Run (as root, using this project's orbbec_env venv):
 #   sudo app/api/python/orbbec_env/bin/python app/api/python/camera_orbbec_service.py
 
+import base64
+
 import cv2
 import numpy as np
 import uvicorn
@@ -152,6 +154,61 @@ def capture() -> Response:
             "X-Distance-Mm": str(distance_mm) if distance_mm is not None else "",
         },
     )
+
+
+@app.get("/capture/depth_and_color")
+def capture_depth_and_color() -> dict:
+    """Synced color + full-resolution depth capture, for callers that need
+    real per-pixel depth (e.g. depth-gated actuator masking) rather than
+    just /capture's single median-distance header. JSON with base64 payloads
+    rather than a binary multipart response — this bridge's request volume
+    is low (one capture per classify/actuation call), so simplicity here
+    outweighs the ~33% base64 size overhead.
+
+    depth_data is the RAW uint16 array (row-major, depth_height x
+    depth_width) — undecoded distance units, not millimetres. Multiply by
+    depth_scale to get millimetres (same convention as
+    _median_nonzero_depth_mm above). depth and color are NOT guaranteed to
+    share the same pixel resolution/FOV — no D2C (depth-to-color) alignment
+    is configured on this device — callers needing per-pixel correspondence
+    must resize/approximate themselves.
+    """
+    frames = pipeline.wait_for_frames(WAIT_FOR_FRAMES_TIMEOUT_MS)
+    if frames is None:
+        raise HTTPException(status_code=503, detail="wait_for_frames timed out — no frame set available from Orbbec")
+
+    color_frame = frames.get_color_frame()
+    depth_frame = frames.get_depth_frame()
+    if color_frame is None:
+        raise HTTPException(status_code=503, detail="No color frame in frame set from Orbbec")
+    if depth_frame is None:
+        raise HTTPException(status_code=503, detail="No depth frame in frame set from Orbbec")
+
+    image = _frame_to_bgr(color_frame)
+    ok, jpeg = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to encode color capture")
+
+    depth_width = depth_frame.get_width()
+    depth_height = depth_frame.get_height()
+    depth_scale = depth_frame.get_depth_scale()
+    depth_raw = np.frombuffer(depth_frame.get_data(), dtype=np.uint16)
+    try:
+        depth_raw = depth_raw.reshape((depth_height, depth_width))
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to reshape depth data: {e}")
+
+    return {
+        "color_jpeg_b64": base64.b64encode(jpeg.tobytes()).decode("ascii"),
+        "color_width": image.shape[1],
+        "color_height": image.shape[0],
+        "color_timestamp_ms": color_frame.get_timestamp(),
+        "depth_b64": base64.b64encode(depth_raw.tobytes()).decode("ascii"),
+        "depth_width": depth_width,
+        "depth_height": depth_height,
+        "depth_scale": depth_scale,
+        "depth_timestamp_ms": depth_frame.get_timestamp(),
+    }
 
 
 if __name__ == "__main__":

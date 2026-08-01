@@ -23,22 +23,46 @@ export interface ClassifyResult {
 }
 
 /**
+ * Raw depth capture to accompany a photo, matching camera_orbbec_service.py's
+ * GET /capture/depth_and_color convention: `data` is the raw uint16 depth
+ * array bytes (row-major, height x width), `scale` is mm-per-raw-unit (not
+ * already millimetres).
+ */
+export interface DepthPayload {
+  data: Blob
+  width: number
+  height: number
+  scale: number
+}
+
+/**
  * Sends a photo to the classification bridge and runs the curvature-vision pipeline
  * (analyzer.py mask -> skeleton, geometry.py circle fit) on it, tuned with the machine's
  * z_min_m/z_max_m/threshold (machine_classification_model columns). Any omitted opt falls back
  * to analyzer.py's own defaults.
+ *
+ * `depth`, if given, switches masking to real per-pixel depth-gating
+ * (z_min/z_max) server-side instead of brightness thresholding — see
+ * main.py's POST /classify and _annotate_curvature. Omit it to fall back to
+ * brightness thresholding, same as before depth support existed.
  */
 export async function classifyImage(
   ip: string,
   port: number,
   image: Blob,
-  opts: { z_min?: number | null; z_max?: number | null; threshold?: number | null }
+  opts: { z_min?: number | null; z_max?: number | null; threshold?: number | null; depth?: DepthPayload | null }
 ): Promise<ClassifyResult> {
   const form = new FormData()
   form.append('file', image, 'frame.jpg')
   if (opts.z_min != null) form.append('z_min', String(opts.z_min))
   if (opts.z_max != null) form.append('z_max', String(opts.z_max))
   if (opts.threshold != null) form.append('threshold', String(opts.threshold))
+  if (opts.depth) {
+    form.append('depth_file', opts.depth.data, 'depth.bin')
+    form.append('depth_width', String(opts.depth.width))
+    form.append('depth_height', String(opts.depth.height))
+    form.append('depth_scale', String(opts.depth.scale))
+  }
 
   const res = await fetch(`${base(ip, port)}/classify`, { method: 'POST', body: form })
   if (!res.ok) {

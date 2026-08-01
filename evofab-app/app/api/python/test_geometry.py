@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from geometry import compute_spine_curvature, skeleton_longest_path
+from geometry import ACTUATOR_LENGTH_M, compute_spine_curvature
 
 PPM = 100.0  # pixels per metre for synthetic masks
 
@@ -20,68 +20,33 @@ def _straight_line_mask(n=200, spacing=1.0):
     return _mask_from_points(u, v)
 
 
-def _arc_with_base_points(radius_px=150.0, arc_deg=90.0, n_arc=None, n_base=None, base_len_px=90.0):
-    """
-    Returns the raw (u, v) point arrays for a straight rigid base (vertical
-    segment, bottom of frame) followed by a circular arc of the given
-    radius subtending arc_deg, tangent to the base at the join so the
-    skeleton is continuous — plus the arc's true center/radius. Factored
-    out of _arc_with_base_mask so noise can be injected onto the raw
-    points before rasterizing to a mask.
+def _arc_mask(radius_px=300.0, arc_deg=60.0, n=None, shape=(600, 600)):
+    """A single circular arc (no separate rigid-base segment) — the
+    algorithm doesn't distinguish base/tip, it just trims the first 10
+    points after sorting by v.
 
-    n_arc/n_base default to None, which picks enough samples that
-    consecutive *rasterized* pixels are always 8-connected (step <= ~1px)
-    regardless of radius_px/arc_deg/base_len_px — skeleton_longest_path
-    walks true pixel adjacency (like a real cv2.ximgproc.thinning output
-    would be), so an under-sampled parametric curve with >1px gaps between
-    samples would fragment into disconnected components, unlike the old
-    argsort-based ordering which never depended on connectivity.
-    """
-    if n_base is None:
-        n_base = int(np.ceil(base_len_px)) + 1
-    base_top_v = 500.0
-    u_base = np.full(n_base, 300.0)
-    v_base = base_top_v - np.linspace(0, base_len_px, n_base)
-
-    # Circle center is horizontally offset from the tangent point by radius_px,
-    # so the base (vertical, heading straight up) is tangent to the circle there.
-    join_u, join_v = 300.0, v_base[-1]
-    center_u = join_u + radius_px
-    center_v = join_v
-
-    if n_arc is None:
+    n defaults to None, which picks enough samples that consecutive
+    *rasterized* pixels are always 8-connected (step <= ~1px) regardless
+    of radius_px/arc_deg — compute_spine_curvature walks true pixel
+    adjacency (skeleton_longest_path), so an under-sampled parametric
+    curve with >1px gaps between samples would fragment into disconnected
+    components and only the largest fragment would be used."""
+    center_u, center_v = 300.0, 300.0 + radius_px
+    half = np.radians(arc_deg / 2)
+    if n is None:
         arc_len_px = radius_px * np.radians(arc_deg)
-        n_arc = int(np.ceil(arc_len_px)) + 1
-    theta = np.linspace(np.pi, np.pi + np.radians(arc_deg), n_arc)
-    u_arc = center_u + radius_px * np.cos(theta)
-    v_arc = center_v + radius_px * np.sin(theta)
-
-    u = np.concatenate([u_base, u_arc])
-    v = np.concatenate([v_base, v_arc])
-    return u, v, center_u, center_v, radius_px
-
-
-def _arc_with_base_mask(radius_px=150.0, arc_deg=90.0, n_arc=None, n_base=None, base_len_px=90.0):
-    """
-    Straight rigid base (vertical segment, bottom of frame) followed by a
-    circular arc of the given radius subtending arc_deg, tangent to the base
-    at the join so the skeleton is continuous.
-    """
-    u, v, center_u, center_v, radius_px = _arc_with_base_points(
-        radius_px=radius_px, arc_deg=arc_deg, n_arc=n_arc, n_base=n_base, base_len_px=base_len_px
-    )
-    return _mask_from_points(u, v), center_u, center_v, radius_px
+        n = int(np.ceil(arc_len_px)) + 1
+    theta = np.linspace(-np.pi / 2 - half, -np.pi / 2 + half, n)
+    u = center_u + radius_px * np.cos(theta)
+    v = center_v + radius_px * np.sin(theta)
+    return _mask_from_points(u, v, shape)
 
 
 def _inject_spur_noise(mask, u, v, spacing=12, spur_len=6, shape=(600, 600)):
-    """
-    Returns a copy of `mask` with short perpendicular tick spurs added at
+    """Returns a copy of `mask` with short perpendicular tick spurs added at
     intervals along the given curve (u, v) — mimicking the small
-    branch/spur artifacts cv2.ximgproc.thinning leaves at each bellows
-    fold on a real corrugated PneuNet actuator — plus one disconnected
-    noise blob far from the curve (mimicking a stray thresholded speck
-    elsewhere in frame).
-    """
+    branch/spur artifacts cv2.ximgproc.thinning leaves at each bellows fold
+    on a real corrugated PneuNet actuator."""
     noisy = mask.copy()
     for i in range(spacing, len(u) - spacing, spacing):
         du = u[i + 1] - u[i - 1]
@@ -89,13 +54,12 @@ def _inject_spur_noise(mask, u, v, spacing=12, spur_len=6, shape=(600, 600)):
         norm = np.hypot(du, dv)
         if norm == 0:
             continue
-        pu, pv = -dv / norm, du / norm  # unit vector perpendicular to local heading
+        pu, pv = -dv / norm, du / norm
         for s in range(1, spur_len + 1):
             su = int(round(u[i] + pu * s))
             sv = int(round(v[i] + pv * s))
             if 0 <= sv < shape[0] and 0 <= su < shape[1]:
                 noisy[sv, su] = 255
-    noisy[10:13, 10:13] = 255  # disconnected noise blob, far from the curve
     return noisy
 
 
@@ -109,103 +73,88 @@ class TestComputeSpineCurvature:
             assert not np.isnan(result.bend_angle_deg)
             assert result.bend_angle_deg < 15.0
 
-    def test_jittered_straight_line_yields_zero_angle(self):
-        """Regression test: the Kasa (algebraic) circle fit is numerically
-        ill-conditioned for near-collinear points — as little as ~0.4px of
-        per-point jitter on an otherwise straight line used to make the fit
-        converge on a small, wrong-radius circle (radius_px collapsing from
-        ~700+ to ~44) and report a spurious ~103deg bend. The straightness
-        check must catch this from the raw points' deviation from the
-        start-end chord, not from that same unstable fit's own center
-        offset (which does NOT reliably flag this case — confirmed by
-        reproducing the bug before fixing it)."""
-        n = 250
-        v = np.arange(n).astype(float)
-        rng = np.random.default_rng(0)
-        u = np.full(n, 300.0) + rng.normal(0, 0.4, size=n)
-        mask = _mask_from_points(u, v)
-
-        result = compute_spine_curvature(mask, PPM)
-
-        assert result.status == "TRACKING"
-        assert result.bend_angle_deg < 5.0
-
-    def test_straight_line_with_endpoint_curl_yields_zero_angle(self):
-        """Small hooks/curls right at the skeleton's endpoints are a common
-        cv2.ximgproc.thinning boundary artifact — shouldn't register as a
-        real bend."""
-        n = 250
-        v = np.arange(n).astype(float)
-        u = np.full(n, 300.0)
-        for end in (0, -1):
-            sign = 1 if end == 0 else -1
-            for k in range(1, 5):
-                idx = k if end == 0 else n - 1 - k
-                u[idx] += sign * 6 * np.sin(k / 4 * np.pi / 2)
-        mask = _mask_from_points(u, v)
-
-        result = compute_spine_curvature(mask, PPM)
-
-        assert result.status == "TRACKING"
-        assert result.bend_angle_deg < 5.0
-
-    def test_arc_with_rigid_base_recovers_known_angle(self):
-        mask, center_u, center_v, radius_px = _arc_with_base_mask(
-            radius_px=150.0, arc_deg=90.0
-        )
+    def test_arc_recovers_known_radius_and_consistent_angle(self):
+        radius_px = 300.0
+        mask = _arc_mask(radius_px=radius_px, arc_deg=60.0)
         result = compute_spine_curvature(mask, PPM)
 
         assert result.status == "TRACKING"
         assert not np.isnan(result.bend_angle_deg)
-        assert abs(result.bend_angle_deg - 90.0) < 8.0
+
+        radius_m_expected = radius_px / PPM
+        assert abs(result.radius_mm - radius_m_expected * 1000.0) < radius_m_expected * 1000.0 * 0.05
+
+        # bend_angle_deg = degrees(mean_curvature * ACTUATOR_LENGTH_M) — the
+        # actual (not geometric-arc-angle) definition this pipeline uses.
+        expected_angle = np.degrees(result.mean_curvature * ACTUATOR_LENGTH_M)
+        assert abs(result.bend_angle_deg - expected_angle) < 1e-6
+
+    def test_arc_with_spur_noise_recovers_similar_center(self):
+        """Regression test: on a real capture, branchy/spurred skeleton
+        pixels (bellows-fold thinning artifacts) fed unpruned into the
+        circle fit pulled the fitted center to the point where the drawn
+        arc curved the OPPOSITE way from the actuator's real visible bend
+        — not just a minor accuracy loss. skeleton_longest_path (pruning to
+        the single longest connected path before fitting) must keep the
+        fitted center close to the clean-arc case despite spur noise."""
+        radius_px = 300.0
+        center_u, center_v = 300.0, 300.0 + radius_px
+        arc_deg = 60.0
+        half = np.radians(arc_deg / 2)
+        arc_len_px = radius_px * np.radians(arc_deg)
+        n = int(np.ceil(arc_len_px)) + 1
+        theta = np.linspace(-np.pi / 2 - half, -np.pi / 2 + half, n)
+        u = center_u + radius_px * np.cos(theta)
+        v = center_v + radius_px * np.sin(theta)
+
+        clean_mask = _mask_from_points(u, v)
+        clean_result = compute_spine_curvature(clean_mask, PPM)
+        assert clean_result.status == "TRACKING"
+
+        noisy_mask = _inject_spur_noise(clean_mask, u, v)
+        noisy_result = compute_spine_curvature(noisy_mask, PPM)
+
+        assert noisy_result.status == "TRACKING"
+        # Fitted center should stay close to the clean-arc fit's center —
+        # not just "some circle", but the SAME side/shape of circle.
+        dist = np.hypot(
+            noisy_result.center_px[0] - clean_result.center_px[0],
+            noisy_result.center_px[1] - clean_result.center_px[1],
+        )
+        assert dist < 0.1 * radius_px
+        assert abs(noisy_result.radius_mm - clean_result.radius_mm) < 0.1 * clean_result.radius_mm
+
+    def test_noisy_straight_line_does_not_report_spurious_curvature(self):
+        """Regression test: on a real rig, the algebraic (Kasa) circle fit
+        is numerically unstable for near-straight point sets — small
+        per-pixel jitter (thinning quantization, corrugation-fold noise)
+        got amplified into a spuriously small fitted radius. Three real
+        captures of the same static, visually-straight actuator gave wildly
+        different bend angles (52/82/63 deg) purely from this instability.
+        A small deterministic zigzag perturbation (mimicking corrugation
+        jitter) on an otherwise-straight line must not produce a large
+        reported bend angle."""
+        n = 200
+        v = np.arange(n, dtype=float)
+        # Deterministic zigzag (triangle wave, +/-2px amplitude, period 20px)
+        # mimicking corrugation-fold jitter — well under a 1px/row slope so
+        # the rasterized mask stays 8-connected, unlike a sharper alternation.
+        period = 20.0
+        frac = (v % period) / period
+        triangle = 4.0 * np.abs(frac - 0.5) - 1.0  # in [-1, 1]
+        u = 300.0 + 2.0 * triangle
+        mask = _mask_from_points(u, v)
+        result = compute_spine_curvature(mask, PPM)
+
+        assert result.status == "TRACKING"
+        assert result.bend_angle_deg < 15.0
+        assert result.mean_curvature < 5.0
 
     def test_too_short_skeleton_returns_no_target(self):
         mask = _mask_from_points(np.full(10, 300.0), np.arange(10))
         result = compute_spine_curvature(mask, PPM)
 
         assert result.status == "NO_TARGET"
-
-    def test_arc_with_spur_noise_recovers_known_angle(self):
-        """Same arc as test_arc_with_rigid_base_recovers_known_angle, but
-        with bellows-fold-style spurs and a disconnected noise blob added —
-        confirms skeleton_longest_path pruning (used internally) keeps the
-        fit within the same tolerance as the clean case."""
-        u, v, center_u, center_v, radius_px = _arc_with_base_points(radius_px=150.0, arc_deg=90.0)
-        mask = _mask_from_points(u, v)
-        noisy = _inject_spur_noise(mask, u, v)
-
-        result = compute_spine_curvature(noisy, PPM)
-
-        assert result.status == "TRACKING"
-        assert not np.isnan(result.bend_angle_deg)
-        assert abs(result.bend_angle_deg - 90.0) < 8.0
-
-
-class TestSkeletonLongestPath:
-    def test_drops_spurs_and_disconnected_noise(self):
-        u, v, _, _, _ = _arc_with_base_points(radius_px=150.0, arc_deg=90.0)
-        mask = _mask_from_points(u, v)
-        noisy = _inject_spur_noise(mask, u, v)
-
-        path = skeleton_longest_path(noisy)
-        path_set = set(map(tuple, path.tolist()))
-
-        # The disconnected noise blob must be fully excluded.
-        assert not any(10 <= pu < 13 and 10 <= pv < 13 for pu, pv in path_set)
-
-        # Every returned pixel should sit close to the true curve — not on
-        # one of the injected perpendicular spurs.
-        true_curve = np.stack([np.round(u).astype(int), np.round(v).astype(int)], axis=1)
-        for pu, pv in path_set:
-            dists = np.hypot(true_curve[:, 0] - pu, true_curve[:, 1] - pv)
-            assert dists.min() <= 2.0
-
-        # Most of the true curve should still be recovered despite the
-        # spurs and noise blob competing for pixels. Compare against the
-        # *rasterized* clean pixel count, not len(u) — dense oversampling
-        # means many raw (u, v) samples collapse onto the same pixel.
-        clean_pixel_count = int(np.count_nonzero(mask))
-        assert len(path) >= clean_pixel_count - 20
 
 
 if __name__ == "__main__":

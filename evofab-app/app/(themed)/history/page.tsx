@@ -47,10 +47,25 @@ export default function HistoryPage() {
     router.push(id ? `/history?pipeline=${id}` : '/history')
   }
 
+  async function deletePipeline(id: string) {
+    setPipelines((prev) => prev.filter((p) => p.id !== id))
+    if (selectedId === id) selectPipeline(null)
+    const res = await fetch(`/api/pipelines/${id}`, { method: 'DELETE' })
+    if (!res.ok) {
+      console.error('Failed to delete pipeline run', await res.text().catch(() => ''))
+      // Re-fetch so a failed delete doesn't leave the list silently wrong.
+      const refetch = await fetch('/api/pipelines')
+      const data = await refetch.json()
+      setPipelines(data.pipelines ?? [])
+    }
+  }
+
   const selected = pipelines.find((p) => p.id === selectedId) ?? null
 
   if (selectedId && selected) {
-    return <PipelineHistoryDetail pipeline={selected} onBack={() => selectPipeline(null)} />
+    return (
+      <PipelineHistoryDetail pipeline={selected} onBack={() => selectPipeline(null)} onDelete={deletePipeline} />
+    )
   }
 
   return (
@@ -61,7 +76,7 @@ export default function HistoryPage() {
           Current and past pipeline runs. Click one to see its progress and results.
         </p>
       </div>
-      <PipelineHistoryList pipelines={pipelines} onSelect={selectPipeline} />
+      <PipelineHistoryList pipelines={pipelines} onSelect={selectPipeline} onDelete={deletePipeline} />
     </div>
   )
 }

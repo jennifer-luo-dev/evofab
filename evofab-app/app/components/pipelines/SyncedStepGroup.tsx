@@ -3,12 +3,12 @@
 // label above them and an optional unsync action. Used by both the pipeline
 // builder and the read-only History progress tracker.
 
-import type { ReactNode } from 'react'
-import { LinkIcon } from '@/app/components/ui/icons'
+import type { ReactNode } from 'react';
+import { LinkIcon } from '@/app/components/ui/icons';
 
 interface SyncedStepGroupProps {
-  onUnsync?: () => void
-  children: ReactNode
+  onUnsync?: () => void;
+  children: ReactNode;
 }
 
 /**
@@ -24,7 +24,6 @@ export function SyncedStepGroup({ onUnsync, children }: SyncedStepGroupProps) {
         <span className="inline-flex items-center px-2 py-px rounded-full bg-teal-dim border border-teal">
           Synced
         </span>
-        <span>run together</span>
         {onUnsync && (
           <button
             type="button"
@@ -39,5 +38,5 @@ export function SyncedStepGroup({ onUnsync, children }: SyncedStepGroupProps) {
         {children}
       </div>
     </div>
-  )
+  );
 }

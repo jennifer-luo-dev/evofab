@@ -27,8 +27,10 @@ const MACHINE_STATUS_MAP: Record<PrinterStatus["status"], string> = {
 
 /**
  * Upserts this machine's live status into `machine_status` so other views (e.g. the History
- * page's per-run machine panel) reflect reality without needing their own Moonraker polling.
- * Best-effort — a failure here shouldn't break the printer list response.
+ * page's per-run machine panel and live step monitor) reflect reality without needing their own
+ * Moonraker polling. Stores the full `PrinterStatus` as telemetry — not just a few fields — so
+ * a consumer like `PrinterMetricsCard` can be driven directly off it. Best-effort — a failure
+ * here shouldn't break the printer list response.
  */
 async function syncMachineStatus(supabase: SupabaseServerClient, machineId: string, status: PrinterStatus) {
   await supabase
@@ -38,12 +40,7 @@ async function syncMachineStatus(supabase: SupabaseServerClient, machineId: stri
         machine_id: machineId,
         online: status.online,
         status: MACHINE_STATUS_MAP[status.status],
-        telemetry: {
-          hotend_temp: status.hotend_temp,
-          bed_temp: status.bed_temp,
-          progress: status.progress,
-          filename: status.filename,
-        },
+        telemetry: status,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "machine_id" }
@@ -70,7 +67,7 @@ async function fetchMoonrakerStatus(
   port: number,
   printerId: string,
 ): Promise<PrinterStatus> {
-  const url = `http://${ip}:${port}/printer/objects/query?print_stats&extruder&heater_bed&virtual_sdcard`;
+  const url = `http://${ip}:${port}/printer/objects/query?print_stats&extruder&heater_bed&virtual_sdcard&display_status`;
   try {
     const res = await fetch(url, {
       signal: AbortSignal.timeout(MOONRAKER_TIMEOUT_MS),

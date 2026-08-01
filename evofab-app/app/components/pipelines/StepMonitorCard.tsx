@@ -109,7 +109,7 @@ export function StepMonitorCard({ running }: StepMonitorCardProps) {
         <p className="text-[13.5px] text-text font-mono truncate">{fileName}</p>
       </div>
 
-      <CameraFeedCard live streamUrl={streamUrl} />
+      <CameraFeedCard live streamUrl={streamUrl} label={`${printer.name} Webcam`} />
 
       <PrinterMetricsCard
         printerName={printer.name}

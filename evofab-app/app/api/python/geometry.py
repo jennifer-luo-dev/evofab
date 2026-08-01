@@ -1,67 +1,20 @@
 import numpy as np
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Optional, Tuple
+from typing import Tuple
 
 
 ACTUATOR_LENGTH_M = 0.066  # 66 mm
-
-# Max perpendicular deviation (px) of the flex-region points from the
-# straight start-end chord for the arc to be classified as effectively
-# straight (bend_angle_deg=0). See compute_spine_curvature: the Kasa
-# (algebraic) circle fit is numerically ill-conditioned for near-collinear
-# points — empirically, ~2px of realistic noise (thinning boundary jitter,
-# mild lens distortion) on a visibly straight line can make it converge on
-# a small, wrong-radius circle. Checking the raw points against the chord
-# directly, rather than the fit's own center offset, is what actually
-# catches this reliably.
-STRAIGHT_DEVIATION_PX = 3.0
 
 
 @dataclass
 class CurvatureResult:
     mean_curvature: float = 0.0  # 1/m
-    bend_angle_deg: float = 0.0
+    bend_angle_deg: float = 0.0  # Normalized for 66mm
     radius_mm: float = 0.0
     status: str = "IDLE"
     center_px: Tuple[int, int] = field(default_factory=lambda: (0, 0))
     radius_px: float = 0.0
-    # Already np.unwrap()-ed (continuous, not wrapped to (-180, 180]) angles
-    # in degrees from center_px to the start/end of the fitted arc — the
-    # single source of truth for where the arc actually is. Callers drawing
-    # it (e.g. main.py's cv2.ellipse) should use these directly rather than
-    # recomputing angles from raw skeleton pixels with plain arctan2, which
-    # has no notion of "the short way around" across the +/-180 seam and can
-    # draw the wrong-side arc when the true sweep straddles it.
-    theta_start_deg: float = 0.0
-    theta_end_deg: float = 0.0
-
-
-def _trim_rigid_base(u_sorted: np.ndarray, v_sorted: np.ndarray,
-                      window: int = 5, straightness_thresh_deg: float = 3.0) -> int:
-    """
-    Find the index where the skeleton stops being straight (i.e. where the
-    flexible region begins), by checking local heading angle over a sliding
-    window against the initial heading. Returns the number of leading points
-    to drop as the rigid base. Returns 0 if the skeleton is too short to
-    evaluate or no bend is detected.
-    """
-    n = len(u_sorted)
-    if n < 2 * window + 1:
-        return 0
-
-    headings = []
-    for i in range(n - window):
-        du = u_sorted[i + window] - u_sorted[i]
-        dv = v_sorted[i + window] - v_sorted[i]
-        headings.append(np.degrees(np.arctan2(dv, du)))
-    headings = np.array(headings)
-
-    base_heading = headings[0]
-    deviation = np.abs(headings - base_heading)
-
-    bends = np.where(deviation > straightness_thresh_deg)[0]
-    return int(bends[0]) if len(bends) > 0 else 0
 
 
 def _skeleton_neighbors(coords: set) -> dict:
@@ -79,9 +32,8 @@ def _skeleton_neighbors(coords: set) -> dict:
 
 def _largest_connected_component(coords: set, neighbors_of: dict) -> set:
     """Splits the pixel set into 8-connected components and returns only
-    the largest, so disconnected noise blobs elsewhere in the mask (not
-    spurs attached to the main tree, but separate specks) can't be
-    mistaken for part of the spine before the longest-path search even
+    the largest, so disconnected noise blobs elsewhere in the mask can't
+    be mistaken for part of the spine before the longest-path search even
     starts."""
     unvisited = set(coords)
     largest: set = set()
@@ -122,21 +74,29 @@ def _bfs_farthest(start: Tuple[int, int], neighbors_of: dict):
 def skeleton_longest_path(skeleton_mask: np.ndarray) -> np.ndarray:
     """
     Reduces a (possibly noisy/branched) binary skeleton mask to the single
-    longest simple path through it, as an ordered (N, 2) array of (u, v)
-    pixel coordinates walked from one end to the other.
+    longest simple path through it, as an (N, 2) array of (u, v) pixel
+    coordinates (order not guaranteed to be end-to-end meaningful — callers
+    that care about direction should re-sort, e.g. by v).
+
+    cv2.ximgproc.thinning on a corrugated PneuNet mask produces small
+    spurs/branches at each bellows fold, not a clean single-pixel
+    centerline — confirmed on a real capture that feeding those raw,
+    unordered, branchy pixels straight into the circle fit (previously
+    just np.where + argsort(v), no pruning) systematically pulled the
+    fitted circle's center to the point where the drawn arc curved the
+    opposite way from the actuator's actual visible bend. A clean
+    single-path extraction removes that bias.
 
     Two steps:
     1. Connected components over the 8-connected pixel graph, keeping
-       only the largest — drops disconnected noise blobs outright
-       (separate specks elsewhere in the mask), before any path search.
+       only the largest — drops disconnected noise blobs outright.
     2. Two-pass BFS ("tree diameter"): BFS from any pixel in that
        component to find the farthest pixel A, then BFS from A to find
        the farthest pixel B — the path A-to-B is the longest path. Exact
        for tree-shaped (cycle-free) skeletons, true for any single
-       solid-blob mask without holes (the case here), and it naturally
-       drops short spurs (e.g. thinning artifacts at PneuNet bellows
-       folds) since a spur is always shorter than continuing along the
-       main trunk.
+       solid-blob mask without holes, and it naturally drops short spurs
+       since a spur is always shorter than continuing along the main
+       trunk.
 
     Returns an empty (0, 2) array if fewer than 2 pixels are set.
     """
@@ -167,47 +127,20 @@ def skeleton_longest_path(skeleton_mask: np.ndarray) -> np.ndarray:
     return np.array(path, dtype=int)
 
 
-def compute_spine_curvature(skeleton_mask: np.ndarray, ppm: float,
-                             base_tip_px: Optional[Tuple[int, int]] = None) -> CurvatureResult:
-    """Fit a circle to the skeleton and return curvature metrics + pixel-space circle.
-
-    base_tip_px, if given, is the segmentation-detected point where the
-    actuator physically emerges from its clamp (analyzer.detect_base). It
-    replaces the geometric straightness trim (_trim_rigid_base) as the
-    known start of the flexible arc, since the mask is already restricted
-    to the base-connected component upstream — there's no rigid lead-in
-    segment left to infer. Without it, _trim_rigid_base is used as before
-    (e.g. for direct/test calls with no base detection wired in).
-    """
+def compute_spine_curvature(skeleton_mask: np.ndarray, ppm: float) -> CurvatureResult:
     path = skeleton_longest_path(skeleton_mask)
 
-    if len(path) < 30:
+    if len(path) < 30:  # Lowered threshold for smaller device
         return CurvatureResult(status="NO_TARGET")
 
-    u_sorted = path[:, 0].astype(np.float64)
-    v_sorted = path[:, 1].astype(np.float64)
+    u, v = path[:, 0], path[:, 1]
 
-    if base_tip_px is not None:
-        # Orient the walked path so index 0 is the end nearer the known
-        # base tip, whichever BFS endpoint that turned out to be — robust
-        # to bends that fold back in v, unlike the old argsort(v) order.
-        d_first = np.hypot(u_sorted[0] - base_tip_px[0], v_sorted[0] - base_tip_px[1])
-        d_last = np.hypot(u_sorted[-1] - base_tip_px[0], v_sorted[-1] - base_tip_px[1])
-        if d_last < d_first:
-            u_sorted, v_sorted = u_sorted[::-1], v_sorted[::-1]
-        u_flex = u_sorted
-        v_flex = v_sorted
-    else:
-        # No known base tip: preserve the prior convention (rigid base
-        # nearer the bottom of frame / larger v) by orienting the walked
-        # path the same way the old v-descending sort did, then trimming
-        # the straight lead-in as before.
-        if v_sorted[0] < v_sorted[-1]:
-            u_sorted, v_sorted = u_sorted[::-1], v_sorted[::-1]
-        trim = _trim_rigid_base(u_sorted, v_sorted)
-        u_flex = u_sorted[trim:]
-        v_flex = v_sorted[trim:]
+    # Trim the rigid base lead-in (fixed offset, not geometrically detected).
+    idx = np.argsort(v)[::-1]
+    u_flex = u[idx][10:]
+    v_flex = v[idx][10:]
 
+    # Least Squares Circle Fit
     u_m, v_m = np.mean(u_flex), np.mean(v_flex)
     u_c, v_c = u_flex - u_m, v_flex - v_m
     A = np.column_stack([u_c, v_c, np.ones_like(u_c)])
@@ -219,44 +152,54 @@ def compute_spine_curvature(skeleton_mask: np.ndarray, ppm: float,
         center_u = float(C[0] / 2 + u_m)
         center_v = float(C[1] / 2 + v_m)
         radius_m = radius_px / ppm
+
+        # Straightness gate: the algebraic (Kasa) circle fit above is
+        # numerically unstable for near-straight point sets — as the true
+        # radius goes to infinity, tiny pixel-level noise (thinning
+        # quantization, corrugation-fold jitter) gets amplified into a
+        # spuriously small fitted radius. Confirmed on a real rig: three
+        # captures of the same static, visually-straight actuator gave
+        # wildly different bend angles (52/82/63 deg) from this fit alone,
+        # despite the underlying point noise being consistent across shots
+        # — a tell that the fit was amplifying noise, not measuring a real
+        # bend. Compare the circle fit's own RMS residual against a plain
+        # straight-line fit through the same points: a genuine bend (real
+        # actuation capture) fits a circle far better than a line (residual
+        # ratio ~0.24 on a real actuated capture); noise on a straight
+        # actuator does not (ratio ~2-4 on three independent real captures)
+        # — the "best" circle is no better than just a line. Below that
+        # break-even point, report zero curvature instead of a
+        # noise-amplified reading. center_px/radius_px are left as the raw
+        # fit (still a reasonable, harmless annotation of the point spread)
+        # since only the numeric curvature readout is untrustworthy here.
+        dist = np.hypot(u_flex - center_u, v_flex - center_v)
+        resid_circle = float(np.sqrt(np.mean((dist - radius_px) ** 2)))
+
+        pts = np.column_stack([u_flex, v_flex]).astype(float)
+        centered = pts - pts.mean(axis=0)
+        cov = np.cov(centered.T)
+        evals, evecs = np.linalg.eigh(cov)
+        normal = evecs[:, np.argmin(evals)]
+        resid_line = float(np.sqrt(np.mean((centered @ normal) ** 2)))
+
+        if resid_circle >= resid_line:
+            return CurvatureResult(
+                mean_curvature=0.0,
+                bend_angle_deg=0.0,
+                radius_mm=radius_m * 1000.0,
+                status="TRACKING",
+                center_px=(int(round(center_u)), int(round(center_v))),
+                radius_px=radius_px,
+            )
+
+        # Calculate K (1/m)
         k = 1.0 / radius_m
 
-        if base_tip_px is not None:
-            u_start, v_start = base_tip_px
-        else:
-            u_start, v_start = u_flex[0], v_flex[0]
-        u_end, v_end = u_flex[-1], v_flex[-1]
-        chord_px = float(np.hypot(u_end - u_start, v_end - v_start))
-
-        # Direct straightness check: how far the flex points themselves
-        # deviate (perpendicular to the start-end chord) from a straight
-        # line — independent of the circle fit's own center estimate.
-        # A near-straight skeleton makes the Kasa fit numerically
-        # ill-conditioned: even ~2px of realistic noise (thinning boundary
-        # jitter, mild lens distortion) on a visibly straight line can
-        # make it converge on a small, wrong-radius circle whose center
-        # sits nowhere near the chord (confirmed empirically) — so judging
-        # straightness from that same fit's center offset is circular and
-        # unreliable. Checking the raw points against the chord directly
-        # is the robust version of the same idea.
-        if chord_px > 0:
-            chord_dx, chord_dy = (u_end - u_start) / chord_px, (v_end - v_start) / chord_px
-            perp_dev = np.abs((u_flex - u_start) * chord_dy - (v_flex - v_start) * chord_dx)
-            max_dev_px = float(perp_dev.max())
-        else:
-            max_dev_px = 0.0
-
-        # Unwrapped once here, so this is the only place either the
-        # bend-angle number or anything drawing the arc (main.py) needs to
-        # reason about the +/-180 seam.
-        theta_start = np.arctan2(v_start - center_v, u_start - center_u)
-        theta_end = np.arctan2(v_end - center_v, u_end - center_u)
-        theta_start, theta_end = np.unwrap([theta_start, theta_end])
-
-        if radius_px <= 0 or max_dev_px < STRAIGHT_DEVIATION_PX:
-            angle_deg = 0.0
-        else:
-            angle_deg = float(np.degrees(np.abs(theta_end - theta_start)))
+        # Bend angle: curvature * arc length (radians), not a geometric
+        # endpoint-to-endpoint angle — assumes the flex region fit corresponds
+        # to the actuator's known real length (ACTUATOR_LENGTH_M).
+        angle_rad = k * ACTUATOR_LENGTH_M
+        angle_deg = float(np.degrees(angle_rad))
 
         return CurvatureResult(
             mean_curvature=k,
@@ -265,8 +208,6 @@ def compute_spine_curvature(skeleton_mask: np.ndarray, ppm: float,
             status="TRACKING",
             center_px=(int(round(center_u)), int(round(center_v))),
             radius_px=radius_px,
-            theta_start_deg=float(np.degrees(theta_start)),
-            theta_end_deg=float(np.degrees(theta_end)),
         )
     except Exception:
         return CurvatureResult(status="MATH_ERROR")

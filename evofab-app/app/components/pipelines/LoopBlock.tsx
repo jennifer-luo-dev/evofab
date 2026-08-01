@@ -26,7 +26,7 @@ interface LoopBlockProps {
   depth: number
   builder: ReturnType<typeof usePipelineBuilder>
   stepStatus: Record<string, PipelineRunStatus>
-  currentStepId: string | null
+  currentStepIds: Set<string>
   availableTechs: TechOption[]
   onMoveUp: () => void
   onMoveDown: () => void
@@ -38,7 +38,7 @@ export function LoopBlock({
   depth,
   builder,
   stepStatus,
-  currentStepId,
+  currentStepIds,
   availableTechs,
   onMoveUp,
   onMoveDown,
@@ -157,7 +157,7 @@ export function LoopBlock({
               depth={depth + 1}
               builder={builder}
               stepStatus={stepStatus}
-              currentStepId={currentStepId}
+              currentStepIds={currentStepIds}
               availableTechs={availableTechs}
               hideControls
             />
@@ -170,7 +170,7 @@ export function LoopBlock({
             depth={depth + 1}
             builder={builder}
             stepStatus={stepStatus}
-            currentStepId={currentStepId}
+            currentStepIds={currentStepIds}
             availableTechs={availableTechs}
           />
         </div>

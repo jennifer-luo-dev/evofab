@@ -31,7 +31,8 @@ interface ContainerViewProps {
   depth: number
   builder: ReturnType<typeof usePipelineBuilder>
   stepStatus: Record<string, PipelineRunStatus>
-  currentStepId: string | null
+  /** Every step id currently dispatched — a synced batch runs its members at once, so more than one id can be "current" simultaneously. */
+  currentStepIds: Set<string>
   /** Techs selected in Technology Selection — passed through to the draft form when adding here. */
   availableTechs: TechOption[]
   /** Suppresses "+ Add Step"/"+ Add Loop" — used for a collapsed loop's greyed preview. */
@@ -44,7 +45,7 @@ export function ContainerView({
   depth,
   builder,
   stepStatus,
-  currentStepId,
+  currentStepIds,
   availableTechs,
   hideControls,
 }: ContainerViewProps) {
@@ -101,7 +102,7 @@ export function ContainerView({
         }
         meta={summarizeStepInputs(step, actionsByTech, steps) || techLabel[step.tech]}
         synced={synced}
-        highlighted={step.id === currentStepId}
+        highlighted={currentStepIds.has(step.id)}
         leading={
           <input
             type="checkbox"
@@ -147,7 +148,7 @@ export function ContainerView({
               depth={depth}
               builder={builder}
               stepStatus={stepStatus}
-              currentStepId={currentStepId}
+              currentStepIds={currentStepIds}
               availableTechs={availableTechs}
               onMoveUp={() => moveEntry(containerGroupId, uIdx, -1)}
               onMoveDown={() => moveEntry(containerGroupId, uIdx, 1)}

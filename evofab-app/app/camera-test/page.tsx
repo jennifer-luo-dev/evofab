@@ -17,6 +17,27 @@ const POLL_MS = 500;
 
 const STATUS_OPTIONS = ['TRACKING', 'NO_TARGET', 'MATH_ERROR'] as const;
 
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+/** Same reduction as camera_orbbec_service.py's _median_nonzero_depth_mm:
+ * median of nonzero raw values (0 = no return), scaled by the frame's own
+ * reported depth_scale — not assumed. */
+function medianNonzeroDistanceMm(depthBytes: Uint8Array, scale: number): number | null {
+  const values = new Uint16Array(depthBytes.buffer, depthBytes.byteOffset, depthBytes.byteLength / 2);
+  const nonzero: number[] = [];
+  for (let i = 0; i < values.length; i++) if (values[i] !== 0) nonzero.push(values[i]);
+  if (nonzero.length === 0) return null;
+  nonzero.sort((a, b) => a - b);
+  const mid = Math.floor(nonzero.length / 2);
+  const median = nonzero.length % 2 === 0 ? (nonzero[mid - 1] + nonzero[mid]) / 2 : nonzero[mid];
+  return median * scale;
+}
+
 /** Live camera feed + classification test tool — captures a photo/distance pair from the
  * Orbbec bridge, classifies it, and compares the result against a manually-entered expected value. */
 export default function CameraTestPage() {
@@ -36,16 +57,30 @@ export default function CameraTestPage() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`${ORBBEC_API}/capture`);
+      const res = await fetch(`${ORBBEC_API}/capture/depth_and_color`);
       if (!res.ok) {
         throw new Error(`Capture failed (${res.status}): ${await res.text()}`);
       }
-      const distanceHeader = res.headers.get('X-Distance-Mm');
-      const blob = await res.blob();
+      const data = await res.json();
+      const colorBytes = base64ToBytes(data.color_jpeg_b64);
+      const depthBytes = base64ToBytes(data.depth_b64);
+      // TS's lib.dom types Blob's BlobPart as ArrayBufferView<ArrayBuffer>
+      // specifically, while Uint8Array is generic over ArrayBufferLike —
+      // these Uint8Arrays are always backed by a plain ArrayBuffer (freshly
+      // allocated in base64ToBytes), so the cast is safe.
+      const colorBlob = new Blob([colorBytes as BlobPart], { type: 'image/jpeg' });
+      const depthBlob = new Blob([depthBytes as BlobPart]);
 
-      const classifyResult = await classifyImage(MAIN_API_IP, MAIN_API_PORT, blob, {});
+      const classifyResult = await classifyImage(MAIN_API_IP, MAIN_API_PORT, colorBlob, {
+        depth: {
+          data: depthBlob,
+          width: data.depth_width,
+          height: data.depth_height,
+          scale: data.depth_scale,
+        },
+      });
 
-      setDistanceMm(distanceHeader ? parseFloat(distanceHeader) : null);
+      setDistanceMm(medianNonzeroDistanceMm(depthBytes, data.depth_scale));
       setResult(classifyResult);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
