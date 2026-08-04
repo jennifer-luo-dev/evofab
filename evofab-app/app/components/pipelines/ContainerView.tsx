@@ -9,7 +9,7 @@
 
 import { Fragment, useState } from 'react'
 import { cn } from '@/app/lib/utils'
-import { MACHINE_TYPE_ICONS, DownIcon, EditIcon, TrashIcon, UpIcon } from '@/app/components/ui/icons'
+import { MACHINE_TYPE_ICONS, DownIcon, EditIcon, PlayIcon, TrashIcon, UpIcon } from '@/app/components/ui/icons'
 import { PipelineStepRow } from './PipelineStepRow'
 import { RowIconButton } from './RowIconButton'
 import { StepConnector } from './StepConnector'
@@ -37,6 +37,10 @@ interface ContainerViewProps {
   availableTechs: TechOption[]
   /** Suppresses "+ Add Step"/"+ Add Loop" — used for a collapsed loop's greyed preview. */
   hideControls?: boolean
+  /** Test-runs a single step immediately (see PipelineBuilder.testRunSteps), outside a full pipeline run. */
+  onTestRunStep: (stepIds: string[]) => void
+  /** True while a real run or another test run is in flight — disables every row's "Test Run" button. */
+  testRunDisabled: boolean
 }
 
 /** One container's step list, sync groups, nested loops, and its own scoped add-step/add-loop controls. */
@@ -48,6 +52,8 @@ export function ContainerView({
   currentStepIds,
   availableTechs,
   hideControls,
+  onTestRunStep,
+  testRunDisabled,
 }: ContainerViewProps) {
   const { actionsByTech, techLabel } = usePipelineConfig()
   const [addingLoop, setAddingLoop] = useState(false)
@@ -114,6 +120,12 @@ export function ContainerView({
         trailing={
           <>
             {stepStatus[step.id] && <PipelineStatusBadge status={stepStatus[step.id]} className="mr-1" />}
+            <RowIconButton
+              title="Test run this step now"
+              onClick={() => !testRunDisabled && onTestRunStep([step.id])}
+            >
+              <PlayIcon className={testRunDisabled ? 'opacity-40' : undefined} />
+            </RowIconButton>
             <RowIconButton title="Move up" onClick={() => moveEntry(containerGroupId, unitIdx, -1)}>
               <UpIcon />
             </RowIconButton>
@@ -152,6 +164,8 @@ export function ContainerView({
               availableTechs={availableTechs}
               onMoveUp={() => moveEntry(containerGroupId, uIdx, -1)}
               onMoveDown={() => moveEntry(containerGroupId, uIdx, 1)}
+              onTestRunStep={onTestRunStep}
+              testRunDisabled={testRunDisabled}
             />
           ) : (
             renderStepRow(stepsById.get(unit[0].id)!, uIdx, false)

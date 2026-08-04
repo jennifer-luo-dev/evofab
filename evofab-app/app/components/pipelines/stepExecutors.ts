@@ -13,51 +13,51 @@
 // StepNotImplementedError, `status: 'skipped'`) — executors don't touch step
 // status themselves.
 
-import type { Dispatch, SetStateAction } from 'react'
-import type { ActionConfig, Step, TechKey } from './types'
+import type { Dispatch, SetStateAction } from 'react';
+import type { ActionConfig, Step, TechKey } from './types';
 import type {
   RunningCameraState,
   RunningClassificationState,
   RunningPrinterState,
   RunningRobotState,
-} from './StepMonitorCard'
-import type { PrinterWithStatus } from '@/app/types/printer'
-import { DEFAULT_SETTINGS } from '@/app/contexts/PrinterContext'
-import { getWebcamStreamUrl, getGcodeMetadata } from '@/app/lib/moonraker'
-import type { JointName, MoveTargetBody } from '@/app/lib/robot'
+} from './StepMonitorCard';
+import type { PrinterWithStatus } from '@/app/types/printer';
+import { DEFAULT_SETTINGS } from '@/app/contexts/PrinterContext';
+import { getWebcamStreamUrl, getGcodeMetadata } from '@/app/lib/moonraker';
+import type { JointName, MoveTargetBody } from '@/app/lib/robot';
 
 /** Thrown by an executor whose hardware integration doesn't exist yet — see the //TODO executors below. `runPipeline` treats this as `status: 'skipped'` rather than `'failed'`, matching today's behavior for any tech with no executor at all. */
 export class StepNotImplementedError extends Error {}
 
-export type StepOutputs = Record<string, unknown>
+export type StepOutputs = Record<string, unknown>;
 
 export interface StepExecutorContext {
   /** `machines.id` by name — see PipelineConfigContext. */
-  machineIdByName: Record<string, string>
-  actionsByTech: Partial<Record<TechKey, ActionConfig[]>>
+  machineIdByName: Record<string, string>;
+  actionsByTech: Partial<Record<TechKey, ActionConfig[]>>;
   /** Active printers with live status, for the `printer` executor's machine lookup. */
-  printers: PrinterWithStatus[]
+  printers: PrinterWithStatus[];
   /** Printer-only: reflects the in-progress print into the "Now Running" side panel (StepMonitorCard). */
-  setRunningPrinter: Dispatch<SetStateAction<RunningPrinterState | null>>
+  setRunningPrinter: Dispatch<SetStateAction<RunningPrinterState | null>>;
   /** Robot-arm-only: reflects the in-progress move into the "Now Running" side panel (StepMonitorCard). */
-  setRunningRobot: Dispatch<SetStateAction<RunningRobotState | null>>
+  setRunningRobot: Dispatch<SetStateAction<RunningRobotState | null>>;
   /** Camera-only: reflects the in-progress capture into the "Now Running" side panel (StepMonitorCard). */
-  setRunningCamera: Dispatch<SetStateAction<RunningCameraState | null>>
+  setRunningCamera: Dispatch<SetStateAction<RunningCameraState | null>>;
   /** Classification-model-only: reflects the in-progress classification into the "Now Running" side panel (StepMonitorCard). */
-  setRunningClassification: Dispatch<SetStateAction<RunningClassificationState | null>>
+  setRunningClassification: Dispatch<SetStateAction<RunningClassificationState | null>>;
   /**
    * Outputs already produced earlier in this same run, keyed by `Step.id` — lets a step whose
    * input is `type: 'step_output'` (e.g. classification_model's `photo_source`) resolve the
    * referenced step's outputs. Mutated in place by `runPipeline` as each step completes, so later
    * executors in the same run always see the latest entries.
    */
-  stepOutputsById: Record<string, StepOutputs>
+  stepOutputsById: Record<string, StepOutputs>;
 }
 
-export type StepExecutor = (step: Step, ctx: StepExecutorContext) => Promise<StepOutputs>
+export type StepExecutor = (step: Step, ctx: StepExecutorContext) => Promise<StepOutputs>;
 
 function sleep(ms: number) {
-  return new Promise<void>((resolve) => setTimeout(resolve, ms))
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
 // ---------------------------------------------------------------------------
@@ -67,26 +67,26 @@ function sleep(ms: number) {
 // ---------------------------------------------------------------------------
 
 async function runArduinoBoardStep(step: Step, ctx: StepExecutorContext): Promise<StepOutputs> {
-  const machineId = ctx.machineIdByName[step.machine]
-  if (!machineId) throw new Error(`Arduino board "${step.machine}" not found`)
+  const machineId = ctx.machineIdByName[step.machine];
+  if (!machineId) throw new Error(`Arduino board "${step.machine}" not found`);
 
-  const channel = parseInt(step.inputs.channel, 10)
-  const duration_ms = parseInt(step.inputs.duration_ms, 10)
+  const channel = parseInt(step.inputs.channel, 10);
+  const duration_ms = parseInt(step.inputs.duration_ms, 10);
   if (!Number.isFinite(channel) || !Number.isFinite(duration_ms)) {
-    throw new Error('Channel and duration are required for this step')
+    throw new Error('Channel and duration are required for this step');
   }
 
   const res = await fetch('/api/actuate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ machineId, channel, duration_ms }),
-  })
-  const resBody = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(resBody.error ?? `Actuation request failed (${res.status})`)
+  });
+  const resBody = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(resBody.error ?? `Actuation request failed (${res.status})`);
 
-  await sleep(duration_ms)
+  await sleep(duration_ms);
 
-  return { channel, duration_ms, summary: `CH${channel} fired for ${duration_ms}ms` }
+  return { channel, duration_ms, summary: `CH${channel} fired for ${duration_ms}ms` };
 }
 
 // ---------------------------------------------------------------------------
@@ -94,8 +94,8 @@ async function runArduinoBoardStep(step: Step, ctx: StepExecutorContext): Promis
 // ---------------------------------------------------------------------------
 
 /** Safety cap so a stuck/unreachable printer can't hang Run Pipeline forever (~30 min at 2s/poll). */
-const POLL_INTERVAL_MS = 2000
-const MAX_POLLS = 900
+const POLL_INTERVAL_MS = 2000;
+const MAX_POLLS = 900;
 /**
  * Consecutive bad polls (offline/error/unreachable) required before treating the printer as
  * genuinely down. `/api/printers` only gives Moonraker a 3s timeout per poll, so a single wifi
@@ -103,10 +103,10 @@ const MAX_POLLS = 900
  * tolerance one bad poll out of hundreds during a long print kills the whole run even though the
  * printer never actually stopped (it keeps printing regardless of whether our poller can reach it).
  */
-const OFFLINE_TOLERANCE_POLLS = 4
+const OFFLINE_TOLERANCE_POLLS = 4;
 /** Moonraker's metadata scan can briefly lag behind the upload finishing — a few short retries covers it. */
-const METADATA_RETRY_MS = 1000
-const METADATA_MAX_RETRIES = 5
+const METADATA_RETRY_MS = 1000;
+const METADATA_MAX_RETRIES = 5;
 
 /**
  * Polls /api/printers until the printer that just started printing finishes, updating
@@ -122,46 +122,48 @@ async function waitForPrintCompletion(
   startedAt: number,
   setRunningPrinter: StepExecutorContext['setRunningPrinter']
 ) {
-  let sawPrinting = false
-  let consecutiveBadPolls = 0
+  let sawPrinting = false;
+  let consecutiveBadPolls = 0;
   for (let i = 0; i < MAX_POLLS; i++) {
-    await sleep(POLL_INTERVAL_MS)
+    await sleep(POLL_INTERVAL_MS);
 
-    const res = await fetch('/api/printers')
+    const res = await fetch('/api/printers');
     if (!res.ok) {
-      consecutiveBadPolls++
-      if (consecutiveBadPolls >= OFFLINE_TOLERANCE_POLLS) throw new Error('Lost contact with the printer list')
-      continue
+      consecutiveBadPolls++;
+      if (consecutiveBadPolls >= OFFLINE_TOLERANCE_POLLS)
+        throw new Error('Lost contact with the printer list');
+      continue;
     }
-    const { printers: live = [] }: { printers: PrinterWithStatus[] } = await res.json()
-    const printer = live.find((p) => p.id === machineId)
-    const st = printer?.printer_status
+    const { printers: live = [] }: { printers: PrinterWithStatus[] } = await res.json();
+    const printer = live.find((p) => p.id === machineId);
+    const st = printer?.printer_status;
     if (!printer || !st) {
-      consecutiveBadPolls++
-      if (consecutiveBadPolls >= OFFLINE_TOLERANCE_POLLS) throw new Error('Printer disappeared mid-print')
-      continue
+      consecutiveBadPolls++;
+      if (consecutiveBadPolls >= OFFLINE_TOLERANCE_POLLS)
+        throw new Error('Printer disappeared mid-print');
+      continue;
     }
 
     if (!st.online || st.status === 'error') {
-      consecutiveBadPolls++
+      consecutiveBadPolls++;
       if (consecutiveBadPolls >= OFFLINE_TOLERANCE_POLLS) {
-        throw new Error(st.online ? 'Printer reported an error' : 'Printer went offline mid-print')
+        throw new Error(st.online ? 'Printer reported an error' : 'Printer went offline mid-print');
       }
-      continue
+      continue;
     }
-    consecutiveBadPolls = 0
+    consecutiveBadPolls = 0;
 
-    const elapsedSeconds = (Date.now() - startedAt) / 1000
-    const extrapolatedSeconds = st.progress > 0 ? elapsedSeconds / (st.progress / 100) : null
-    setRunningPrinter((prev) => (prev ? { ...prev, printer, extrapolatedSeconds } : prev))
+    const elapsedSeconds = (Date.now() - startedAt) / 1000;
+    const extrapolatedSeconds = st.progress > 0 ? elapsedSeconds / (st.progress / 100) : null;
+    setRunningPrinter((prev) => (prev ? { ...prev, printer, extrapolatedSeconds } : prev));
 
     if (st.status === 'printing' || st.status === 'paused') {
-      sawPrinting = true
-      continue
+      sawPrinting = true;
+      continue;
     }
-    if (sawPrinting && st.status === 'idle') return
+    if (sawPrinting && st.status === 'idle') return;
   }
-  throw new Error('Timed out waiting for print to complete')
+  throw new Error('Timed out waiting for print to complete');
 }
 
 /**
@@ -177,30 +179,30 @@ async function applySlicerEstimate(
   setRunningPrinter: StepExecutorContext['setRunningPrinter']
 ) {
   for (let i = 0; i < METADATA_MAX_RETRIES; i++) {
-    const meta = await getGcodeMetadata(printer.ip, printer.port, filename)
+    const meta = await getGcodeMetadata(printer.ip, printer.port, filename);
     if (meta.estimated_time !== null) {
       setRunningPrinter((prev) =>
         prev && prev.startedAt === startedAt
           ? { ...prev, slicerEstimatedSeconds: meta.estimated_time }
           : prev
-      )
-      return
+      );
+      return;
     }
-    await sleep(METADATA_RETRY_MS)
+    await sleep(METADATA_RETRY_MS);
   }
 }
 
 async function runPrinterStep(step: Step, ctx: StepExecutorContext): Promise<StepOutputs> {
-  const printer = ctx.printers.find((p) => p.name === step.machine)
-  if (!printer) throw new Error(`Printer "${step.machine}" not found`)
+  const printer = ctx.printers.find((p) => p.name === step.machine);
+  if (!printer) throw new Error(`Printer "${step.machine}" not found`);
 
-  const action = (ctx.actionsByTech[step.tech] ?? []).find((a) => a.key === step.action)
-  const fileKey = action?.inputs.find((i) => i.type === 'file')?.key
-  const file = fileKey ? step.files?.[fileKey] : undefined
-  if (!file) throw new Error('No print file uploaded for this step')
+  const action = (ctx.actionsByTech[step.tech] ?? []).find((a) => a.key === step.action);
+  const fileKey = action?.inputs.find((i) => i.type === 'file')?.key;
+  const file = fileKey ? step.files?.[fileKey] : undefined;
+  if (!file) throw new Error('No print file uploaded for this step');
 
-  const streamUrl = await getWebcamStreamUrl(printer.ip, printer.port).catch(() => null)
-  const startedAt = Date.now()
+  const streamUrl = await getWebcamStreamUrl(printer.ip, printer.port).catch(() => null);
+  const startedAt = Date.now();
   ctx.setRunningPrinter({
     kind: 'printer',
     printer,
@@ -209,26 +211,26 @@ async function runPrinterStep(step: Step, ctx: StepExecutorContext): Promise<Ste
     startedAt,
     slicerEstimatedSeconds: null,
     extrapolatedSeconds: null,
-  })
+  });
 
-  const formData = new FormData()
-  formData.append('file', file)
-  formData.append('machine_id', printer.id)
-  formData.append('print_profile_id', step.materialProfileId ?? '')
-  formData.append('settings', JSON.stringify(step.printSettings ?? DEFAULT_SETTINGS))
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('machine_id', printer.id);
+  formData.append('print_profile_id', step.materialProfileId ?? '');
+  formData.append('settings', JSON.stringify(step.printSettings ?? DEFAULT_SETTINGS));
 
-  const res = await fetch('/api/print', { method: 'POST', body: formData })
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(body.error ?? `Print request failed (${res.status})`)
+  const res = await fetch('/api/print', { method: 'POST', body: formData });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? `Print request failed (${res.status})`);
 
   // Fire-and-forget: fills in the slicer's own estimate once Moonraker's metadata
   // scan catches up, without blocking the wait for actual completion below.
-  void applySlicerEstimate(printer, body.fileKey ?? file.name, startedAt, ctx.setRunningPrinter)
+  void applySlicerEstimate(printer, body.fileKey ?? file.name, startedAt, ctx.setRunningPrinter);
 
-  await waitForPrintCompletion(printer.id, startedAt, ctx.setRunningPrinter)
+  await waitForPrintCompletion(printer.id, startedAt, ctx.setRunningPrinter);
 
-  const total_time = Math.round((Date.now() - startedAt) / 1000)
-  return { total_time }
+  const total_time = Math.round((Date.now() - startedAt) / 1000);
+  return { total_time };
 }
 
 // ---------------------------------------------------------------------------
@@ -250,52 +252,58 @@ async function runPrinterStep(step: Step, ctx: StepExecutorContext): Promise<Ste
 // ---------------------------------------------------------------------------
 
 async function moveRobotArm(step: Step, ctx: StepExecutorContext): Promise<StepOutputs> {
-  const machineId = ctx.machineIdByName[step.machine]
-  if (!machineId) throw new Error(`Robot arm "${step.machine}" not found`)
+  const machineId = ctx.machineIdByName[step.machine];
+  if (!machineId) throw new Error(`Robot arm "${step.machine}" not found`);
 
-  const speed_pct = parseFloat(step.inputs.speed_pct) || 25
-  const acceleration_pct = parseFloat(step.inputs.acceleration_pct) || 25
+  const speed_pct = parseFloat(step.inputs.speed_pct) || 25;
+  const acceleration_pct = parseFloat(step.inputs.acceleration_pct) || 25;
 
-  let body: MoveTargetBody
+  let body: MoveTargetBody;
   if (step.inputs.target_type === 'joint') {
-    let joints: { joint: JointName; angle_deg: number }[] = []
+    let joints: { joint: JointName; angle_deg: number }[] = [];
     try {
-      const parsed = JSON.parse(step.inputs.joints || '[]')
-      if (Array.isArray(parsed)) joints = parsed
+      const parsed = JSON.parse(step.inputs.joints || '[]');
+      if (Array.isArray(parsed)) joints = parsed;
     } catch {
-      joints = []
+      joints = [];
     }
-    if (joints.length === 0) throw new Error('Select at least one joint to rotate')
+    if (joints.length === 0) throw new Error('Select at least one joint to rotate');
     body = {
       target_type: 'joint',
       mode: step.inputs.mode === 'relative' ? 'relative' : 'absolute',
       joints,
       speed_pct,
       acceleration_pct,
-    }
+    };
   } else {
-    const x = parseFloat(step.inputs.x)
-    const y = parseFloat(step.inputs.y)
-    const z = parseFloat(step.inputs.z)
+    const x = parseFloat(step.inputs.x);
+    const y = parseFloat(step.inputs.y);
+    const z = parseFloat(step.inputs.z);
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
-      throw new Error('Target x, y, and z coordinates are required for this step')
+      throw new Error('Target x, y, and z coordinates are required for this step');
     }
-    body = { target_type: 'cartesian', position: { x, y, z }, speed_pct, acceleration_pct }
+    body = { target_type: 'cartesian', position: { x, y, z }, speed_pct, acceleration_pct };
   }
 
-  ctx.setRunningRobot({ kind: 'robot', machineName: step.machine, target: body, startedAt: Date.now(), result: null })
+  ctx.setRunningRobot({
+    kind: 'robot',
+    machineName: step.machine,
+    target: body,
+    startedAt: Date.now(),
+    result: null,
+  });
 
   const res = await fetch('/api/robot-move', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ machineId, ...body }),
-  })
-  const result = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(result.error ?? `Robot move failed (${res.status})`)
+  });
+  const result = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(result.error ?? `Robot move failed (${res.status})`);
 
-  ctx.setRunningRobot((prev) => (prev ? { ...prev, result } : prev))
+  ctx.setRunningRobot((prev) => (prev ? { ...prev, result } : prev));
 
-  if (result.status !== 'success') throw new Error(result.error ?? `Move ${result.status}`)
+  if (result.status !== 'success') throw new Error(result.error ?? `Move ${result.status}`);
 
   return {
     status: result.status,
@@ -306,26 +314,29 @@ async function moveRobotArm(step: Step, ctx: StepExecutorContext): Promise<StepO
       body.target_type === 'cartesian'
         ? `Moved to (${body.position.x}, ${body.position.y}, ${body.position.z})`
         : `Rotated ${body.joints.map((j) => j.joint).join(', ')}`,
-  }
+  };
 }
 
 /**
  * TEMPORARY: Robot Arm — Gripper Cycle isn't wired to hardware yet, so this
- * just waits 2 minutes to stand in for the real cycle time. See
- * app/robot-test/page.tsx `GripperControl.handleRunGripper` for the
- * proof-of-concept this will eventually call: POST { position, speed, force }
- * to `${bridge}/robot/gripper`, which runs `gripper_basic.urp` (activate,
- * open, close).
+ * just waits 60 seconds (testing — was 2 minutes) to stand in for the real
+ * cycle time. See app/robot-test/page.tsx `GripperControl.handleRunGripper`
+ * for the proof-of-concept this will eventually call: POST { position,
+ * speed, force } to `${bridge}/robot/gripper`, which runs
+ * `gripper_basic.urp` (activate, open, close).
  */
 async function cycleGripper(_step: Step, _ctx: StepExecutorContext): Promise<StepOutputs> {
-  await new Promise((resolve) => setTimeout(resolve, 2 * 60 * 1000))
-  return { summary: 'Gripper cycle complete (simulated — hardware integration pending)' }
+  await new Promise((resolve) => setTimeout(resolve, 45 * 1000));
+  return { summary: 'Gripper cycle complete (simulated — hardware integration pending)' };
 }
 
 /** Dispatches to the robot_arm action's specific executor once seeded action keys exist. */
 async function runRobotArmStep(step: Step, ctx: StepExecutorContext): Promise<StepOutputs> {
-  if (step.action === 'gripper_cycle') return cycleGripper(step, ctx)
-  return moveRobotArm(step, ctx)
+  // action_types.type_key for this action is 'gripper' (display name "Gripper Cycle"), not
+  // 'gripper_cycle' -- the mismatch meant every gripper step fell through to moveRobotArm and
+  // failed on its x/y/z check, since gripper's own inputs are position/speed/force, not x/y/z.
+  if (step.action === 'gripper') return cycleGripper(step, ctx);
+  return moveRobotArm(step, ctx);
 }
 
 // ---------------------------------------------------------------------------
@@ -350,24 +361,29 @@ async function runRobotArmStep(step: Step, ctx: StepExecutorContext): Promise<St
 // ---------------------------------------------------------------------------
 
 async function runCameraStep(step: Step, ctx: StepExecutorContext): Promise<StepOutputs> {
-  const machineId = ctx.machineIdByName[step.machine]
-  if (!machineId) throw new Error(`Camera "${step.machine}" not found`)
+  const machineId = ctx.machineIdByName[step.machine];
+  if (!machineId) throw new Error(`Camera "${step.machine}" not found`);
 
-  const delay = parseFloat(step.inputs.delay)
+  const delay = parseFloat(step.inputs.delay);
 
-  ctx.setRunningCamera({ kind: 'camera', machineName: step.machine, startedAt: Date.now(), imageUrl: null })
+  ctx.setRunningCamera({
+    kind: 'camera',
+    machineName: step.machine,
+    startedAt: Date.now(),
+    imageUrl: null,
+  });
 
-  if (Number.isFinite(delay) && delay > 0) await sleep(delay * 1000)
+  if (Number.isFinite(delay) && delay > 0) await sleep(delay * 1000);
 
   const res = await fetch('/api/camera-capture', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ machineId }),
-  })
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(body.error ?? `Camera capture failed (${res.status})`)
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? `Camera capture failed (${res.status})`);
 
-  ctx.setRunningCamera((prev) => (prev ? { ...prev, imageUrl: body.image_url } : prev))
+  ctx.setRunningCamera((prev) => (prev ? { ...prev, imageUrl: body.image_url } : prev));
 
   return {
     image_keys: [body.image_url],
@@ -380,7 +396,7 @@ async function runCameraStep(step: Step, ctx: StepExecutorContext): Promise<Step
     depth_height: body.depth_height,
     depth_scale: body.depth_scale,
     summary: 'Photo captured',
-  }
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -403,15 +419,15 @@ async function runCameraStep(step: Step, ctx: StepExecutorContext): Promise<Step
  * — then sends it to the machine's classification bridge for analysis.
  */
 async function classifyPhoto(step: Step, ctx: StepExecutorContext): Promise<StepOutputs> {
-  const machineId = ctx.machineIdByName[step.machine]
-  if (!machineId) throw new Error(`Classification model "${step.machine}" not found`)
+  const machineId = ctx.machineIdByName[step.machine];
+  if (!machineId) throw new Error(`Classification model "${step.machine}" not found`);
 
-  const sourceStepId = step.inputs.photo_source
-  const sourceOutputs = sourceStepId ? ctx.stepOutputsById[sourceStepId] : undefined
-  const imageKeys = sourceOutputs?.image_keys
-  const imageUrl = Array.isArray(imageKeys) ? imageKeys[0] : undefined
+  const sourceStepId = step.inputs.photo_source;
+  const sourceOutputs = sourceStepId ? ctx.stepOutputsById[sourceStepId] : undefined;
+  const imageKeys = sourceOutputs?.image_keys;
+  const imageUrl = Array.isArray(imageKeys) ? imageKeys[0] : undefined;
   if (typeof imageUrl !== 'string' || !imageUrl) {
-    throw new Error('No source photo — select a camera step for Photo Source')
+    throw new Error('No source photo — select a camera step for Photo Source');
   }
 
   // Depth captured alongside the source photo, if the camera step got it
@@ -419,15 +435,15 @@ async function classifyPhoto(step: Step, ctx: StepExecutorContext): Promise<Step
   // depth-gate contours instead of falling back to brightness-only
   // (picking the largest bright blob, which this rig's reflective
   // enclosure walls can fool — see main.py's _annotate_curvature).
-  const depthB64 = sourceOutputs?.depth_b64
-  const depthWidth = sourceOutputs?.depth_width
-  const depthHeight = sourceOutputs?.depth_height
-  const depthScale = sourceOutputs?.depth_scale
+  const depthB64 = sourceOutputs?.depth_b64;
+  const depthWidth = sourceOutputs?.depth_width;
+  const depthHeight = sourceOutputs?.depth_height;
+  const depthScale = sourceOutputs?.depth_scale;
   const hasDepth =
     typeof depthB64 === 'string' &&
     typeof depthWidth === 'number' &&
     typeof depthHeight === 'number' &&
-    typeof depthScale === 'number'
+    typeof depthScale === 'number';
 
   ctx.setRunningClassification({
     kind: 'classification',
@@ -435,7 +451,7 @@ async function classifyPhoto(step: Step, ctx: StepExecutorContext): Promise<Step
     sourceImageUrl: imageUrl,
     startedAt: Date.now(),
     result: null,
-  })
+  });
 
   const res = await fetch('/api/classify', {
     method: 'POST',
@@ -452,11 +468,11 @@ async function classifyPhoto(step: Step, ctx: StepExecutorContext): Promise<Step
           }
         : { machineId, imageUrl }
     ),
-  })
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(body.error ?? `Classification request failed (${res.status})`)
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? `Classification request failed (${res.status})`);
 
-  ctx.setRunningClassification((prev) => (prev ? { ...prev, result: body } : prev))
+  ctx.setRunningClassification((prev) => (prev ? { ...prev, result: body } : prev));
 
   return {
     // Matches action_types.output_schema for classification_model's "classify" action.
@@ -471,14 +487,14 @@ async function classifyPhoto(step: Step, ctx: StepExecutorContext): Promise<Step
       body.analysis_status === 'TRACKING' && body.bend_angle_deg != null
         ? `${body.analysis_status} — ${body.bend_angle_deg.toFixed(1)}°`
         : body.analysis_status,
-  }
+  };
 }
 
 async function runClassificationModelStep(
   step: Step,
   ctx: StepExecutorContext
 ): Promise<StepOutputs> {
-  return classifyPhoto(step, ctx)
+  return classifyPhoto(step, ctx);
 }
 
 // ---------------------------------------------------------------------------
@@ -490,4 +506,4 @@ export const STEP_EXECUTORS: Partial<Record<TechKey, StepExecutor>> = {
   robot_arm: runRobotArmStep,
   camera: runCameraStep,
   classification_model: runClassificationModelStep,
-}
+};

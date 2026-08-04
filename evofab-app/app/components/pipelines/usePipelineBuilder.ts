@@ -90,6 +90,19 @@ export function usePipelineBuilder(availableTechs: TechKey[]) {
     setSteps(deriveStepFields(nextStepsRaw, nextRootOrder, nextGroups))
   }
 
+  /**
+   * Replaces the whole tree wholesale — used to hydrate the builder from a past run's
+   * reconstructed definition (see GET /api/pipelines/[id]/definition and "Edit & Rerun" in
+   * PipelineBuilder), the one case where a tree arrives fully-formed rather than being built up
+   * through the usual step-at-a-time mutations. Also clears any in-progress selection/draft,
+   * since both refer to ids from whatever tree was there before.
+   */
+  function loadDefinition(nextSteps: Step[], nextGroups: LoopGroup[], nextRootOrder: BuilderEntry[]) {
+    commit(nextRootOrder, nextGroups, nextSteps)
+    setCheckedIds(new Set())
+    closeDraft()
+  }
+
   function orderOf(containerGroupId: string | null, groupsList: LoopGroup[]): BuilderEntry[] {
     if (containerGroupId === null) return rootOrder
     return groupsList.find((g) => g.id === containerGroupId)?.children ?? []
@@ -454,5 +467,6 @@ export function usePipelineBuilder(availableTechs: TechKey[]) {
     setDraftPrintSetting,
     setDraftMaterialProfile,
     commitDraft,
+    loadDefinition,
   }
 }

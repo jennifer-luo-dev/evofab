@@ -53,7 +53,9 @@ ORBBEC_CAPTURE_TIMEOUT_S = 2.0  # margin over the service's own ~1s wait_for_fra
 _SAFETY_PLANES = [
     ("east",  ( 0.0, -1.0,  0.0),  0.250),   # y ≤ 250 mm
     ("south", (-1.0,  0.0,  0.0),  0.200),   # x ≤ 200 mm
-    ("table", ( 0.0,  0.0,  1.0), -0.025),   # z ≥  25 mm
+    # TODO: temporary for testing -- revert to -0.025 (z >= 25 mm) once done, this is the
+    # real table-collision margin.
+    ("table", ( 0.0,  0.0,  1.0),  1.000),   # z ≥ -1 m (was 25 mm)
 ]
 
 # UR joint order, matching rtde_receive's getActualQ()/getActualQd() index order.
@@ -81,6 +83,10 @@ _CARTESIAN_VEL_MAX = 0.3    # m/s
 _CARTESIAN_ACCEL_MAX = 0.3  # m/s²
 _JOINT_VEL_MAX = 1.0        # rad/s
 _JOINT_ACCEL_MAX = 1.0      # rad/s²
+
+# Above this distance from the arm's current TCP position, a Cartesian move uses
+# movej(p[...]) instead of movel — see _execute_cartesian_move.
+_JOG_MOVEL_THRESHOLD_M = 0.1
 
 # How often each WebSocket handler checks for state changes.
 POLL_HZ = 10
@@ -302,7 +308,7 @@ def _final_state(recv) -> dict:
 
 
 def _execute_cartesian_move(position: CartesianTarget, speed_pct: float, acceleration_pct: float) -> dict:
-    """Blocking: validate safety planes, send URscript movej(p[...]), confirm arrival."""
+    """Blocking: validate safety planes, send URscript movel/movej(p[...]) (see below), confirm arrival."""
     x, y, z = position.x, position.y, position.z
     violations = [
         name
@@ -324,6 +330,12 @@ def _execute_cartesian_move(position: CartesianTarget, speed_pct: float, acceler
     except ImportError:
         return _failed_result("ur-rtde not installed")
 
+    # Fail fast off the background reader's already-known state instead of
+    # letting RTDEReceiveInterface make its own (GIL-holding, internally
+    # retried) connect attempt against an unreachable robot — see _rtde_reader.
+    if not _latest_state.get("connected"):
+        return _failed_result("Robot not connected.")
+
     started_at = time.time()
     try:
         # Snapshot position and joint angles before the move.
@@ -341,12 +353,30 @@ def _execute_cartesian_move(position: CartesianTarget, speed_pct: float, acceler
         # Send URscript via port 30002 (secondary client interface).
         # Requires Remote Control mode on the teach pendant.
         #
-        # movej(p[...]) solves IK once then moves in joint space — singularity-safe.
-        # movel requires a linear TCP path at every point, which causes joint
-        # velocity blow-up near singularities (C15A40).
+        # Which motion primitive we use depends on how far this move is from the
+        # arm's current position:
+        #
+        # - Close (jog buttons, pad/slider drags — always requesting a point near
+        #   here): movel. It moves in a straight Cartesian line starting from
+        #   wherever the arm actually is, so it can't jump to a different
+        #   elbow/wrist branch the way a fresh, from-scratch IK solve can. That
+        #   branch-jump is a real failure mode here — after a joint wound past
+        #   +-180 deg (e.g. wrist_3 at -187 deg), movej(p[...])'s unbiased IK
+        #   solve can normalize back into +-180 deg, turning a requested 1 mm jog
+        #   into a ~360 deg wrist correction (looks like "it moved backwards" and
+        #   burns through the poll loop below without ever registering as
+        #   started, which then reports the misleading "enable Remote Control"
+        #   error).
+        # - Far (Home from across the workspace, a typed target far from here,
+        #   ...): movej(p[...]). movel would hold a straight-line Cartesian path
+        #   the whole way, which blows up joint velocity near a singularity
+        #   (C15A40); movej solves IK once and moves in joint space instead,
+        #   singularity-safe.
+        dist = sqrt((x - before[0]) ** 2 + (y - before[1]) ** 2 + (z - before[2]) ** 2)
+        move_fn = "movel" if dist <= _JOG_MOVEL_THRESHOLD_M else "movej"
         script = (
             f"set_payload(1.07, [0.0, 0.0, 0.058])\n"
-            f"movej(p[{x:.4f},{y:.4f},{z:.4f},{rx:.6f},{ry:.6f},{rz:.6f}], a={a:.4f}, v={v:.4f})\n"
+            f"{move_fn}(p[{x:.4f},{y:.4f},{z:.4f},{rx:.6f},{ry:.6f},{rz:.6f}], a={a:.4f}, v={v:.4f})\n"
         )
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(5)
@@ -423,6 +453,12 @@ def _execute_joint_move(
         import rtde_receive
     except ImportError:
         return _failed_result("ur-rtde not installed")
+
+    # Fail fast off the background reader's already-known state instead of
+    # letting RTDEReceiveInterface make its own (GIL-holding, internally
+    # retried) connect attempt against an unreachable robot — see _rtde_reader.
+    if not _latest_state.get("connected"):
+        return _failed_result("Robot not connected.")
 
     started_at = time.time()
     try:

@@ -124,6 +124,12 @@ export function PipelineHistoryDetail({ pipeline, onBack, onDelete }: PipelineHi
       <div className="flex items-center gap-2.5 mb-5.5">
         <h1 className="text-[19px] font-semibold text-text">{pipeline.name}</h1>
         <PipelineStatusBadge status={status ?? pipeline.status} />
+        <a
+          href={`/pipelines?edit=${pipeline.id}`}
+          className="ml-auto text-[12.5px] font-semibold text-teal hover:underline"
+        >
+          Edit &amp; Rerun
+        </a>
         <button
           type="button"
           onClick={() => {
@@ -131,7 +137,7 @@ export function PipelineHistoryDetail({ pipeline, onBack, onDelete }: PipelineHi
               onDelete(pipeline.id)
             }
           }}
-          className="ml-auto text-[12.5px] font-semibold text-muted hover:text-red"
+          className="text-[12.5px] font-semibold text-muted hover:text-red"
         >
           Delete Run
         </button>

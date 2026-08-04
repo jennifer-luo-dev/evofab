@@ -69,10 +69,14 @@ interface PipelineStepInput {
   inputs: Record<string, unknown>
 }
 
+const CREATABLE_STATUSES = new Set(['running', 'draft'])
+
 /**
- * POST /api/pipelines — Creates a pipeline run (status `running`), its loop definitions, and
- * its steps (status `pending`, in the given order — real executable rows and inert loop-body
- * definitions alike) in one shot. Body: `{ name: string, groups: UnrolledGroup[], steps:
+ * POST /api/pipelines — Creates a pipeline run (status `running` by default, or `draft` for a
+ * "Save Pipeline" that persists the tree without dispatching anything — see the Pipelines
+ * builder's `savePipeline`), its loop definitions, and its steps (status `pending`, in the given
+ * order — real executable rows and inert loop-body definitions alike) in one shot. Body: `{
+ * name: string, status?: 'running' | 'draft', groups: UnrolledGroup[], steps:
  * PipelineStepInput[] }`. Returns `{ pipeline, steps }`, both including their generated ids.
  */
 export async function POST(req: NextRequest) {
@@ -80,6 +84,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json()
 
   const name: string = body.name || 'Untitled Pipeline'
+  const status: string = CREATABLE_STATUSES.has(body.status) ? body.status : 'running'
   const groups: UnrolledGroup[] = Array.isArray(body.groups) ? body.groups : []
   const steps: PipelineStepInput[] = Array.isArray(body.steps) ? body.steps : []
 
@@ -92,7 +97,8 @@ export async function POST(req: NextRequest) {
 
   const { data: pipeline, error: pipelineError } = await supabase
     .from('pipelines')
-    .insert({ name, status: 'running', started_at: new Date().toISOString() })
+    // A draft hasn't started executing, so it gets no `started_at` — only a real run does.
+    .insert({ name, status, ...(status === 'running' ? { started_at: new Date().toISOString() } : {}) })
     .select()
     .single()
 

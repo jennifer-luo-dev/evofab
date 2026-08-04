@@ -30,6 +30,8 @@ interface LoopBlockProps {
   availableTechs: TechOption[]
   onMoveUp: () => void
   onMoveDown: () => void
+  onTestRunStep: (stepIds: string[]) => void
+  testRunDisabled: boolean
 }
 
 /** One loop's header + body (or, when collapsed, a step-count badge and a greyed preview of the body). */
@@ -42,6 +44,8 @@ export function LoopBlock({
   availableTechs,
   onMoveUp,
   onMoveDown,
+  onTestRunStep,
+  testRunDisabled,
 }: LoopBlockProps) {
   const [collapsed, setCollapsed] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
@@ -159,6 +163,8 @@ export function LoopBlock({
               stepStatus={stepStatus}
               currentStepIds={currentStepIds}
               availableTechs={availableTechs}
+              onTestRunStep={onTestRunStep}
+              testRunDisabled={testRunDisabled}
               hideControls
             />
           </div>
@@ -172,6 +178,8 @@ export function LoopBlock({
             stepStatus={stepStatus}
             currentStepIds={currentStepIds}
             availableTechs={availableTechs}
+            onTestRunStep={onTestRunStep}
+            testRunDisabled={testRunDisabled}
           />
         </div>
       )}

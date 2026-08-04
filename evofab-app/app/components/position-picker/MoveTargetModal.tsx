@@ -19,7 +19,7 @@ import { useState } from 'react'
 import { cn } from '@/app/lib/utils'
 import { Modal } from '@/app/components/ui/Modal'
 import { useRobot } from '@/app/contexts/RobotContext'
-import { JOINT_NAMES, JOINT_LABELS, type JointName } from '@/app/lib/robot'
+import { JOINT_NAMES, JOINT_LABELS, type JointName, type JointRotation } from '@/app/lib/robot'
 import { LinkedCoordinateFields } from './LinkedCoordinateFields'
 import { XYPad } from './XYPad'
 import { ZSlider } from './ZSlider'
@@ -85,7 +85,7 @@ export function MoveTargetModal({ initial, machineId, onCancel, onConfirm }: Mov
     setPosition(clampPosition(next, ROBOT_BOUNDS))
   }
 
-  /** Same as `update`, plus fires the actual robot move — for discrete actions (jog, pad release, slider release, Home). */
+  /** Same as `update`, plus fires the actual robot move — for discrete actions (pad release, slider release, Home). */
   function updateAndMove(next: Position) {
     const clamped = clampPosition(next, ROBOT_BOUNDS)
     setPosition(clamped)
@@ -97,6 +97,50 @@ export function MoveTargetModal({ initial, machineId, onCancel, onConfirm }: Mov
         acceleration_pct: accelerationPct,
       })
     }
+  }
+
+  /** Jog-specific variant of `updateAndMove` — does NOT run `next` back through
+   * `clampPosition(..., ROBOT_BOUNDS)`. `next` here already came from JogControls,
+   * which only clamps the one axis actually being jogged and passes the other two
+   * straight through from the arm's real live position (see its `livePosition`
+   * prop below). Re-clamping all three axes to ROBOT_BOUNDS — a rough placeholder
+   * box, not the real reach (see constants.ts) — would silently snap any axis the
+   * live position sits outside of back to the boundary on *every* jog press,
+   * regardless of which axis/direction was pressed: a big unexpected jump on the
+   * first click, then no further motion on repeats since it's already pinned to
+   * that boundary. The live axes are real by definition (the arm is physically
+   * there right now) and need no clamping; the bridge's own safety-plane check
+   * remains the actual source of truth regardless. */
+  function jogAndMove(next: Position) {
+    setPosition(next)
+    if (machineId) {
+      sendMove(machineId, {
+        target_type: 'cartesian',
+        position: next,
+        speed_pct: speedPct,
+        acceleration_pct: accelerationPct,
+      })
+    }
+  }
+
+  // "Sync to Current" — captures the arm's exact live pose, both its Cartesian position and its
+  // per-joint rotations. A Cartesian target only pins x/y/z; sent through the robot's IK solver
+  // at execution time (see moveRobotArm in stepExecutors.ts, which ignores `joints` entirely for
+  // a cartesian target), the *same* x/y/z can resolve to a different elbow/wrist configuration
+  // than the one just synced — the synced rotations would be captured but silently never used.
+  // Joint Absolute is the only target type that actually replays the exact angles, so syncing
+  // switches to it — otherwise confirming right after Sync to Current (the natural next step,
+  // with no tab switch in between) would quietly "forget" the exact rotations it just captured.
+  function syncToCurrent(pos: Position, joints: JointRotation[]) {
+    update(pos)
+    const byJoint = new Map(joints.map((j) => [j.joint, j.angle_deg]))
+    setJointRows(() => {
+      const rows = {} as JointRowState
+      for (const j of JOINT_NAMES) rows[j] = { active: true, value: byJoint.get(j) ?? 0 }
+      return rows
+    })
+    setTargetType('joint')
+    setJointMode('absolute')
   }
 
   function updateJointRow(joint: JointName, value: number) {
@@ -238,9 +282,17 @@ export function MoveTargetModal({ initial, machineId, onCancel, onConfirm }: Mov
               />
             </div>
 
-            <JogControls position={position} bounds={ROBOT_BOUNDS} onChange={updateAndMove} disabled={sending} />
+            <JogControls
+              position={position}
+              bounds={ROBOT_BOUNDS}
+              livePosition={
+                robot.tcp_pose ? { x: robot.tcp_pose[0], y: robot.tcp_pose[1], z: robot.tcp_pose[2] } : null
+              }
+              onChange={jogAndMove}
+              disabled={sending}
+            />
 
-            <QuickActions homePosition={ROBOT_HOME_POSITION} onHome={updateAndMove} onSyncToCurrent={update} disabled={sending} />
+            <QuickActions homePosition={ROBOT_HOME_POSITION} onHome={updateAndMove} onSyncToCurrent={syncToCurrent} disabled={sending} />
           </>
         ) : (
           <div className="flex flex-col gap-2">

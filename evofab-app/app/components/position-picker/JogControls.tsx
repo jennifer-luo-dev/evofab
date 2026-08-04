@@ -13,6 +13,11 @@ import { JOG_STEP_OPTIONS } from './constants'
 interface JogControlsProps {
   position: Position
   bounds: AxisBounds
+  /** The robot's actual live TCP position, when known — jog steps from this rather than from
+   * `position` so the step is exact regardless of whether `position` (the stored/typed target)
+   * matches where the arm physically is, mirroring app/robot-test/page.tsx's handleJog. Falls
+   * back to `position` when unknown (e.g. no machine selected yet, or not connected). */
+  livePosition?: Position | null
   /** Called with the jogged position — the caller decides whether this also fires a live robot move (see MoveTargetModal, which treats every jog as discrete, exactly like app/robot-test/page.tsx's handleJog). */
   onChange: (next: Position) => void
   disabled?: boolean
@@ -20,11 +25,22 @@ interface JogControlsProps {
 
 const AXES = ['x', 'y', 'z'] as const
 
-export function JogControls({ position, bounds, onChange, disabled }: JogControlsProps) {
+export function JogControls({ position, bounds, livePosition, onChange, disabled }: JogControlsProps) {
   const [step, setStep] = useState<number>(JOG_STEP_OPTIONS[0].value)
 
   function jog(axis: (typeof AXES)[number], direction: 1 | -1) {
-    onChange({ ...position, [axis]: clamp(position[axis] + direction * step, bounds[axis]) })
+    // Live axes are real -- the arm is physically there right now -- so they're stepped and sent
+    // as-is; the bridge's own safety-plane check (see constants.ts's ROBOT_BOUNDS comment) is the
+    // real authority on whether the result is reachable. Clamping to ROBOT_BOUNDS here too (as
+    // this used to) would fight that: the placeholder box doesn't match the arm's real reach, so
+    // a live axis already outside it would get snapped back to the boundary on every press. Only
+    // the no-live-position fallback (nothing connected yet) still clamps, since `position` there
+    // is a UI-only value with no real robot backing it.
+    if (livePosition) {
+      onChange({ ...livePosition, [axis]: livePosition[axis] + direction * step })
+    } else {
+      onChange({ ...position, [axis]: clamp(position[axis] + direction * step, bounds[axis]) })
+    }
   }
 
   return (

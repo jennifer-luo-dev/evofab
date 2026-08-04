@@ -5,7 +5,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { PipelineBuilder } from '@/app/components/pipelines/PipelineBuilder';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { PipelineBuilder, type PipelineDefinition } from '@/app/components/pipelines/PipelineBuilder';
 import { TechSelectionGrid } from '@/app/components/pipelines/TechSelectionGrid';
 import {
   EMPTY_PIPELINE_CONFIG,
@@ -55,9 +56,13 @@ async function fetchPipelineConfig(): Promise<PipelineConfig> {
 
 /** Technology selection followed by the pipeline step builder. */
 export default function PipelinesPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const editPipelineId = searchParams.get('edit');
   const [config, setConfig] = useState<PipelineConfig>(EMPTY_PIPELINE_CONFIG);
   const [view, setView] = useState<'tech-select' | 'builder'>('tech-select');
   const [selectedTechs, setSelectedTechs] = useState<Set<TechKey>>(new Set());
+  const [editDefinition, setEditDefinition] = useState<PipelineDefinition | null>(null);
 
   useEffect(() => {
     fetchPipelineConfig().then((loaded) => {
@@ -65,6 +70,32 @@ export default function PipelinesPage() {
       setSelectedTechs(new Set(loaded.techs.map((t) => t.key)));
     });
   }, []);
+
+  // "Edit & Rerun" from History (`/pipelines?edit=<id>`): load that run's reconstructed tree
+  // (see GET /api/pipelines/[id]/definition) and jump straight to the builder pre-populated
+  // with it, skipping technology selection. The query param is cleared only once the fetch
+  // resolves (rather than immediately) — clearing it up front would flip `editPipelineId` to
+  // null and re-run this effect's cleanup mid-flight, marking the still-in-progress fetch
+  // `cancelled` before its `.then` ever got to apply the loaded definition.
+  useEffect(() => {
+    if (!editPipelineId) return;
+    let cancelled = false;
+    fetch(`/api/pipelines/${editPipelineId}/definition`)
+      .then((res) => res.json())
+      .then((data: PipelineDefinition & { error?: string }) => {
+        if (cancelled) return;
+        if (!data.error) {
+          setEditDefinition(data);
+          setView('builder');
+        }
+        router.replace('/pipelines');
+      })
+      .catch((err) => console.error('Failed to load pipeline for editing', err));
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editPipelineId]);
 
   function toggleTech(key: TechKey) {
     setSelectedTechs((prev) => {
@@ -81,6 +112,7 @@ export default function PipelinesPage() {
         <PipelineBuilder
           selectedTechs={selectedTechs}
           onBackToTechSelect={() => setView('tech-select')}
+          initialDefinition={editDefinition}
         />
       ) : (
         <div>

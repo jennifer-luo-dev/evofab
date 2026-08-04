@@ -1,15 +1,18 @@
 // QuickActions.tsx
 // "Home" resets to a known-safe idle pose and — like the jog buttons — is a
 // discrete action that also fires a live robot move. "Sync to Current" reads
-// the UR7e's live TCP pose straight from RobotContext's /ws/robot feed
-// (main.py's _rtde_reader already publishes tcp_pose on every tick); it only
-// updates the picker's UI state, since the robot is already there — disabled
-// rather than faking a value when the robot isn't connected or hasn't
-// reported a pose yet.
+// the UR7e's live TCP pose *and* joint angles straight from RobotContext's
+// /ws/robot feed (main.py's _rtde_reader publishes both on every tick), so
+// the caller can adopt the exact pose the arm is physically in — not just
+// its Cartesian coordinates — regardless of which target-type tab is active
+// when the user later confirms. It only updates the picker's UI state, since
+// the robot is already there — disabled rather than faking a value when the
+// robot isn't connected or hasn't reported a pose yet.
 
 'use client'
 
 import { useRobot } from '@/app/contexts/RobotContext'
+import { JOINT_NAMES, type JointRotation } from '@/app/lib/robot'
 import type { Position } from './positionMath'
 
 interface QuickActionsProps {
@@ -17,13 +20,13 @@ interface QuickActionsProps {
   /** Fired for "Home" — the caller is expected to also trigger a live robot move here. */
   onHome: (pos: Position) => void
   /** Fired for "Sync to Current" — UI-only, no robot move (it's already at this pose). */
-  onSyncToCurrent: (pos: Position) => void
+  onSyncToCurrent: (pos: Position, joints: JointRotation[]) => void
   disabled?: boolean
 }
 
 export function QuickActions({ homePosition, onHome, onSyncToCurrent, disabled }: QuickActionsProps) {
   const robot = useRobot()
-  const canSync = robot.connected && !!robot.tcp_pose
+  const canSync = robot.connected && !!robot.tcp_pose && !!robot.joint_positions_deg
 
   return (
     <div className="flex gap-2">
@@ -38,8 +41,12 @@ export function QuickActions({ homePosition, onHome, onSyncToCurrent, disabled }
       <button
         type="button"
         onClick={() => {
-          if (!robot.tcp_pose) return
-          onSyncToCurrent({ x: robot.tcp_pose[0], y: robot.tcp_pose[1], z: robot.tcp_pose[2] })
+          if (!robot.tcp_pose || !robot.joint_positions_deg) return
+          const joints = robot.joint_positions_deg
+          onSyncToCurrent(
+            { x: robot.tcp_pose[0], y: robot.tcp_pose[1], z: robot.tcp_pose[2] },
+            JOINT_NAMES.map((joint, i) => ({ joint, angle_deg: joints[i] }))
+          )
         }}
         disabled={disabled || !canSync}
         title={canSync ? undefined : 'Robot not connected — live pose unavailable'}

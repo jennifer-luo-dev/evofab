@@ -152,6 +152,15 @@ export function TrashIcon(props: IconProps) {
   )
 }
 
+/** Play/triangle glyph — trigger for test-running a step outside a full pipeline run. */
+export function PlayIcon(props: IconProps) {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" {...props}>
+      <path d="M4.5 3 L13 8 L4.5 13 Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 /** Crosshair/target glyph — trigger for the robot-arm position picker. */
 export function TargetIcon(props: IconProps) {
   return (
