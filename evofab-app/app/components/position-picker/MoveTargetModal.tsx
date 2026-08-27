@@ -11,7 +11,9 @@
 // and "Home" all fire a real robot move via useLiveMove — mirroring
 // app/robot-test/page.tsx's handleJog, which sends the same POST
 // /api/robot-move on every jog click rather than waiting for an explicit
-// confirm. Typed numeric entry and "Sync to Current" stay UI-only.
+// confirm. Committing a typed joint angle in Joint Absolute (blur/Enter) also
+// fires one. Cartesian typed entry, Joint Relative typed entry, and "Sync to
+// Current" stay UI-only.
 
 'use client'
 
@@ -21,13 +23,14 @@ import { Modal } from '@/app/components/ui/Modal'
 import { useRobot } from '@/app/contexts/RobotContext'
 import { JOINT_NAMES, JOINT_LABELS, type JointName, type JointRotation } from '@/app/lib/robot'
 import { LinkedCoordinateFields } from './LinkedCoordinateFields'
+import { OrientationFields } from './OrientationFields'
 import { XYPad } from './XYPad'
 import { ZSlider } from './ZSlider'
 import { JogControls } from './JogControls'
 import { QuickActions } from './QuickActions'
 import { JointRow } from './JointRow'
 import { useLiveMove } from './useLiveMove'
-import { clampPosition, type Position } from './positionMath'
+import { clampPosition, type Orientation, type Position } from './positionMath'
 import { clamp as clampNumber } from './jointMath'
 import {
   ROBOT_BOUNDS,
@@ -39,6 +42,8 @@ import {
 export interface MoveTargetResult {
   targetType: 'cartesian' | 'joint'
   position: Position
+  /** `null` = not pinned — the bridge inherits whatever orientation the arm is already in. */
+  orientation: Orientation | null
   jointMode: 'absolute' | 'relative'
   joints: { joint: JointName; angle_deg: number }[]
   speedPct: number
@@ -76,6 +81,7 @@ export function MoveTargetModal({ initial, machineId, onCancel, onConfirm }: Mov
   const [targetType, setTargetType] = useState<'cartesian' | 'joint'>(initial.targetType)
   const [jointMode, setJointMode] = useState<'absolute' | 'relative'>(initial.jointMode)
   const [position, setPosition] = useState<Position>(() => clampPosition(initial.position, ROBOT_BOUNDS))
+  const [orientation, setOrientation] = useState<Orientation | null>(initial.orientation)
   const [jointRows, setJointRows] = useState<JointRowState>(() => seedJointRows(initial.joints))
   const [speedPct, setSpeedPct] = useState(initial.speedPct)
   const [accelerationPct, setAccelerationPct] = useState(initial.accelerationPct)
@@ -123,16 +129,18 @@ export function MoveTargetModal({ initial, machineId, onCancel, onConfirm }: Mov
     }
   }
 
-  // "Sync to Current" — captures the arm's exact live pose, both its Cartesian position and its
-  // per-joint rotations. A Cartesian target only pins x/y/z; sent through the robot's IK solver
-  // at execution time (see moveRobotArm in stepExecutors.ts, which ignores `joints` entirely for
-  // a cartesian target), the *same* x/y/z can resolve to a different elbow/wrist configuration
-  // than the one just synced — the synced rotations would be captured but silently never used.
-  // Joint Absolute is the only target type that actually replays the exact angles, so syncing
+  // "Sync to Current" — captures the arm's exact live pose: Cartesian position + orientation,
+  // and per-joint rotations. A Cartesian target replayed through the robot's IK solver at
+  // execution time (see moveRobotArm in stepExecutors.ts) can still resolve to a different
+  // elbow/wrist configuration than the one just synced even with x/y/z/rx/ry/rz all pinned —
+  // Joint Absolute is the only target type that replays the exact arm posture, so syncing
   // switches to it — otherwise confirming right after Sync to Current (the natural next step,
   // with no tab switch in between) would quietly "forget" the exact rotations it just captured.
-  function syncToCurrent(pos: Position, joints: JointRotation[]) {
+  // The synced orientation is still captured into Cartesian state below, so switching back to
+  // the Cartesian tab afterward picks it up instead of silently losing it.
+  function syncToCurrent(pos: Position, orientationNow: Orientation, joints: JointRotation[]) {
     update(pos)
+    setOrientation(orientationNow)
     const byJoint = new Map(joints.map((j) => [j.joint, j.angle_deg]))
     setJointRows(() => {
       const rows = {} as JointRowState
@@ -199,6 +207,7 @@ export function MoveTargetModal({ initial, machineId, onCancel, onConfirm }: Mov
     onConfirm({
       targetType,
       position,
+      orientation,
       jointMode,
       joints: JOINT_NAMES.filter((j) => jointRows[j].active).map((j) => ({
         joint: j,
@@ -262,6 +271,14 @@ export function MoveTargetModal({ initial, machineId, onCancel, onConfirm }: Mov
         {targetType === 'cartesian' ? (
           <>
             <LinkedCoordinateFields position={position} bounds={ROBOT_BOUNDS} onChange={update} />
+
+            <OrientationFields
+              orientation={orientation}
+              liveOrientation={
+                robot.tcp_pose ? { rx: robot.tcp_pose[3], ry: robot.tcp_pose[4], rz: robot.tcp_pose[5] } : null
+              }
+              onChange={setOrientation}
+            />
 
             <div className="flex gap-3 items-stretch">
               <div className="flex-1 min-w-0">

@@ -18,6 +18,15 @@ export function clamp(value: number, bounds: Bounds): number {
   return Math.min(bounds.max, Math.max(bounds.min, value))
 }
 
+/** Fixed-decimal angle string for live readouts, with negative zero collapsed to
+ * `0.0`. A joint resting on zero jitters by a few hundredths of a degree; without
+ * this the readout flips between `-0.0°` and `0.0°` on every state push (wrist_3). */
+export function formatAngle(deg: number, decimals = 1): string {
+  const factor = 10 ** decimals
+  const rounded = Math.round(deg * factor) / factor
+  return (rounded === 0 ? 0 : rounded).toFixed(decimals)
+}
+
 /** Maps a normalized `[0, 1]` fraction to a value within `bounds` (0 -> min, 1 -> max). */
 export function fractionToValue(fraction: number, bounds: Bounds): number {
   return bounds.min + fraction * (bounds.max - bounds.min)

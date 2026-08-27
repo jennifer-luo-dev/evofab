@@ -247,7 +247,8 @@ export function usePipelineBuilder(availableTechs: TechKey[]) {
   }
 
   function updateLoopIterationCount(groupId: string, iterationCount: number) {
-    if (iterationCount < 2) return
+    // TODO: temp change for testing — loop minimum lowered from 2 to 1, revert after.
+    if (iterationCount < 1) return
     setGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, iterationCount } : g)))
   }
 

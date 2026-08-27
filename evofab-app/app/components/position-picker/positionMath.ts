@@ -20,6 +20,16 @@ export interface Position {
   z: number
 }
 
+/** Rotation vector (radians) — same axis-angle representation as RTDE's TCP pose
+ * (`rx`/`ry`/`rz`, see RobotContext's RobotState). Pinning this alongside a Cartesian
+ * x/y/z target is what makes "the same position" actually reproducible — see
+ * MoveTargetModal's OrientationFields. */
+export interface Orientation {
+  rx: number
+  ry: number
+  rz: number
+}
+
 /** Restricts `value` to `[bounds.min, bounds.max]`. */
 export function clamp(value: number, bounds: Bounds): number {
   return Math.min(bounds.max, Math.max(bounds.min, value))

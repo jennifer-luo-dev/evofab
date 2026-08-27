@@ -13,14 +13,14 @@
 
 import { useRobot } from '@/app/contexts/RobotContext'
 import { JOINT_NAMES, type JointRotation } from '@/app/lib/robot'
-import type { Position } from './positionMath'
+import type { Orientation, Position } from './positionMath'
 
 interface QuickActionsProps {
   homePosition: Position
   /** Fired for "Home" — the caller is expected to also trigger a live robot move here. */
   onHome: (pos: Position) => void
   /** Fired for "Sync to Current" — UI-only, no robot move (it's already at this pose). */
-  onSyncToCurrent: (pos: Position, joints: JointRotation[]) => void
+  onSyncToCurrent: (pos: Position, orientation: Orientation, joints: JointRotation[]) => void
   disabled?: boolean
 }
 
@@ -45,6 +45,7 @@ export function QuickActions({ homePosition, onHome, onSyncToCurrent, disabled }
           const joints = robot.joint_positions_deg
           onSyncToCurrent(
             { x: robot.tcp_pose[0], y: robot.tcp_pose[1], z: robot.tcp_pose[2] },
+            { rx: robot.tcp_pose[3], ry: robot.tcp_pose[4], rz: robot.tcp_pose[5] },
             JOINT_NAMES.map((joint, i) => ({ joint, angle_deg: joints[i] }))
           )
         }}

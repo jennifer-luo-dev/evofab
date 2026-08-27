@@ -51,7 +51,9 @@ ORBBEC_CAPTURE_TIMEOUT_S = 2.0  # margin over the service's own ~1s wait_for_fra
 # Safety planes (metres, robot base frame).  Constraint: n·p + d ≥ 0
 # Derived from UR7e controller safety configuration.
 _SAFETY_PLANES = [
-    ("east",  ( 0.0, -1.0,  0.0),  0.250),   # y ≤ 250 mm
+    # TODO: temporary for testing -- revert to 0.250 (y ≤ 250 mm) once done, this is the
+    # real east-wall margin.
+    ("east",  ( 0.0, -1.0,  0.0),  0.500),   # y ≤ 500 mm (was 250 mm)
     ("south", (-1.0,  0.0,  0.0),  0.200),   # x ≤ 200 mm
     # TODO: temporary for testing -- revert to -0.025 (z >= 25 mm) once done, this is the
     # real table-collision margin.
@@ -97,6 +99,15 @@ HEARTBEAT_S = 5.0
 # Shared state written by the RTDE thread, read by every WS handler.
 # Single-dict reassignment is atomic under the GIL.
 _latest_state: dict = {"connected": False}
+
+
+def _round(value: float, ndigits: int) -> float:
+    """round(), but collapses IEEE-754 negative zero to 0.0. A joint or TCP axis
+    resting on zero with sub-precision sensor noise otherwise alternates between
+    `-0.0` and `0.0` on every RTDE poll — same number, but they serialize to
+    different JSON and make the live readout visibly flicker (e.g. wrist_3)."""
+    r = round(value, ndigits)
+    return 0.0 if r == 0 else r
 
 
 def _rtde_reachable(timeout: float = 1.5) -> bool:
@@ -157,10 +168,10 @@ def _rtde_reader() -> None:
                     # Monitored by _execute_gripper to track URScript lifecycle
                     "reg18": rtde.getOutputIntRegister(18),
                     # Actual TCP pose [x, y, z, rx, ry, rz] in metres / radians
-                    "tcp_pose": [round(v, 4) for v in pose],
+                    "tcp_pose": [_round(v, 4) for v in pose],
                     # Actual joint angles, degrees, in JOINT_NAMES order — powers the
                     # joint dial's "seed from current angle" and live readout.
-                    "joint_positions_deg": [round(degrees(v), 2) for v in rtde.getActualQ()],
+                    "joint_positions_deg": [_round(degrees(v), 2) for v in rtde.getActualQ()],
                 }
 
                 time.sleep(1 / POLL_HZ)
@@ -240,6 +251,13 @@ class CartesianTarget(BaseModel):
     x: float
     y: float
     z: float
+    # Rotation vector, radians — same axis-angle representation as RTDE's TCP pose
+    # (see _rtde_reader's "tcp_pose"). Omitted (None) means "don't pin orientation":
+    # _execute_cartesian_move falls back to whatever orientation the arm is
+    # already in, matching this endpoint's original position-only behavior.
+    rx: Optional[float] = None
+    ry: Optional[float] = None
+    rz: Optional[float] = None
 
 
 class JointTarget(BaseModel):
@@ -261,7 +279,7 @@ class MoveRequest(BaseModel):
     position: Optional[CartesianTarget] = None
     mode: Optional[Literal["absolute", "relative"]] = None
     joints: Optional[list[JointTarget]] = None
-    speed_pct: float = 25.0
+    speed_pct: float = 100.0
     acceleration_pct: float = 25.0
 
     def shape_error(self) -> Optional[str]:
@@ -296,13 +314,13 @@ def _final_state(recv) -> dict:
     """Joint angles (degrees) + TCP pose from RTDE — the shared "where did we end
     up" snapshot both move paths return, computed once here from the robot's
     own reported state rather than re-derived (FK) by every downstream consumer."""
-    q_deg = [round(degrees(v), 2) for v in recv.getActualQ()]
+    q_deg = [_round(degrees(v), 2) for v in recv.getActualQ()]
     pose = recv.getActualTCPPose()
     return {
         "final_joint_positions_deg": dict(zip(JOINT_NAMES, q_deg)),
         "final_tcp_pose": {
-            "x": round(pose[0], 4), "y": round(pose[1], 4), "z": round(pose[2], 4),
-            "rx": round(pose[3], 5), "ry": round(pose[4], 5), "rz": round(pose[5], 5),
+            "x": _round(pose[0], 4), "y": _round(pose[1], 4), "z": _round(pose[2], 4),
+            "rx": _round(pose[3], 5), "ry": _round(pose[4], 5), "rz": _round(pose[5], 5),
         },
     }
 
@@ -342,10 +360,29 @@ def _execute_cartesian_move(position: CartesianTarget, speed_pct: float, acceler
         recv = rtde_receive.RTDEReceiveInterface(ROBOT_IP)
         before = recv.getActualTCPPose()
 
-        # Preserve current TCP orientation so the move only changes position —
-        # no orientation control exists in the picker UI (yet), matching the
-        # UR7e's job so far (top-down grip moves).
-        rx, ry, rz = before[3], before[4], before[5]
+        # Pin orientation when the caller specified one (see CartesianTarget) — this is
+        # what makes a saved x/y/z/rx/ry/rz target reproducible: without it, replaying
+        # "the same" x/y/z from a different approach pose lands the tool at a different
+        # orientation, which visibly moves the actual grip point even though x/y/z match.
+        # Falls back to preserving current TCP orientation (the original behavior) when
+        # the caller only cares about position, e.g. jog/pad moves in the picker UI.
+        rx = position.rx if position.rx is not None else before[3]
+        ry = position.ry if position.ry is not None else before[4]
+        rz = position.rz if position.rz is not None else before[5]
+
+        # No-op guard: a request whose target pose is where the arm already is (e.g.
+        # the picker re-committing the current target on field blur / confirm) has
+        # nothing to move for. Without this, the poll loop below never sees motion,
+        # never sets `started`, and spins the full 30 s deadline before returning.
+        target_pose = (x, y, z, rx, ry, rz)
+        if sqrt(sum((before[i] - target_pose[i]) ** 2 for i in range(6))) < 1e-3:
+            final = _final_state(recv)
+            recv.disconnect()
+            return {
+                "status": "success",
+                **final,
+                "duration_ms": round((time.time() - started_at) * 1000),
+            }
 
         v = (speed_pct / 100.0) * _CARTESIAN_VEL_MAX
         a = (acceleration_pct / 100.0) * _CARTESIAN_ACCEL_MAX
@@ -482,6 +519,19 @@ def _execute_joint_move(
                 "final_tcp_pose": None,
                 "duration_ms": 0,
                 "error": f"Joint limit violation: {', '.join(violations)}",
+            }
+
+        # No-op guard: target angles already match the arm's current pose (e.g. the
+        # picker re-committing an unchanged joint value on field blur / confirm).
+        # Without this the poll loop below never sees motion, never sets `started`,
+        # and spins the full 30 s deadline before returning.
+        if all(abs(target_deg[name] - current_deg[name]) < 0.1 for name in JOINT_NAMES):
+            final = _final_state(recv)
+            recv.disconnect()
+            return {
+                "status": "success",
+                **final,
+                "duration_ms": round((time.time() - started_at) * 1000),
             }
 
         target_rad = [radians(target_deg[name]) for name in JOINT_NAMES]

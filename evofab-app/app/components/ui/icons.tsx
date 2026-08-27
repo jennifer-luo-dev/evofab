@@ -161,6 +161,15 @@ export function PlayIcon(props: IconProps) {
   )
 }
 
+/** Filled square — shown in place of PlayIcon on a step row while that step is executing. */
+export function StopIcon(props: IconProps) {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" {...props}>
+      <rect x="3.5" y="3.5" width="9" height="9" rx="1" fill="currentColor" />
+    </svg>
+  )
+}
+
 /** Crosshair/target glyph — trigger for the robot-arm position picker. */
 export function TargetIcon(props: IconProps) {
   return (

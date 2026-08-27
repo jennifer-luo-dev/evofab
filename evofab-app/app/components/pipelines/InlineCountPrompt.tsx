@@ -16,16 +16,17 @@ interface InlineCountPromptProps {
 }
 
 export function InlineCountPrompt({ label, onConfirm, onCancel }: InlineCountPromptProps) {
-  const [value, setValue] = useState('2')
+  // TODO: temp change for testing — loop minimum lowered from 2 to 1, revert after.
+  const [value, setValue] = useState('1')
   const n = parseInt(value, 10)
-  const valid = Number.isFinite(n) && n >= 2
+  const valid = Number.isFinite(n) && n >= 1
 
   return (
     <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-dashed border-teal bg-teal-dim text-xs">
       <span className="text-muted">{label}</span>
       <input
         type="number"
-        min={2}
+        min={1}
         value={value}
         onChange={(e) => setValue(e.target.value)}
         autoFocus

@@ -19,10 +19,13 @@ import type { MaterialProfile, PrintSettings } from '@/app/types/job';
 /** `robot_arm`'s "move" action's own input keys — handled entirely by MoveTargetModal, so they're
  * filtered out of the generic input-field list below (same treatment as `isPrinter`'s
  * `print_profile_id`, which has its own dedicated panel too). */
-const ROBOT_MOVE_INPUT_KEYS = ['target_type', 'x', 'y', 'z', 'mode', 'joints', 'speed_pct', 'acceleration_pct'];
+const ROBOT_MOVE_INPUT_KEYS = ['target_type', 'x', 'y', 'z', 'rx', 'ry', 'rz', 'mode', 'joints', 'speed_pct', 'acceleration_pct'];
 
 /** Reconstructs MoveTargetModal's `initial` prop from a draft/step's flat `inputs` record —
- * the inverse of the `onChangeInput(...)` calls in MoveTargetModal's `onConfirm` below. */
+ * the inverse of the `onChangeInput(...)` calls in MoveTargetModal's `onConfirm` below.
+ * `rx`/`ry`/`rz` only count as a pinned orientation when all three parse — a step saved
+ * before orientation pinning existed (or with it left unpinned) has none of them set, and
+ * should keep inheriting orientation at move time rather than defaulting to (0, 0, 0). */
 function parseMoveTargetFromInputs(inputs: Record<string, string>): MoveTargetResult {
   let joints: { joint: JointName; angle_deg: number }[] = [];
   try {
@@ -31,6 +34,10 @@ function parseMoveTargetFromInputs(inputs: Record<string, string>): MoveTargetRe
   } catch {
     joints = [];
   }
+  const rx = parseFloat(inputs.rx);
+  const ry = parseFloat(inputs.ry);
+  const rz = parseFloat(inputs.rz);
+  const orientation = Number.isFinite(rx) && Number.isFinite(ry) && Number.isFinite(rz) ? { rx, ry, rz } : null;
   return {
     targetType: inputs.target_type === 'joint' ? 'joint' : 'cartesian',
     position: {
@@ -38,9 +45,10 @@ function parseMoveTargetFromInputs(inputs: Record<string, string>): MoveTargetRe
       y: parseFloat(inputs.y) || 0,
       z: parseFloat(inputs.z) || 0,
     },
+    orientation,
     jointMode: inputs.mode === 'relative' ? 'relative' : 'absolute',
     joints,
-    speedPct: parseFloat(inputs.speed_pct) || 25,
+    speedPct: parseFloat(inputs.speed_pct) || 100,
     accelerationPct: parseFloat(inputs.acceleration_pct) || 25,
   };
 }
@@ -49,7 +57,8 @@ function parseMoveTargetFromInputs(inputs: Record<string, string>): MoveTargetRe
 function summarizeMoveTarget(inputs: Record<string, string>): string {
   const target = parseMoveTargetFromInputs(inputs);
   if (target.targetType === 'cartesian') {
-    return `Cartesian → (${target.position.x.toFixed(3)}, ${target.position.y.toFixed(3)}, ${target.position.z.toFixed(3)}) m`;
+    const base = `Cartesian → (${target.position.x.toFixed(3)}, ${target.position.y.toFixed(3)}, ${target.position.z.toFixed(3)}) m`;
+    return target.orientation ? `${base}, orientation pinned` : base;
   }
   if (target.joints.length === 0) return 'Joint — no joints selected yet';
   const deltaPrefix = target.jointMode === 'relative' ? 'Δ' : '';
@@ -349,6 +358,9 @@ export function StepDraftForm({
             onChangeInput('x', String(result.position.x));
             onChangeInput('y', String(result.position.y));
             onChangeInput('z', String(result.position.z));
+            onChangeInput('rx', result.orientation ? String(result.orientation.rx) : '');
+            onChangeInput('ry', result.orientation ? String(result.orientation.ry) : '');
+            onChangeInput('rz', result.orientation ? String(result.orientation.rz) : '');
             onChangeInput('mode', result.jointMode);
             onChangeInput('joints', JSON.stringify(result.joints));
             onChangeInput('speed_pct', String(result.speedPct));

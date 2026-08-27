@@ -9,7 +9,7 @@
 
 import { Fragment, useState } from 'react'
 import { cn } from '@/app/lib/utils'
-import { MACHINE_TYPE_ICONS, DownIcon, EditIcon, PlayIcon, TrashIcon, UpIcon } from '@/app/components/ui/icons'
+import { MACHINE_TYPE_ICONS, DownIcon, EditIcon, PlayIcon, StopIcon, TrashIcon, UpIcon } from '@/app/components/ui/icons'
 import { PipelineStepRow } from './PipelineStepRow'
 import { RowIconButton } from './RowIconButton'
 import { StepConnector } from './StepConnector'
@@ -89,9 +89,10 @@ export function ContainerView({
 
   const editingContainerId =
     draftMode === 'edit' && draftState?.id ? (findEntryContainer(draftState.id, rootOrder, groups)?.containerId ?? null) : null
-  const showDraftHere =
-    (draftMode === 'add' && draftTargetGroupId === containerGroupId) ||
-    (draftMode === 'edit' && editingContainerId === containerGroupId)
+  const editingStepId = draftMode === 'edit' ? draftState?.id : undefined
+  const showEditDraftHere = draftMode === 'edit' && editingContainerId === containerGroupId
+  const showAddDraftHere = draftMode === 'add' && draftTargetGroupId === containerGroupId
+  const showDraftHere = showAddDraftHere || showEditDraftHere
 
   function renderStepRow(step: Step, unitIdx: number, synced: boolean) {
     const Icon = MACHINE_TYPE_ICONS[step.tech] ?? MACHINE_TYPE_ICONS.DEFAULT
@@ -120,12 +121,24 @@ export function ContainerView({
         trailing={
           <>
             {stepStatus[step.id] && <PipelineStatusBadge status={stepStatus[step.id]} className="mr-1" />}
-            <RowIconButton
-              title="Test run this step now"
-              onClick={() => !testRunDisabled && onTestRunStep([step.id])}
-            >
-              <PlayIcon className={testRunDisabled ? 'opacity-40' : undefined} />
-            </RowIconButton>
+            {currentStepIds.has(step.id) ? (
+              <RowIconButton
+                title="This step is running and can't be interrupted"
+                // Deliberately a no-op: a step in flight (a robot move, a print, a
+                // capture) isn't safely interruptible, so the button shows the run
+                // state but clicking it doesn't stop — the step keeps executing.
+                onClick={() => {}}
+              >
+                <StopIcon />
+              </RowIconButton>
+            ) : (
+              <RowIconButton
+                title="Test run this step now"
+                onClick={() => !testRunDisabled && onTestRunStep([step.id])}
+              >
+                <PlayIcon className={testRunDisabled ? 'opacity-40' : undefined} />
+              </RowIconButton>
+            )}
             <RowIconButton title="Move up" onClick={() => moveEntry(containerGroupId, unitIdx, -1)}>
               <UpIcon />
             </RowIconButton>
@@ -143,6 +156,27 @@ export function ContainerView({
       />
     )
   }
+
+  const editDraftForm = showEditDraftHere && draftState && (
+    <StepDraftForm
+      draft={draftState}
+      mode="edit"
+      error={draftError}
+      availableTechs={availableTechs}
+      steps={steps}
+      groups={groups}
+      currentContainerId={containerGroupId}
+      onChangeTech={changeDraftTech}
+      onChangeAction={changeDraftAction}
+      onChangeMachine={changeDraftMachine}
+      onChangeInput={setDraftInput}
+      onChangeFile={setDraftFile}
+      onChangePrintSetting={setDraftPrintSetting}
+      onChangeMaterialProfile={setDraftMaterialProfile}
+      onCancel={closeDraft}
+      onCommit={commitDraft}
+    />
+  )
 
   return (
     <div>
@@ -170,6 +204,7 @@ export function ContainerView({
           ) : (
             renderStepRow(stepsById.get(unit[0].id)!, uIdx, false)
           )}
+          {unit.some((entry) => entry.id === editingStepId) && editDraftForm}
           {uIdx < units.length - 1 && <StepConnector />}
         </Fragment>
       ))}
@@ -180,10 +215,10 @@ export function ContainerView({
         </div>
       )}
 
-      {showDraftHere && draftState && (
+      {showAddDraftHere && draftState && (
         <StepDraftForm
           draft={draftState}
-          mode={draftMode === 'edit' ? 'edit' : 'add'}
+          mode="add"
           error={draftError}
           availableTechs={availableTechs}
           steps={steps}

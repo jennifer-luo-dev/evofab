@@ -255,7 +255,7 @@ async function moveRobotArm(step: Step, ctx: StepExecutorContext): Promise<StepO
   const machineId = ctx.machineIdByName[step.machine];
   if (!machineId) throw new Error(`Robot arm "${step.machine}" not found`);
 
-  const speed_pct = parseFloat(step.inputs.speed_pct) || 25;
+  const speed_pct = parseFloat(step.inputs.speed_pct) || 100;
   const acceleration_pct = parseFloat(step.inputs.acceleration_pct) || 25;
 
   let body: MoveTargetBody;
@@ -282,7 +282,16 @@ async function moveRobotArm(step: Step, ctx: StepExecutorContext): Promise<StepO
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
       throw new Error('Target x, y, and z coordinates are required for this step');
     }
-    body = { target_type: 'cartesian', position: { x, y, z }, speed_pct, acceleration_pct };
+    // rx/ry/rz are only sent when all three were pinned (see MoveTargetModal's
+    // OrientationFields) — omitting them tells the bridge to inherit whatever
+    // orientation the arm is already in, matching a step saved before orientation
+    // pinning existed. Pinning is what makes "the same x/y/z" actually land at the
+    // same physical spot on a later run — see main.py's _execute_cartesian_move.
+    const rx = parseFloat(step.inputs.rx);
+    const ry = parseFloat(step.inputs.ry);
+    const rz = parseFloat(step.inputs.rz);
+    const orientation = Number.isFinite(rx) && Number.isFinite(ry) && Number.isFinite(rz) ? { rx, ry, rz } : {};
+    body = { target_type: 'cartesian', position: { x, y, z, ...orientation }, speed_pct, acceleration_pct };
   }
 
   ctx.setRunningRobot({
@@ -319,14 +328,14 @@ async function moveRobotArm(step: Step, ctx: StepExecutorContext): Promise<StepO
 
 /**
  * TEMPORARY: Robot Arm — Gripper Cycle isn't wired to hardware yet, so this
- * just waits 60 seconds (testing — was 2 minutes) to stand in for the real
+ * just waits 30 seconds (testing — was 2 minutes) to stand in for the real
  * cycle time. See app/robot-test/page.tsx `GripperControl.handleRunGripper`
  * for the proof-of-concept this will eventually call: POST { position,
  * speed, force } to `${bridge}/robot/gripper`, which runs
  * `gripper_basic.urp` (activate, open, close).
  */
 async function cycleGripper(_step: Step, _ctx: StepExecutorContext): Promise<StepOutputs> {
-  await new Promise((resolve) => setTimeout(resolve, 45 * 1000));
+  await new Promise((resolve) => setTimeout(resolve, 30 * 1000));
   return { summary: 'Gripper cycle complete (simulated — hardware integration pending)' };
 }
 

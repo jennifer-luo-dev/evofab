@@ -94,14 +94,15 @@ export function LoopBlock({
         <span className="text-muted font-normal">×</span>
 
         {editingCount ? (
+          // TODO: temp change for testing — loop minimum lowered from 2 to 1, revert after.
           <input
             type="number"
-            min={2}
+            min={1}
             autoFocus
             defaultValue={group.iterationCount}
             onBlur={(e) => {
               const n = parseInt(e.target.value, 10)
-              if (Number.isFinite(n) && n >= 2) builder.updateLoopIterationCount(group.id, n)
+              if (Number.isFinite(n) && n >= 1) builder.updateLoopIterationCount(group.id, n)
               setEditingCount(false)
             }}
             onKeyDown={(e) => {

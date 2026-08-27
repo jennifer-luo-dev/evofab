@@ -5,10 +5,10 @@
 // linked numeric field (same linked-field pattern as ZSlider/
 // LinkedCoordinateFields), and ±1°/±5°/±15° jog buttons.
 //
-// Typed numeric entry is UI-only (never fires a live move), matching
-// LinkedCoordinateFields; the dial's release and every jog press do fire one
-// (mirrors XYPad/ZSlider/JogControls) — the caller decides what that move
-// looks like via onCommit.
+// Typing in the numeric field edits UI state on each keystroke (onChange) and
+// fires a live move once, on commit — blur or Enter (onCommit), same as the
+// dial's release and every jog press (mirrors XYPad/ZSlider/JogControls). The
+// caller decides what that move looks like via onCommit.
 
 'use client'
 
@@ -16,7 +16,7 @@ import { cn } from '@/app/lib/utils'
 import type { JointName } from '@/app/lib/robot'
 import { JointDial } from './JointDial'
 import { JOINT_JOG_STEP_OPTIONS } from './constants'
-import { clamp, type Bounds } from './jointMath'
+import { clamp, formatAngle, type Bounds } from './jointMath'
 
 interface JointRowProps {
   joint: JointName
@@ -71,12 +71,19 @@ export function JointRow({
       <div className="w-19 shrink-0">
         <div className="text-xs font-semibold text-text">{label}</div>
         <div className="text-[10px] text-muted font-mono">
-          {liveAngleDeg != null ? `${liveAngleDeg.toFixed(1)}°` : '—'}
+          {liveAngleDeg != null ? `${formatAngle(liveAngleDeg)}°` : '—'}
         </div>
       </div>
 
       <JointDial value={value} bounds={bounds} onChange={onChange} onCommit={onCommit} disabled={rowDisabled} />
 
+      {/*
+        Absolute mode only: committing a typed target on blur/Enter drives the arm to
+        that angle. Skipped when the field still matches the live angle (just focusing
+        and tabbing away) so plain navigation doesn't fire a pointless move. Relative
+        mode: onCommit applies a delta, so a blur would double-jog — typed entry stays
+        UI-only there, with the dial release / jog buttons still firing the move.
+      */}
       <div className="flex items-center gap-1">
         <input
           type="number"
@@ -86,6 +93,15 @@ export function JointRow({
           onChange={(e) => {
             const parsed = parseFloat(e.target.value)
             onChange(clamp(Number.isFinite(parsed) ? parsed : 0, bounds))
+          }}
+          onBlur={() => {
+            const target = clamp(value, bounds)
+            if (mode === 'absolute' && (liveAngleDeg == null || Math.abs(target - liveAngleDeg) > 0.1)) {
+              onCommit(target)
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && mode === 'absolute') e.currentTarget.blur()
           }}
           className="w-18 rounded border border-border bg-surface px-2 py-1.5 text-sm text-text tabular-nums focus:outline-none focus:ring-1 focus:ring-teal disabled:opacity-50"
         />

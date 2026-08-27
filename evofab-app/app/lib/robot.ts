@@ -29,7 +29,10 @@ export interface JointRotation {
 export type MoveTargetBody =
   | {
       target_type: 'cartesian'
-      position: { x: number; y: number; z: number }
+      /** `rx`/`ry`/`rz` (rotation vector, radians) are optional — omitted means "don't pin
+       * orientation," and the bridge preserves whatever orientation the arm is already in
+       * (see app/api/python/main.py's _execute_cartesian_move). */
+      position: { x: number; y: number; z: number; rx?: number; ry?: number; rz?: number }
       speed_pct?: number
       acceleration_pct?: number
     }

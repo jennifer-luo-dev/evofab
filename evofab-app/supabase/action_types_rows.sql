@@ -24,7 +24,7 @@ set
     {"key": "z", "label": "Z", "type": "number"},
     {"key": "mode", "label": "Mode", "type": "select", "options": ["absolute", "relative"], "default": "absolute"},
     {"key": "joints", "label": "Joints", "type": "text"},
-    {"key": "speed_pct", "label": "Speed %", "type": "number", "default": 25},
+    {"key": "speed_pct", "label": "Speed %", "type": "number", "default": 100},
     {"key": "acceleration_pct", "label": "Acceleration %", "type": "number", "default": 25}
   ]'::jsonb,
   output_schema = '[
@@ -34,6 +34,6 @@ set
     {"key": "duration_ms", "label": "Duration", "type": "number"},
     {"key": "error", "label": "Error", "type": "string"}
   ]'::jsonb,
-  default_inputs = '{"target_type": "cartesian", "speed_pct": 25, "acceleration_pct": 25}'::jsonb
+  default_inputs = '{"target_type": "cartesian", "speed_pct": 100, "acceleration_pct": 25}'::jsonb
 where type_key = 'move'
   and machine_type_id = (select id from public.machine_types where type_key = 'robot_arm');
