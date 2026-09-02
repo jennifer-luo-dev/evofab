@@ -36,7 +36,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from analyzer import ActuatorAnalyzer
-from geometry import ACTUATOR_LENGTH_M, compute_spine_curvature
+from geometry import ACTUATOR_LENGTH_M, CurvatureResult, compute_spine_curvature
 
 ROBOT_IP = os.getenv("ROBOT_IP", "192.168.50.100")
 
@@ -374,8 +374,19 @@ def _execute_cartesian_move(position: CartesianTarget, speed_pct: float, acceler
         # the picker re-committing the current target on field blur / confirm) has
         # nothing to move for. Without this, the poll loop below never sees motion,
         # never sets `started`, and spins the full 30 s deadline before returning.
+        #
+        # The threshold must stay well below the smallest jog step the UI offers
+        # (1 mm — see JOG_STEP_OPTIONS in position-picker/constants.ts and JOG_STEPS
+        # in robot-test/page.tsx). It used to be 1e-3 m, exactly one 1 mm step, so a
+        # 1 mm jog landed right on the boundary and was swallowed as a no-op about as
+        # often as not: the jog re-computes its target from the arm's live TCP pose
+        # every press, so once one 1 mm press is dropped every following one targets
+        # the same pose and is dropped too — the buttons look dead until a coarser
+        # (1 cm / 5 cm) jog actually repositions the arm. 5e-4 m keeps a true
+        # re-commit (~0 delta) caught while giving a 1 mm step 2x margin; the URscript
+        # below quantises position to 0.1 mm anyway (`{x:.4f}`).
         target_pose = (x, y, z, rx, ry, rz)
-        if sqrt(sum((before[i] - target_pose[i]) ** 2 for i in range(6))) < 1e-3:
+        if sqrt(sum((before[i] - target_pose[i]) ** 2 for i in range(6))) < 5e-4:
             final = _final_state(recv)
             recv.disconnect()
             return {
@@ -727,6 +738,54 @@ async def robot_move(body: MoveRequest) -> dict:
     )
 
 
+def _execute_robot_stop() -> dict:
+    """Emergency stop: immediately halt all arm motion and latch a protective
+    stop on the controller (which needs a deliberate reset on the pendant /
+    dashboard before the arm will move again). Interrupts any in-progress
+    /robot/move — the blocking move call it interrupts then returns a
+    non-'success' MoveResult, failing that pipeline step like any other stop.
+
+    Two steps: (1) a raw-URScript stopj on the secondary interface (port
+    30002) — same channel /robot/move uses, so it lands even mid-move and
+    doesn't depend on the RTDE control channel being free; (2) a protective
+    stop via RTDEControlInterface so nothing else in the run can keep driving
+    the arm afterward."""
+    import socket
+
+    if not _latest_state.get("connected"):
+        return {"ok": False, "error": "Robot not connected."}
+
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(3)
+        sock.connect((ROBOT_IP, 30002))
+        sock.sendall(b"stopj(10)\n")
+        sock.close()
+    except OSError as exc:
+        return {"ok": False, "error": f"Could not reach robot: {exc}"}
+
+    try:
+        import rtde_control
+
+        ctrl = rtde_control.RTDEControlInterface(ROBOT_IP)
+        ctrl.triggerProtectiveStop()
+        ctrl.disconnect()
+    except Exception as exc:  # best effort — the stopj above already halted motion
+        return {"ok": True, "message": f"Motion halted; protective stop not latched ({exc})."}
+
+    return {"ok": True, "message": "Emergency stop: motion halted, protective stop latched."}
+
+
+@app.post("/robot/stop")
+async def robot_stop() -> dict:
+    """Emergency-stop the arm mid-move — see _execute_robot_stop."""
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, _execute_robot_stop)
+    if not result.get("ok"):
+        raise HTTPException(status_code=502, detail=result.get("error", "Emergency stop failed."))
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Actuation — Arduino soft-robotics control board (USB serial)
 #
@@ -762,12 +821,13 @@ _capture_request: Optional[dict] = None  # {"channel": int, "armed_at": float (m
 _last_capture_meta: Optional[dict] = None  # {"channel", "synced", "latency_ms", "timestamp", curvature fields}
 _last_capture_jpeg: Optional[bytes] = None  # the annotated image (mask/skeleton/fit drawn on), not raw
 
-# Vision pipeline (analyzer.py mask -> skeleton, geometry.py circle fit).
-# generate_mask auto-detects brightness vs. depth-gated mode from its input
-# range — _annotate_curvature passes real depth (from camera_orbbec_service
-# .py's /capture/depth_and_color) when the caller has it, and falls back to
-# the color frame (brightness threshold) otherwise. z_min/z_max only take
-# effect in depth mode.
+# Vision pipeline: analyzer.segment_actuator (green-holder anchor -> holder
+# distance -> connected holder+actuator region) -> analyzer.extract_spine
+# (skeleton) -> geometry.compute_spine_curvature (circle fit of the flex
+# span). _annotate_curvature passes real per-pixel depth (from camera_orbbec
+# _service.py's /capture/depth_and_color, already software-aligned to colour)
+# when the caller has it; without depth the actuator is taken on brightness +
+# holder-adjacency alone.
 _analyzer = ActuatorAnalyzer()
 
 # Pixels-per-metre scaling for geometry.py's circle fit, carried over from
@@ -800,107 +860,76 @@ def _fetch_depth_and_color(timeout: float = ORBBEC_CAPTURE_TIMEOUT_S):
 
 def _annotate_curvature(frame_bgr: np.ndarray, analyzer: ActuatorAnalyzer = None,
                          depth_raw: Optional[np.ndarray] = None, depth_scale: Optional[float] = None):
-    """Runs mask -> skeleton -> circle-fit on one frame and draws the result
-    (mask tint, skeleton, fitted arc + center) on a copy of it, so the fit
-    can be visually checked against the image it came from. Returns
-    (annotated_bgr, CurvatureResult). `analyzer` defaults to the module-level
-    actuation-capture instance; POST /classify passes its own, built from a
-    machine's machine_classification_model tuning columns.
+    """Green-holder-anchored characterization: segment the green holder,
+    measure its distance, take the white actuator emerging from its free end
+    at that same distance, union the two into one connected region, skeletonize
+    it, and circle-fit the flexible span. Draws holder tint + actuator tint +
+    spine + fitted arc on a copy of the frame so the fit can be checked
+    against the image. Returns (annotated_bgr, CurvatureResult). `analyzer`
+    defaults to the module-level actuation-capture instance; POST /classify
+    passes its own, built from a machine's machine_classification_model
+    tuning columns.
 
-    depth_raw/depth_scale, if both given, are used to depth-validate each
-    brightness-mask contour by its region's median depth (z_min/z_max,
-    metres) rather than picking the largest bright contour outright — see
-    camera_orbbec_service.py's GET /capture/depth_and_color. Depth alone
-    can't isolate the actuator on this rig: confirmed on a real capture
-    that the actuator and its own (dark) clamp sit at nearly the same
-    distance from the camera, so a depth window includes both — it's only
-    useful for rejecting near-camera clutter (e.g. a light fixture at the
-    top of the rig) that also happens to be bright enough to fool
-    brightness thresholding alone (the reflection-blob failure mode from
-    earlier — a specular highlight can still outsize the actuator's own
-    contour). This validates whole contours rather than AND-ing the depth
-    mask into the brightness mask pixel-by-pixel: confirmed empirically
-    that the pixel-level AND produces a jagged combined boundary (depth and
-    brightness are independently noisy, and the resized depth mask has its
-    own blocky resolution seams) that fragments the skeleton into far more
-    spurious branches than the brightness mask has on its own, degenerating
-    the circle fit. depth_scale follows that endpoint's convention
-    (raw_value * depth_scale = mm, not already metres). depth_raw is
-    resized to frame_bgr's resolution with nearest-neighbor if they differ,
-    since this device has no D2C (depth-to-color) alignment configured —
-    that's a real approximation, not a calibrated per-pixel correspondence:
-    if the two sensors' fields of view differ noticeably, the resized depth
-    won't line up exactly with what's visible in frame_bgr at the same
-    pixel. Without depth_raw/depth_scale, the largest bright contour is
-    picked outright, same as before depth support existed."""
+    depth_raw/depth_scale, if given, provide per-pixel depth (raw_value *
+    depth_scale = mm) already aligned to frame_bgr by camera_orbbec_service.py
+    (software D2C). Depth is what lets segment_actuator gate the actuator to
+    the holder's distance and reject the white rig clutter (chair, filament
+    spools) behind it — see analyzer.ActuatorAnalyzer.segment_actuator.
+    Without depth the actuator is taken on brightness + holder-adjacency
+    alone, which is only reliable when nothing white sits close behind it."""
     if analyzer is None:
         analyzer = _analyzer
 
-    raw_mask = analyzer.generate_mask(frame_bgr)
-
-    depth_mm = None
+    depth_m = None
     if depth_raw is not None and depth_scale is not None:
         fh, fw = frame_bgr.shape[:2]
         if depth_raw.shape != (fh, fw):
+            # Aligned depth already matches; this only fires for an
+            # unaligned/legacy capture and is a rough fallback.
             depth_raw = cv2.resize(depth_raw, (fw, fh), interpolation=cv2.INTER_NEAREST)
-        depth_mm = depth_raw.astype(np.float64) * depth_scale
+        depth_m = depth_raw.astype(np.float64) * depth_scale / 1000.0
 
-    # Restrict to one connected blob before skeletonizing. The brightness
-    # threshold in analyzer.generate_mask also picks up scattered bright
-    # patches from the reflective test-rig background, not just the
-    # actuator — skeletonizing the whole raw mask fit a circle to that
-    # background speckle instead of the actuator (confirmed by dumping the
-    # raw mask directly).
-    contours, _ = cv2.findContours(raw_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    largest = None
-    if depth_mm is not None:
-        z_min_mm = analyzer.z_min * 1000.0
-        z_max_mm = analyzer.z_max * 1000.0
-        best_area = -1.0
-        for c in contours:
-            region = np.zeros_like(raw_mask)
-            cv2.drawContours(region, [c], -1, 255, thickness=cv2.FILLED)
-            depths = depth_mm[region > 0]
-            depths = depths[depths != 0]
-            if depths.size == 0:
-                continue  # no valid depth in this contour — can't confirm it's the actuator
-            median_depth = float(np.median(depths))
-            if not (z_min_mm <= median_depth <= z_max_mm):
-                continue
-            area = cv2.contourArea(c)
-            if area > best_area:
-                best_area = area
-                largest = c
-    else:
-        # No depth available: fall back to "largest bright blob in frame" —
-        # assumes the actuator is that blob; revisit if the background ever
-        # out-sizes it.
-        largest = max(contours, key=cv2.contourArea) if contours else None
-
-    if largest is not None:
-        mask = np.zeros_like(raw_mask)
-        cv2.drawContours(mask, [largest], -1, 255, thickness=cv2.FILLED)
-    else:
-        mask = raw_mask
-
-    skeleton = analyzer.extract_spine(mask)
-    result = compute_spine_curvature(skeleton, PPM)
+    seg = analyzer.segment_actuator(frame_bgr, depth_m)
 
     display = frame_bgr.copy()
-    green_layer = np.zeros_like(display)
-    green_layer[mask > 0] = (0, 80, 0)
-    display = cv2.addWeighted(display, 1.0, green_layer, 0.5, 0)
-    display[skeleton > 0] = (180, 212, 0)
 
-    if largest is not None:
-        bx, by, bw, bh = cv2.boundingRect(largest)
-        box_color = (180, 212, 0) if result.status == "TRACKING" else (60, 160, 160)
-        cv2.rectangle(display, (bx, by), (bx + bw, by + bh), box_color, 2)
+    if seg["status"] != "OK":
+        result = CurvatureResult(status="NO_TARGET")
+        if seg["holder_mask"] is not None:
+            display[seg["holder_mask"] > 0] = (
+                0.6 * display[seg["holder_mask"] > 0] + np.array([70, 0, 0])
+            ).astype(np.uint8)
+        label = "NO HOLDER" if seg["status"] == "NO_HOLDER" else "NO ACTUATOR"
+        cv2.putText(display, label, (12, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (80, 100, 90), 2)
+        return display, result, seg["holder_distance_mm"]
+
+    holder_mask = seg["holder_mask"]
+    spine_mask = seg["spine_mask"]
+    skeleton = analyzer.extract_spine(spine_mask)
+    result = compute_spine_curvature(skeleton, PPM, base_mask=holder_mask)
+
+    actuator_only = cv2.bitwise_and(spine_mask, cv2.bitwise_not(holder_mask))
+    display[actuator_only > 0] = (
+        0.55 * display[actuator_only > 0] + np.array([0, 55, 0])
+    ).astype(np.uint8)
+    display[holder_mask > 0] = (
+        0.6 * display[holder_mask > 0] + np.array([70, 0, 0])
+    ).astype(np.uint8)
+    display[skeleton > 0] = (180, 212, 0)
+    if seg["base_px"] is not None:
+        cv2.circle(display, seg["base_px"], 6, (0, 0, 255), 2, cv2.LINE_AA)
+
+    bx, by, bw, bh = cv2.boundingRect(spine_mask)
+    box_color = (180, 212, 0) if result.status == "TRACKING" else (60, 160, 160)
+    cv2.rectangle(display, (bx, by), (bx + bw, by + bh), box_color, 2)
 
     # Fitted curvature arc — draw the circle segment spanning the skeleton extent
     if result.status == "TRACKING" and result.radius_px > 1:
-        ys, xs = np.where(skeleton > 0)
+        # Span the arc over the actuator (flex) skeleton only, not the
+        # holder lead-in the fit already excluded.
+        flex_skel = cv2.bitwise_and(skeleton, cv2.bitwise_not(
+            cv2.dilate(holder_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11)))))
+        ys, xs = np.where(flex_skel > 0)
         if len(ys) >= 2:
             cx, cy = result.center_px
             r = int(round(result.radius_px))
@@ -919,8 +948,11 @@ def _annotate_curvature(frame_bgr: np.ndarray, analyzer: ActuatorAnalyzer = None
                     cv2.FONT_HERSHEY_SIMPLEX, 0.65, txt_color, 1)
         cv2.putText(display, f"R: {result.radius_mm:.0f} mm", (12, 108),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.65, txt_color, 1)
+    if seg["holder_distance_mm"] is not None:
+        cv2.putText(display, f"Holder: {seg['holder_distance_mm']:.0f} mm", (12, 132),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 160, 90), 1)
 
-    return display, result
+    return display, result, seg["holder_distance_mm"]
 
 
 def _resolve_capture(channel: int, synced: bool, event_ts: float, armed_at: float) -> None:
@@ -965,9 +997,9 @@ def _resolve_capture(channel: int, synced: bool, event_ts: float, armed_at: floa
         return
 
     try:
-        annotated, curvature = _annotate_curvature(frame, depth_raw=depth_raw, depth_scale=depth_scale)
+        annotated, curvature, holder_mm = _annotate_curvature(frame, depth_raw=depth_raw, depth_scale=depth_scale)
     except Exception:
-        annotated, curvature = frame, None
+        annotated, curvature, holder_mm = frame, None, None
 
     ok, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
     if not ok:
@@ -983,6 +1015,7 @@ def _resolve_capture(channel: int, synced: bool, event_ts: float, armed_at: floa
         "mean_curvature": round(curvature.mean_curvature, 3) if curvature and curvature.status == "TRACKING" else None,
         "bend_angle_deg": round(curvature.bend_angle_deg, 2) if curvature and curvature.status == "TRACKING" else None,
         "radius_mm": round(curvature.radius_mm, 1) if curvature and curvature.status == "TRACKING" else None,
+        "holder_distance_mm": holder_mm,
     }
 
 
@@ -1317,7 +1350,16 @@ async def classify_frame(
             raise HTTPException(status_code=422, detail=f"Could not reshape depth data: {e}")
 
     analyzer = ActuatorAnalyzer(z_min=z_min, z_max=z_max, threshold=threshold)
-    annotated, result = _annotate_curvature(frame, analyzer, depth_raw=depth_raw, depth_scale=depth_scale)
+
+    # A frame with no visible holder/actuator (or any other vision-pipeline
+    # failure) is a valid "nothing to measure" outcome, not a server error:
+    # fall back to a NO_TARGET result with null metrics so the pipeline step
+    # records an empty reading and moves on instead of aborting the run.
+    try:
+        annotated, result, holder_mm = _annotate_curvature(frame, analyzer, depth_raw=depth_raw, depth_scale=depth_scale)
+    except Exception as exc:  # noqa: BLE001 — deliberately broad; see above
+        print(f"/classify: characterization failed, returning NO_TARGET — {exc!r}")
+        annotated, result, holder_mm = frame, CurvatureResult(status="NO_TARGET"), None
 
     ok, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
     _last_classify_jpeg = buf.tobytes() if ok else None
@@ -1332,6 +1374,10 @@ async def classify_frame(
         "radius_mm": round(result.radius_mm, 1) if result.status == "TRACKING" else None,
         "ppm_used": PPM,
         "actuator_length_mm": round(ACTUATOR_LENGTH_M * 1000, 1),
+        # Measured distance to the green holder (and therefore the actuator) —
+        # the anchor the segmentation keys off. Null when depth is absent or
+        # the holder reading fell outside [z_min, z_max].
+        "holder_distance_mm": holder_mm,
         "image_url": "/classify/last-image" if ok else None,
     }
 

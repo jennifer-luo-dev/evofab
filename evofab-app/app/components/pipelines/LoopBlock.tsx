@@ -31,6 +31,7 @@ interface LoopBlockProps {
   onMoveUp: () => void
   onMoveDown: () => void
   onTestRunStep: (stepIds: string[]) => void
+  onStopRun: () => void
   testRunDisabled: boolean
 }
 
@@ -45,6 +46,7 @@ export function LoopBlock({
   onMoveUp,
   onMoveDown,
   onTestRunStep,
+  onStopRun,
   testRunDisabled,
 }: LoopBlockProps) {
   const [collapsed, setCollapsed] = useState(false)
@@ -165,6 +167,7 @@ export function LoopBlock({
               currentStepIds={currentStepIds}
               availableTechs={availableTechs}
               onTestRunStep={onTestRunStep}
+              onStopRun={onStopRun}
               testRunDisabled={testRunDisabled}
               hideControls
             />
@@ -180,6 +183,7 @@ export function LoopBlock({
             currentStepIds={currentStepIds}
             availableTechs={availableTechs}
             onTestRunStep={onTestRunStep}
+            onStopRun={onStopRun}
             testRunDisabled={testRunDisabled}
           />
         </div>

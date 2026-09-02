@@ -35,6 +35,8 @@ export interface PipelineSummary {
 /** One row in a run's results table. */
 export interface ResultRow {
   type: string
+  /** Machine type that produced the row (`machine_types.type_key`) — lets the table keep only camera/classification steps. */
+  tech: TechKey
   ts: string
   result: string
   /** Photo produced by the step (camera's `image_keys[0]` or classification_model's annotated `image_url`), if any — shown as a thumbnail instead of `result`'s text. */

@@ -52,12 +52,38 @@ export interface StepExecutorContext {
    * executors in the same run always see the latest entries.
    */
   stepOutputsById: Record<string, StepOutputs>;
+  /**
+   * Aborted when the user hits a step's Stop button (see PipelineBuilder's `requestStopRun` and
+   * ContainerView's `stopStep`). Executors thread it into every `fetch` and `sleep` so an
+   * in-flight step unwinds immediately — its request is cancelled, its wait/poll loop throws
+   * `AbortError`, and `runPipeline` fails that step and stops before the next one. Hardware that's
+   * already physically moving/printing is halted separately by the Stop button's own endpoint;
+   * this only stops the client from waiting on it.
+   */
+  signal?: AbortSignal;
 }
 
 export type StepExecutor = (step: Step, ctx: StepExecutorContext) => Promise<StepOutputs>;
 
-function sleep(ms: number) {
-  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+/** Resolves after `ms`, or rejects with an `AbortError` the moment `signal` aborts — so a step's
+ * Stop button cuts a wait short instead of the run hanging out the full delay (a print poll loop,
+ * the gripper stand-in, an actuation pulse's client-side timer). */
+function sleep(ms: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    function onAbort() {
+      clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -80,11 +106,12 @@ async function runArduinoBoardStep(step: Step, ctx: StepExecutorContext): Promis
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ machineId, channel, duration_ms }),
+    signal: ctx.signal,
   });
   const resBody = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(resBody.error ?? `Actuation request failed (${res.status})`);
 
-  await sleep(duration_ms);
+  await sleep(duration_ms, ctx.signal);
 
   return { channel, duration_ms, summary: `CH${channel} fired for ${duration_ms}ms` };
 }
@@ -120,14 +147,15 @@ const METADATA_MAX_RETRIES = 5;
 async function waitForPrintCompletion(
   machineId: string,
   startedAt: number,
-  setRunningPrinter: StepExecutorContext['setRunningPrinter']
+  setRunningPrinter: StepExecutorContext['setRunningPrinter'],
+  signal?: AbortSignal
 ) {
   let sawPrinting = false;
   let consecutiveBadPolls = 0;
   for (let i = 0; i < MAX_POLLS; i++) {
-    await sleep(POLL_INTERVAL_MS);
+    await sleep(POLL_INTERVAL_MS, signal);
 
-    const res = await fetch('/api/printers');
+    const res = await fetch('/api/printers', { signal });
     if (!res.ok) {
       consecutiveBadPolls++;
       if (consecutiveBadPolls >= OFFLINE_TOLERANCE_POLLS)
@@ -219,7 +247,7 @@ async function runPrinterStep(step: Step, ctx: StepExecutorContext): Promise<Ste
   formData.append('print_profile_id', step.materialProfileId ?? '');
   formData.append('settings', JSON.stringify(step.printSettings ?? DEFAULT_SETTINGS));
 
-  const res = await fetch('/api/print', { method: 'POST', body: formData });
+  const res = await fetch('/api/print', { method: 'POST', body: formData, signal: ctx.signal });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error ?? `Print request failed (${res.status})`);
 
@@ -227,7 +255,7 @@ async function runPrinterStep(step: Step, ctx: StepExecutorContext): Promise<Ste
   // scan catches up, without blocking the wait for actual completion below.
   void applySlicerEstimate(printer, body.fileKey ?? file.name, startedAt, ctx.setRunningPrinter);
 
-  await waitForPrintCompletion(printer.id, startedAt, ctx.setRunningPrinter);
+  await waitForPrintCompletion(printer.id, startedAt, ctx.setRunningPrinter, ctx.signal);
 
   const total_time = Math.round((Date.now() - startedAt) / 1000);
   return { total_time };
@@ -255,7 +283,7 @@ async function moveRobotArm(step: Step, ctx: StepExecutorContext): Promise<StepO
   const machineId = ctx.machineIdByName[step.machine];
   if (!machineId) throw new Error(`Robot arm "${step.machine}" not found`);
 
-  const speed_pct = parseFloat(step.inputs.speed_pct) || 100;
+  const speed_pct = parseFloat(step.inputs.speed_pct) || 25;
   const acceleration_pct = parseFloat(step.inputs.acceleration_pct) || 25;
 
   let body: MoveTargetBody;
@@ -282,16 +310,7 @@ async function moveRobotArm(step: Step, ctx: StepExecutorContext): Promise<StepO
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
       throw new Error('Target x, y, and z coordinates are required for this step');
     }
-    // rx/ry/rz are only sent when all three were pinned (see MoveTargetModal's
-    // OrientationFields) — omitting them tells the bridge to inherit whatever
-    // orientation the arm is already in, matching a step saved before orientation
-    // pinning existed. Pinning is what makes "the same x/y/z" actually land at the
-    // same physical spot on a later run — see main.py's _execute_cartesian_move.
-    const rx = parseFloat(step.inputs.rx);
-    const ry = parseFloat(step.inputs.ry);
-    const rz = parseFloat(step.inputs.rz);
-    const orientation = Number.isFinite(rx) && Number.isFinite(ry) && Number.isFinite(rz) ? { rx, ry, rz } : {};
-    body = { target_type: 'cartesian', position: { x, y, z, ...orientation }, speed_pct, acceleration_pct };
+    body = { target_type: 'cartesian', position: { x, y, z }, speed_pct, acceleration_pct };
   }
 
   ctx.setRunningRobot({
@@ -306,6 +325,7 @@ async function moveRobotArm(step: Step, ctx: StepExecutorContext): Promise<StepO
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ machineId, ...body }),
+    signal: ctx.signal,
   });
   const result = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(result.error ?? `Robot move failed (${res.status})`);
@@ -328,14 +348,14 @@ async function moveRobotArm(step: Step, ctx: StepExecutorContext): Promise<StepO
 
 /**
  * TEMPORARY: Robot Arm — Gripper Cycle isn't wired to hardware yet, so this
- * just waits 30 seconds (testing — was 2 minutes) to stand in for the real
+ * just waits 60 seconds (testing — was 2 minutes) to stand in for the real
  * cycle time. See app/robot-test/page.tsx `GripperControl.handleRunGripper`
  * for the proof-of-concept this will eventually call: POST { position,
  * speed, force } to `${bridge}/robot/gripper`, which runs
  * `gripper_basic.urp` (activate, open, close).
  */
-async function cycleGripper(_step: Step, _ctx: StepExecutorContext): Promise<StepOutputs> {
-  await new Promise((resolve) => setTimeout(resolve, 30 * 1000));
+async function cycleGripper(_step: Step, ctx: StepExecutorContext): Promise<StepOutputs> {
+  await sleep(45 * 1000, ctx.signal);
   return { summary: 'Gripper cycle complete (simulated — hardware integration pending)' };
 }
 
@@ -382,12 +402,13 @@ async function runCameraStep(step: Step, ctx: StepExecutorContext): Promise<Step
     imageUrl: null,
   });
 
-  if (Number.isFinite(delay) && delay > 0) await sleep(delay * 1000);
+  if (Number.isFinite(delay) && delay > 0) await sleep(delay * 1000, ctx.signal);
 
   const res = await fetch('/api/camera-capture', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ machineId }),
+    signal: ctx.signal,
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error ?? `Camera capture failed (${res.status})`);
@@ -477,6 +498,7 @@ async function classifyPhoto(step: Step, ctx: StepExecutorContext): Promise<Step
           }
         : { machineId, imageUrl }
     ),
+    signal: ctx.signal,
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error ?? `Classification request failed (${res.status})`);

@@ -29,7 +29,16 @@ import numpy as np
 import uvicorn
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pyorbbecsdk import Config, OBFormat, OBPropertyID, OBSensorType, Pipeline
+from pyorbbecsdk import (
+    AlignFilter,
+    Config,
+    OBFormat,
+    OBFrameAggregateOutputMode,
+    OBPropertyID,
+    OBSensorType,
+    OBStreamType,
+    Pipeline,
+)
 from pyorbbecsdk import Context
 
 ORBBEC_SERIAL = "CP4R84P00081"
@@ -64,8 +73,38 @@ config.enable_video_stream(OBSensorType.COLOR_SENSOR)
 depth_profile = pipeline.get_stream_profile_list(OBSensorType.DEPTH_SENSOR).get_default_video_stream_profile()
 config.enable_stream(depth_profile)
 
+# Every delivered frame set must carry BOTH a color and a depth frame: the
+# software D2C alignment below needs the pair, and every caller of this
+# bridge wants them together (curvature masking in main.py samples depth
+# under a color-segmented mask), never a lone frame.
+config.set_frame_aggregate_output_mode(OBFrameAggregateOutputMode.FULL_FRAME_REQUIRE)
+
 pipeline.enable_frame_sync()
 pipeline.start(config)  # starts once, stays open for the life of the process
+
+# Software depth-to-color alignment. The Gemini 335L's depth and color
+# sensors differ in resolution and FOV and sit on a physical baseline, so a
+# raw depth pixel does NOT correspond to the color pixel at the same (x, y)
+# — the plain nearest-neighbour resize callers used before is off by tens
+# of pixels, enough that sampling depth under a color-segmented mask reads
+# mostly background. AlignFilter reprojects each depth frame into the color
+# camera frame using the factory calibration, so after _aligned_frames() a
+# depth pixel and the color pixel at the same (x, y) see the same point,
+# and the depth frame comes back at the color resolution. Software (not
+# on-device HW) D2C: independent of which HW-D2C depth profiles the device
+# exposes, at a small per-frame CPU cost this low-volume bridge absorbs.
+_align_to_color = AlignFilter(align_to_stream=OBStreamType.COLOR_STREAM)
+
+
+def _aligned_frames(timeout_ms: int = WAIT_FOR_FRAMES_TIMEOUT_MS):
+    """pipeline.wait_for_frames + software depth-to-color alignment. Returns
+    the aligned frame set (depth reprojected into color space: same
+    resolution as color, depth pixel (x, y) corresponds to color pixel
+    (x, y)), or None if wait_for_frames timed out."""
+    frames = pipeline.wait_for_frames(timeout_ms)
+    if frames is None:
+        return None
+    return _align_to_color.process(frames)
 
 # Auto-exposure stays on, but its own default ceiling can be too low to
 # cope with a dim room (captured frames come back essentially black even
@@ -121,7 +160,7 @@ def _median_nonzero_depth_mm(depth_frame) -> float | None:
 @app.get("/status")
 def status() -> dict:
     try:
-        frames = pipeline.wait_for_frames(WAIT_FOR_FRAMES_TIMEOUT_MS)
+        frames = _aligned_frames()
         color_frame = frames.get_color_frame() if frames else None
         resolution = [color_frame.get_width(), color_frame.get_height()] if color_frame else None
         return {"connected": color_frame is not None, "serial": ORBBEC_SERIAL, "resolution": resolution}
@@ -131,7 +170,7 @@ def status() -> dict:
 
 @app.get("/capture")
 def capture() -> Response:
-    frames = pipeline.wait_for_frames(WAIT_FOR_FRAMES_TIMEOUT_MS)
+    frames = _aligned_frames()
     color_frame = frames.get_color_frame() if frames else None
     depth_frame = frames.get_depth_frame() if frames else None
     if color_frame is None:
@@ -168,12 +207,12 @@ def capture_depth_and_color() -> dict:
     depth_data is the RAW uint16 array (row-major, depth_height x
     depth_width) — undecoded distance units, not millimetres. Multiply by
     depth_scale to get millimetres (same convention as
-    _median_nonzero_depth_mm above). depth and color are NOT guaranteed to
-    share the same pixel resolution/FOV — no D2C (depth-to-color) alignment
-    is configured on this device — callers needing per-pixel correspondence
-    must resize/approximate themselves.
+    _median_nonzero_depth_mm above). Depth is software-aligned to the color
+    camera (see _align_to_color) before it is returned: depth_width/height
+    match color_width/height and depth pixel (x, y) corresponds to color
+    pixel (x, y). Pixels with no aligned depth read 0.
     """
-    frames = pipeline.wait_for_frames(WAIT_FOR_FRAMES_TIMEOUT_MS)
+    frames = _aligned_frames()
     if frames is None:
         raise HTTPException(status_code=503, detail="wait_for_frames timed out — no frame set available from Orbbec")
 

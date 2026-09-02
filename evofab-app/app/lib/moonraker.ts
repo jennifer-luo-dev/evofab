@@ -207,3 +207,19 @@ export async function startPrint(ip: string, port: number, filename: string): Pr
     throw new Error(`Moonraker print start failed (${res.status}): ${text}`)
   }
 }
+
+/**
+ * Pauses the active print (Moonraker /printer/print/pause). The printer holds position with
+ * heaters on until resumed or cancelled from the printer's own UI. Moonraker responds with an
+ * error if nothing is currently printing.
+ */
+export async function pausePrint(ip: string, port: number): Promise<void> {
+  const res = await fetch(`${base(ip, port)}/printer/print/pause`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Moonraker print pause failed (${res.status}): ${text}`)
+  }
+}

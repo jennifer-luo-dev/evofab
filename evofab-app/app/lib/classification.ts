@@ -18,6 +18,9 @@ export interface ClassifyResult {
   radius_mm: number | null
   ppm_used: number
   actuator_length_mm: number
+  /** Measured distance (mm) to the green holder the segmentation anchors on — null when
+   * no depth was supplied or the reading fell outside the analyzer's [z_min, z_max]. */
+  holder_distance_mm: number | null
   /** Path of the annotated (mask/skeleton/fit overlay) photo, relative to the bridge — resolved to an absolute URL below. */
   image_url: string | null
 }
@@ -36,15 +39,17 @@ export interface DepthPayload {
 }
 
 /**
- * Sends a photo to the classification bridge and runs the curvature-vision pipeline
- * (analyzer.py mask -> skeleton, geometry.py circle fit) on it, tuned with the machine's
- * z_min_m/z_max_m/threshold (machine_classification_model columns). Any omitted opt falls back
- * to analyzer.py's own defaults.
+ * Sends a photo to the classification bridge and runs the green-holder-anchored
+ * curvature-vision pipeline (analyzer.segment_actuator -> skeleton -> geometry
+ * circle fit) on it, tuned with the machine's z_min_m/z_max_m/threshold
+ * (machine_classification_model columns): z_min/z_max bracket the plausible
+ * holder distance, threshold is the white-actuator brightness cutoff. Any
+ * omitted opt falls back to analyzer.py's own defaults.
  *
- * `depth`, if given, switches masking to real per-pixel depth-gating
- * (z_min/z_max) server-side instead of brightness thresholding — see
- * main.py's POST /classify and _annotate_curvature. Omit it to fall back to
- * brightness thresholding, same as before depth support existed.
+ * `depth`, if given, lets the server measure the holder's distance and gate
+ * the actuator to that distance, which is what rejects white rig clutter
+ * behind the actuator — see main.py's POST /classify and _annotate_curvature.
+ * Omit it and the actuator is taken on brightness + holder-adjacency alone.
  */
 export async function classifyImage(
   ip: string,

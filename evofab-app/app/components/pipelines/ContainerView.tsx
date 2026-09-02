@@ -39,6 +39,8 @@ interface ContainerViewProps {
   hideControls?: boolean
   /** Test-runs a single step immediately (see PipelineBuilder.testRunSteps), outside a full pipeline run. */
   onTestRunStep: (stepIds: string[]) => void
+  /** Stops the in-flight run/test run — aborts the current step and halts before the next (see PipelineBuilder.requestStopRun). */
+  onStopRun: () => void
   /** True while a real run or another test run is in flight — disables every row's "Test Run" button. */
   testRunDisabled: boolean
 }
@@ -53,10 +55,12 @@ export function ContainerView({
   availableTechs,
   hideControls,
   onTestRunStep,
+  onStopRun,
   testRunDisabled,
 }: ContainerViewProps) {
-  const { actionsByTech, techLabel } = usePipelineConfig()
+  const { actionsByTech, techLabel, machineIdByName } = usePipelineConfig()
   const [addingLoop, setAddingLoop] = useState(false)
+  const [stoppingStepId, setStoppingStepId] = useState<string | null>(null)
   const {
     steps,
     groups,
@@ -94,6 +98,40 @@ export function ContainerView({
   const showAddDraftHere = draftMode === 'add' && draftTargetGroupId === containerGroupId
   const showDraftHere = showAddDraftHere || showEditDraftHere
 
+  /** Techs whose in-flight step can be halted from the row, and the endpoint that does it.
+   * robot_arm → emergency stop (protective stop on the controller); printer → pause the print. */
+  const STOPPABLE_TECHS: Record<string, string> = {
+    robot_arm: '/api/robot-stop',
+    printer: '/api/print/pause',
+  }
+
+  /** Stops a running step: aborts the run so the executor unwinds now and nothing after it starts
+   * (see PipelineBuilder.requestStopRun), and — for a tech whose hardware can be halted mid-action
+   * (see STOPPABLE_TECHS) — also POSTs the halt endpoint so the machine itself stops, not just our
+   * wait on it. The step ends up `failed` with a "Stopped" note, same as any interrupted step. */
+  async function stopStep(step: Step) {
+    onStopRun()
+    const endpoint = STOPPABLE_TECHS[step.tech]
+    const machineId = machineIdByName[step.machine]
+    if (!endpoint || !machineId) return
+    setStoppingStepId(step.id)
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ machineId }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        console.error(`Stop failed for step ${step.num}:`, body.error ?? res.statusText)
+      }
+    } catch (err) {
+      console.error(`Stop failed for step ${step.num}:`, err)
+    } finally {
+      setStoppingStepId(null)
+    }
+  }
+
   function renderStepRow(step: Step, unitIdx: number, synced: boolean) {
     const Icon = MACHINE_TYPE_ICONS[step.tech] ?? MACHINE_TYPE_ICONS.DEFAULT
     const action = (actionsByTech[step.tech] ?? []).find((a) => a.key === step.action)
@@ -123,13 +161,19 @@ export function ContainerView({
             {stepStatus[step.id] && <PipelineStatusBadge status={stepStatus[step.id]} className="mr-1" />}
             {currentStepIds.has(step.id) ? (
               <RowIconButton
-                title="This step is running and can't be interrupted"
-                // Deliberately a no-op: a step in flight (a robot move, a print, a
-                // capture) isn't safely interruptible, so the button shows the run
-                // state but clicking it doesn't stop — the step keeps executing.
-                onClick={() => {}}
+                title={
+                  STOPPABLE_TECHS[step.tech]
+                    ? step.tech === 'printer'
+                      ? 'Pause this print and stop the run'
+                      : 'Emergency-stop the arm and stop the run'
+                    : // capture / actuation pulse: the hardware isn't safely interruptible
+                      // mid-action, but stopping still aborts the run so nothing after this
+                      // step executes (and any client-side wait on this one ends now).
+                      'Stop the run (this step’s hardware can’t be interrupted)'
+                }
+                onClick={() => stoppingStepId !== step.id && stopStep(step)}
               >
-                <StopIcon />
+                <StopIcon className={stoppingStepId === step.id ? 'opacity-40' : undefined} />
               </RowIconButton>
             ) : (
               <RowIconButton
@@ -199,6 +243,7 @@ export function ContainerView({
               onMoveUp={() => moveEntry(containerGroupId, uIdx, -1)}
               onMoveDown={() => moveEntry(containerGroupId, uIdx, 1)}
               onTestRunStep={onTestRunStep}
+              onStopRun={onStopRun}
               testRunDisabled={testRunDisabled}
             />
           ) : (

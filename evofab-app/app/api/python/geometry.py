@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 from collections import deque
 from dataclasses import dataclass, field
@@ -127,18 +128,50 @@ def skeleton_longest_path(skeleton_mask: np.ndarray) -> np.ndarray:
     return np.array(path, dtype=int)
 
 
-def compute_spine_curvature(skeleton_mask: np.ndarray, ppm: float) -> CurvatureResult:
+def _longest_run_outside(path: np.ndarray, base_mask: np.ndarray) -> np.ndarray:
+    """Given the spine `path` ordered end-to-end and a mask of the rigid
+    base (the green holder), return the longest contiguous run of path
+    points that lie OUTSIDE the base — i.e. the flexible actuator span,
+    with its clamped lead-in removed geometrically rather than by a fixed
+    point offset. The base mask is dilated slightly so points riding the
+    holder's silhouette count as base."""
+    h, w = base_mask.shape
+    fat = cv2.dilate(base_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11)))
+    inside = fat[np.clip(path[:, 1], 0, h - 1), np.clip(path[:, 0], 0, w - 1)] > 0
+
+    best_lo, best_hi = 0, 0
+    lo = None
+    for i, is_base in enumerate(list(inside) + [True]):
+        if is_base:
+            if lo is not None and i - lo > best_hi - best_lo:
+                best_lo, best_hi = lo, i
+            lo = None
+        elif lo is None:
+            lo = i
+    return path[best_lo:best_hi]
+
+
+def compute_spine_curvature(skeleton_mask: np.ndarray, ppm: float,
+                            base_mask: np.ndarray | None = None) -> CurvatureResult:
     path = skeleton_longest_path(skeleton_mask)
 
     if len(path) < 30:  # Lowered threshold for smaller device
         return CurvatureResult(status="NO_TARGET")
 
-    u, v = path[:, 0], path[:, 1]
-
-    # Trim the rigid base lead-in (fixed offset, not geometrically detected).
-    idx = np.argsort(v)[::-1]
-    u_flex = u[idx][10:]
-    v_flex = v[idx][10:]
+    if base_mask is not None:
+        # Rigid base detected geometrically: drop the span of the connected
+        # spine that runs through the green holder, keep the actuator.
+        flex = _longest_run_outside(path, base_mask)
+        if len(flex) < 30:
+            return CurvatureResult(status="NO_TARGET")
+        u_flex = flex[:, 0].astype(float)
+        v_flex = flex[:, 1].astype(float)
+    else:
+        u, v = path[:, 0], path[:, 1]
+        # Trim the rigid base lead-in (fixed offset, not geometrically detected).
+        idx = np.argsort(v)[::-1]
+        u_flex = u[idx][10:]
+        v_flex = v[idx][10:]
 
     # Least Squares Circle Fit
     u_m, v_m = np.mean(u_flex), np.mean(v_flex)

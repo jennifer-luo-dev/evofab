@@ -75,6 +75,12 @@ export function PipelineBuilder({
   const [addingRepeat, setAddingRepeat] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedPipelineId, setSavedPipelineId] = useState<string | null>(null);
+  // Stop-a-running-step wiring. `stopRequestedRef` is a synchronous latch the batch loop checks
+  // between steps; `runAbortRef` aborts every in-flight fetch/sleep in the current step's executor
+  // so it unwinds now rather than after its natural completion. Refs, not state — the run loop
+  // needs to see a stop the instant it happens, before React would re-render.
+  const stopRequestedRef = useRef(false);
+  const runAbortRef = useRef<AbortController | null>(null);
   const availableTechs = techs.filter((t) => selectedTechs.has(t.key));
   const builder = usePipelineBuilder(availableTechs.map((t) => t.key));
   const {
@@ -201,12 +207,26 @@ export function PipelineBuilder({
   }
 
   /**
+   * Stops the in-flight run or test run: latches `stopRequestedRef` so the batch loop won't start
+   * another step, and aborts `runAbortRef` so the step currently executing unwinds now (its
+   * fetch/poll/wait throws `AbortError` instead of running to completion). Wired to every step
+   * row's Stop button — see ContainerView's `stopStep`, which also POSTs the hardware-halt
+   * endpoint for a `robot_arm`/`printer` step so the machine itself stops, not just our wait on it.
+   */
+  function requestStopRun() {
+    if (!running) return;
+    stopRequestedRef.current = true;
+    runAbortRef.current?.abort();
+  }
+
+  /**
    * Runs the pipeline: persists it (see `persistTree`, `status: 'running'`) so the run survives
    * a reload and shows up in Activity History immediately, then runs each *executable* row in
    * order through its technology's executor (see stepExecutors.ts — STEP_EXECUTORS), reporting
    * status back to the persisted run as it goes. A technology with no registered executor (or
    * whose executor throws StepNotImplementedError, e.g. robot_arm's Gripper Cycle today) is
-   * marked `skipped` rather than failing the run. Stops on the first real failure.
+   * marked `skipped` rather than failing the run. Stops on the first real failure, or when a
+   * step's Stop button fires `requestStopRun` (run persisted as `aborted`).
    */
   async function runPipeline() {
     setRunning(true);
@@ -218,6 +238,9 @@ export function PipelineBuilder({
     setCurrentStepIds(new Set());
     setPipelineRunId(null);
     setStepErrors([]);
+    stopRequestedRef.current = false;
+    const abortController = new AbortController();
+    runAbortRef.current = abortController;
 
     const persisted = await persistTree('running');
     if (!persisted) {
@@ -240,6 +263,7 @@ export function PipelineBuilder({
       setRunningCamera,
       setRunningClassification,
       stepOutputsById,
+      signal: abortController.signal,
     };
 
     // Runs one step's executor and reports its outcome; never throws — a synced batch dispatches
@@ -272,7 +296,11 @@ export function PipelineBuilder({
           if (dbStepId) void reportStepStatus(dbStepId, 'skipped');
           return true;
         }
-        console.error('Pipeline step failed', err);
+        // Stop button: the abort rejects this step's in-flight fetch/wait with an AbortError.
+        // Report it as a plain failure (pipeline_steps.status has no 'aborted' — the run-level
+        // status carries that), with a message that says what actually happened.
+        const stopped = stopRequestedRef.current;
+        if (!stopped) console.error('Pipeline step failed', err);
         setStepStatus((prev) => ({ ...prev, [step.id]: 'failed' }));
         if (dbStepId) void reportStepStatus(dbStepId, 'failed');
         const actionLabel =
@@ -282,7 +310,11 @@ export function PipelineBuilder({
           {
             stepId: step.id,
             label: `${actionLabel} — ${step.machine}`,
-            message: err instanceof Error ? err.message : String(err),
+            message: stopped
+              ? 'Stopped — interrupted by the Stop button.'
+              : err instanceof Error
+                ? err.message
+                : String(err),
             timestamp: Date.now(),
           },
         ]);
@@ -299,6 +331,10 @@ export function PipelineBuilder({
     // always awaited to completion first (Promise.all itself guarantees that), never aborted
     // mid-flight.
     for (const batch of groupExecutableBySync(executable)) {
+      if (stopRequestedRef.current) {
+        allSucceeded = false;
+        break;
+      }
       // Only clear "Now Running" panels for techs *not* about to run this batch — a tech that IS
       // in this batch sets its own panel state itself (see stepExecutors.ts), and clearing it
       // here first would risk a race with that same-tick update.
@@ -330,10 +366,11 @@ export function PipelineBuilder({
       }
     }
 
+    const finalStatus = stopRequestedRef.current ? 'aborted' : allSucceeded ? 'complete' : 'failed';
     await fetch(`/api/pipelines/${pipeline.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: allSucceeded ? 'complete' : 'failed' }),
+      body: JSON.stringify({ status: finalStatus }),
     }).catch((err) => console.error('Failed to finalize pipeline status', err));
 
     setCurrentStepIds(new Set());
@@ -342,6 +379,8 @@ export function PipelineBuilder({
     setRunningCamera(null);
     setRunningClassification(null);
     setRunning(false);
+    runAbortRef.current = null;
+    stopRequestedRef.current = false;
   }
 
   /**
@@ -375,6 +414,9 @@ export function PipelineBuilder({
     setCurrentStepIds(new Set());
     setPipelineRunId(null);
     setStepErrors([]);
+    stopRequestedRef.current = false;
+    const abortController = new AbortController();
+    runAbortRef.current = abortController;
 
     const stepOutputsById: Record<string, Record<string, unknown>> = {};
     const executorContext: StepExecutorContext = {
@@ -386,9 +428,11 @@ export function PipelineBuilder({
       setRunningCamera,
       setRunningClassification,
       stepOutputsById,
+      signal: abortController.signal,
     };
 
     for (const step of orderedSteps) {
+      if (stopRequestedRef.current) break;
       const batchKind = RUNNING_KIND_BY_TECH[step.tech];
       if (batchKind !== 'printer') setRunningPrinter(null);
       if (batchKind !== 'robot') setRunningRobot(null);
@@ -412,7 +456,8 @@ export function PipelineBuilder({
           setStepStatus((prev) => ({ ...prev, [step.id]: 'skipped' }));
           continue;
         }
-        console.error('Test run step failed', err);
+        const stopped = stopRequestedRef.current;
+        if (!stopped) console.error('Test run step failed', err);
         setStepStatus((prev) => ({ ...prev, [step.id]: 'failed' }));
         const actionLabel =
           (actionsByTech[step.tech] ?? []).find((a) => a.key === step.action)?.label ?? step.action;
@@ -421,7 +466,11 @@ export function PipelineBuilder({
           {
             stepId: step.id,
             label: `${actionLabel} — ${step.machine}`,
-            message: err instanceof Error ? err.message : String(err),
+            message: stopped
+              ? 'Stopped — interrupted by the Stop button.'
+              : err instanceof Error
+                ? err.message
+                : String(err),
             timestamp: Date.now(),
           },
         ]);
@@ -435,6 +484,8 @@ export function PipelineBuilder({
     setRunningCamera(null);
     setRunningClassification(null);
     setRunning(false);
+    runAbortRef.current = null;
+    stopRequestedRef.current = false;
   }
 
   return (
@@ -585,6 +636,7 @@ export function PipelineBuilder({
             currentStepIds={currentStepIds}
             availableTechs={availableTechs}
             onTestRunStep={testRunSteps}
+            onStopRun={requestStopRun}
             testRunDisabled={running}
           />
         </div>

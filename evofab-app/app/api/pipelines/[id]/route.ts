@@ -132,6 +132,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
       return {
         type: s.action_types?.display_name ?? '',
+        tech: s.machine_types?.type_key ?? '',
         ts: s.completed_at
           ? new Date(s.completed_at).toLocaleTimeString('en-US', { hour12: false })
           : '',

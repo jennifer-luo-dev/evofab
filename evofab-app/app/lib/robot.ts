@@ -56,6 +56,26 @@ function base(ip: string, port: number) {
   return `http://${ip}:${port}`
 }
 
+export interface StopResult {
+  ok: boolean
+  message?: string
+  error?: string
+}
+
+/**
+ * Emergency-stops the arm: halts any in-progress move and latches a protective stop on the
+ * controller (which must be reset from the pendant/dashboard before the arm will move again).
+ * A non-2xx response means the bridge couldn't reach the robot.
+ */
+export async function stopRobot(ip: string, port: number): Promise<StopResult> {
+  const res = await fetch(`${base(ip, port)}/robot/stop`, { method: 'POST' })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Robot emergency stop failed (${res.status}): ${text}`)
+  }
+  return res.json()
+}
+
 /** Sends a Cartesian or joint-space move target and resolves once the bridge confirms the outcome (success, failure, protective stop, or a pre-dispatch limit violation — see MoveResult.status). A non-2xx response means the request itself was malformed, not that the move failed. */
 export async function moveRobot(ip: string, port: number, body: MoveTargetBody): Promise<MoveResult> {
   const res = await fetch(`${base(ip, port)}/robot/move`, {
