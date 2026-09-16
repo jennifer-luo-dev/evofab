@@ -41,6 +41,10 @@ export interface ResultRow {
   result: string
   /** Photo produced by the step (camera's `image_keys[0]` or classification_model's annotated `image_url`), if any — shown as a thumbnail instead of `result`'s text. */
   imageUrl?: string | null
+  /** Trial number for a looped run (the step's `iteration_path`, joined by `.`), or null for a top-level step. */
+  trial?: string | null
+  /** The camera step whose photo fed this measurement — the results table loads it lazily from `/api/pipeline-steps/[id]/image` so the heavy `outputs` jsonb is never pulled in bulk. */
+  photoStepId?: string | null
 }
 
 /** One step in a run's progress tracker. Steps sharing `group` ran simultaneously. */

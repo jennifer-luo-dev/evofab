@@ -3,9 +3,16 @@
 // every machine it uses — backs the History page's run detail view.
 // Replaces the former mockData.ts RESULTS/PROGRESS/MACHINE_STATUS constants.
 //
-// Convention: a completed step's `outputs` jsonb is expected to hold
-// `{ summary: string }` for its results-table row; falls back to a raw JSON
-// dump if that's absent.
+// Convention: a completed step's `outputs` jsonb holds `{ summary: string }`
+// for its results-table row.
+//
+// The step columns come from narrow queries, never one wide `select=...,outputs`:
+// camera steps fill `outputs` with a base64 photo + depth frame (~2 MB each),
+// so a 50-iteration loop made that select detoast ~100 MB and blow Postgres's
+// statement timeout, 500ing the whole page. Instead: (1) every step without
+// `outputs`, (2) just `outputs->>summary` for the classification steps the
+// results table shows, (3) one source photo, only while a classification step
+// is running live.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/app/lib/supabase-server'
@@ -31,14 +38,22 @@ interface StepRow {
   step_order: number
   status: string
   sync_group_id: string | null
+  iteration_path: number[] | null
   inputs: Record<string, string> | null
-  outputs: Record<string, unknown> | null
   completed_at: string | null
   machine_id: string | null
   machines: { name: string; ip: string | null; port: number | null } | null
   machine_types: { type_key: string } | null
   action_types: { display_name: string } | null
 }
+
+const STEP_SELECT =
+  'id, step_order, status, sync_group_id, iteration_path, inputs, completed_at, machine_id, ' +
+  'machines(name, ip, port), machine_types(type_key), action_types(display_name)'
+
+/** Excludes inert loop-body definition rows (group_id set, iteration_path still null) — they never
+ * dispatch, so they'd otherwise show up stuck at `pending`. Matches the execution loop's own filter. */
+const REAL_STEP_FILTER = 'iteration_path.not.is.null,group_id.is.null'
 
 /**
  * Reconstructs a robot_arm Move step's target from its persisted `inputs` — mirrors
@@ -94,16 +109,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     )
   }
 
+  // (1) Every real step, minus the heavy `outputs` column — drives the progress tracker.
   const { data: stepsData, error: stepsError } = await supabase
     .from('pipeline_steps')
-    .select(
-      'id, step_order, status, sync_group_id, inputs, outputs, completed_at, machine_id, machines(name, ip, port), machine_types(type_key), action_types(display_name)'
-    )
+    .select(STEP_SELECT)
     .eq('pipeline_id', id)
-    // Excludes inert loop-body definition rows (group_id set, iteration_path still null) —
-    // they never dispatch, so they'd otherwise show up here stuck at `pending` forever.
-    // Matches the same filter the (client-driven, for now) execution loop already applies.
-    .or('iteration_path.not.is.null,group_id.is.null')
+    .or(REAL_STEP_FILTER)
     .order('step_order')
 
   if (stepsError) return NextResponse.json({ error: stepsError.message }, { status: 500 })
@@ -119,28 +130,40 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     group: s.sync_group_id ?? undefined,
   }))
 
-  const results = steps
-    .filter((s) => s.status === 'complete' && s.outputs && Object.keys(s.outputs).length > 0)
-    .map((s) => {
-      // Only camera's `image_keys` (image_array) gets a thumbnail — classification_model's
-      // `image_url` is its annotated debug overlay, not the result; Measure Curvature's result
-      // is the angle in `summary`, so it stays text.
-      const imageKeys = s.outputs?.image_keys
-      const imageUrl = Array.isArray(imageKeys) && typeof imageKeys[0] === 'string'
-        ? imageKeys[0]
-        : null
+  // (2) `outputs->>summary` only, and only for the completed classification steps the results
+  // table renders — pulling that scalar out of jsonb stays cheap where selecting the whole
+  // `outputs` column (with a camera step's ~2 MB photo/depth blobs in it) times the query out.
+  // Camera / actuation / move rows are omitted here exactly as HistoryResultsTable already
+  // filters them out of what it shows.
+  const { data: summaryRows } = await supabase
+    .from('pipeline_steps')
+    .select('id, summary:outputs->>summary, machine_types!inner(type_key)')
+    .eq('pipeline_id', id)
+    .eq('status', 'complete')
+    .eq('machine_types.type_key', 'classification_model')
+    .or(REAL_STEP_FILTER)
+  const summaryById = new Map(
+    ((summaryRows ?? []) as unknown as { id: string; summary: string | null }[])
+      .filter((r) => r.summary !== null)
+      .map((r) => [r.id, r.summary as string])
+  )
 
-      return {
-        type: s.action_types?.display_name ?? '',
-        tech: s.machine_types?.type_key ?? '',
-        ts: s.completed_at
-          ? new Date(s.completed_at).toLocaleTimeString('en-US', { hour12: false })
-          : '',
-        result:
-          typeof s.outputs?.summary === 'string' ? s.outputs.summary : JSON.stringify(s.outputs),
-        imageUrl,
-      }
-    })
+  const results = steps
+    .filter((s) => summaryById.has(s.id))
+    .map((s) => ({
+      type: s.action_types?.display_name ?? '',
+      tech: s.machine_types?.type_key ?? '',
+      ts: s.completed_at
+        ? new Date(s.completed_at).toLocaleTimeString('en-US', { hour12: false })
+        : '',
+      result: summaryById.get(s.id) ?? '',
+      trial: s.iteration_path?.length ? s.iteration_path.join('.') : null,
+      // The measurement's source photo lives on the camera step it references. The results table
+      // loads it lazily from /api/pipeline-steps/[id]/image, so the heavy `outputs` jsonb (base64
+      // photo + depth) is never pulled in bulk here.
+      photoStepId: s.inputs?.photo_source ?? null,
+      imageUrl: null as string | null,
+    }))
 
   const machineIds = [...new Set(steps.map((s) => s.machine_id).filter((v): v is string => !!v))]
 
@@ -201,10 +224,19 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     } else if (tech === 'camera') {
       liveStep = { tech: 'camera', label, machine }
     } else if (tech === 'classification_model') {
+      // (3) One targeted read of the source camera step's photo, only while a classification step
+      // is actually running — a single row, cheap even if its `image_keys` is still a fat data URL.
       const sourceStepId = runningStep.inputs?.photo_source
-      const sourceStep = sourceStepId ? steps.find((s) => s.id === sourceStepId) : undefined
-      const imageKeys = sourceStep?.outputs?.image_keys
-      const sourceImageUrl = Array.isArray(imageKeys) && typeof imageKeys[0] === 'string' ? imageKeys[0] : null
+      let sourceImageUrl: string | null = null
+      if (sourceStepId) {
+        const { data: src } = await supabase
+          .from('pipeline_steps')
+          .select('image_keys:outputs->image_keys')
+          .eq('id', sourceStepId)
+          .maybeSingle()
+        const imageKeys = (src as { image_keys?: unknown } | null)?.image_keys
+        if (Array.isArray(imageKeys) && typeof imageKeys[0] === 'string') sourceImageUrl = imageKeys[0]
+      }
       liveStep = { tech: 'classification_model', label, machine, sourceImageUrl }
     }
   }
