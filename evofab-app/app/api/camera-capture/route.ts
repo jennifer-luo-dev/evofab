@@ -22,6 +22,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/app/lib/supabase-server'
 import { captureDepthAndColor } from '@/app/lib/camera'
+import { resolveMachine, callBridge } from '@/app/lib/machineRouting'
 
 /** Falls back to the Orbbec bridge's default dev port when a machine row has none set. */
 const DEFAULT_CAMERA_BRIDGE_PORT = 8002
@@ -35,34 +36,21 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = await createClient()
-  const { data: machine, error: machineError } = await supabase
-    .from('machines')
-    .select('ip, port')
-    .eq('id', machineId)
-    .single()
+  const machine = await resolveMachine(supabase, machineId, 'Camera not found', DEFAULT_CAMERA_BRIDGE_PORT)
+  if (machine instanceof NextResponse) return machine
 
-  if (machineError || !machine?.ip) {
-    return NextResponse.json({ error: 'Camera not found' }, { status: 404 })
-  }
-
-  const port = machine.port ?? DEFAULT_CAMERA_BRIDGE_PORT
-
-  try {
-    const capture = await captureDepthAndColor(machine.ip, port)
+  const result = await callBridge(async () => {
+    const capture = await captureDepthAndColor(machine.ip, machine.port)
     const image_url = `data:image/jpeg;base64,${capture.jpeg.toString('base64')}`
-    return NextResponse.json(
-      {
-        image_url,
-        timestamp: Date.now(),
-        depth_b64: capture.depthB64,
-        depth_width: capture.depthWidth,
-        depth_height: capture.depthHeight,
-        depth_scale: capture.depthScale,
-      },
-      { status: 200 }
-    )
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    return NextResponse.json({ error: message }, { status: 502 })
-  }
+    return {
+      image_url,
+      timestamp: Date.now(),
+      depth_b64: capture.depthB64,
+      depth_width: capture.depthWidth,
+      depth_height: capture.depthHeight,
+      depth_scale: capture.depthScale,
+    }
+  })
+  if (result instanceof NextResponse) return result
+  return NextResponse.json(result, { status: 200 })
 }

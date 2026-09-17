@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/app/lib/supabase-server'
 import { moveRobot, type MoveTargetBody } from '@/app/lib/robot'
+import { resolveMachine, callBridge } from '@/app/lib/machineRouting'
 
 /** Falls back to the FastAPI bridge's default dev port when a machine row has none set. */
 const DEFAULT_ROBOT_BRIDGE_PORT = 8001
@@ -32,23 +33,10 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = await createClient()
-  const { data: machine, error: machineError } = await supabase
-    .from('machines')
-    .select('ip, port')
-    .eq('id', machineId)
-    .single()
+  const machine = await resolveMachine(supabase, machineId, 'Robot arm not found', DEFAULT_ROBOT_BRIDGE_PORT)
+  if (machine instanceof NextResponse) return machine
 
-  if (machineError || !machine?.ip) {
-    return NextResponse.json({ error: 'Robot arm not found' }, { status: 404 })
-  }
-
-  const port = machine.port ?? DEFAULT_ROBOT_BRIDGE_PORT
-
-  try {
-    const result = await moveRobot(machine.ip, port, body as MoveTargetBody)
-    return NextResponse.json(result, { status: 200 })
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    return NextResponse.json({ error: message }, { status: 502 })
-  }
+  const result = await callBridge(() => moveRobot(machine.ip, machine.port, body as MoveTargetBody))
+  if (result instanceof NextResponse) return result
+  return NextResponse.json(result, { status: 200 })
 }

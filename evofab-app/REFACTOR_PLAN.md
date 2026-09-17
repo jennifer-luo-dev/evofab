@@ -287,6 +287,7 @@ Tracked in one place (§1) rather than repeated per-phase.
 
 - [x] Phase A — commit `211d0fa`
 - [x] Phase B
+- [x] Phase C
 - [ ] Phase B
 - [ ] Phase C
 - [ ] Phase D

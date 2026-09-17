@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/app/lib/supabase-server'
 import { uploadGcode, applyPrintSettings, startPrint } from '@/app/lib/moonraker'
+import { resolveMachine, callBridge } from '@/app/lib/machineRouting'
 import type { PrintSettings } from '@/app/types/job'
 
 /** Falls back to Moonraker's default port when a machine row has none set. */
@@ -35,27 +36,16 @@ export async function POST(req: NextRequest) {
   }
   const settings: PrintSettings = JSON.parse(settingsRaw)
 
-  const { data: machine, error: machineError } = await supabase
-    .from('machines')
-    .select('ip, port')
-    .eq('id', machine_id)
-    .single()
+  const machine = await resolveMachine(supabase, machine_id, 'Printer not found', DEFAULT_MOONRAKER_PORT)
+  if (machine instanceof NextResponse) return machine
 
-  if (machineError || !machine?.ip) {
-    return NextResponse.json({ error: 'Printer not found' }, { status: 404 })
-  }
-
-  const port = machine.port ?? DEFAULT_MOONRAKER_PORT
-
-  let fileKey: string
-  try {
-    fileKey = await uploadGcode(machine.ip, port, file)
-    await applyPrintSettings(machine.ip, port, settings)
-    await startPrint(machine.ip, port, fileKey)
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    return NextResponse.json({ error: message }, { status: 502 })
-  }
+  const fileKey = await callBridge(async () => {
+    const key = await uploadGcode(machine.ip, machine.port, file)
+    await applyPrintSettings(machine.ip, machine.port, settings)
+    await startPrint(machine.ip, machine.port, key)
+    return key
+  })
+  if (fileKey instanceof NextResponse) return fileKey
 
   return NextResponse.json({ success: true, fileKey, print_profile_id }, { status: 201 })
 }

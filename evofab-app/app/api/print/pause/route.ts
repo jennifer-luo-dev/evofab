@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/app/lib/supabase-server'
 import { pausePrint } from '@/app/lib/moonraker'
+import { resolveMachine, callBridge } from '@/app/lib/machineRouting'
 
 /** Falls back to Moonraker's default port when a machine row has none set. */
 const DEFAULT_MOONRAKER_PORT = 7125
@@ -21,21 +22,10 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = await createClient()
-  const { data: machine, error: machineError } = await supabase
-    .from('machines')
-    .select('ip, port')
-    .eq('id', machineId)
-    .single()
+  const machine = await resolveMachine(supabase, machineId, 'Printer not found', DEFAULT_MOONRAKER_PORT)
+  if (machine instanceof NextResponse) return machine
 
-  if (machineError || !machine?.ip) {
-    return NextResponse.json({ error: 'Printer not found' }, { status: 404 })
-  }
-
-  try {
-    await pausePrint(machine.ip, machine.port ?? DEFAULT_MOONRAKER_PORT)
-    return NextResponse.json({ success: true }, { status: 200 })
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    return NextResponse.json({ error: message }, { status: 502 })
-  }
+  const result = await callBridge(() => pausePrint(machine.ip, machine.port))
+  if (result instanceof NextResponse) return result
+  return NextResponse.json({ success: true }, { status: 200 })
 }

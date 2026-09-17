@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/app/lib/supabase-server'
 import { classifyImage } from '@/app/lib/classification'
+import { resolveMachine, callBridge } from '@/app/lib/machineRouting'
 
 /** Falls back to the FastAPI bridge's default dev port when a machine row has none set. */
 const DEFAULT_BRIDGE_PORT = 8001
@@ -33,15 +34,13 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = await createClient()
-  const { data: machine, error: machineError } = await supabase
-    .from('machines')
-    .select('ip, port')
-    .eq('id', machineId)
-    .single()
-
-  if (machineError || !machine?.ip) {
-    return NextResponse.json({ error: 'Classification model machine not found' }, { status: 404 })
-  }
+  const machine = await resolveMachine(
+    supabase,
+    machineId,
+    'Classification model machine not found',
+    DEFAULT_BRIDGE_PORT
+  )
+  if (machine instanceof NextResponse) return machine
 
   const { data: detail } = await supabase
     .from('machine_classification_model')
@@ -59,8 +58,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Could not fetch source photo: ${message}` }, { status: 502 })
   }
 
-  const port = machine.port ?? DEFAULT_BRIDGE_PORT
-
   const depth =
     typeof depth_b64 === 'string' &&
     typeof depth_width === 'number' &&
@@ -74,16 +71,14 @@ export async function POST(req: NextRequest) {
         }
       : null
 
-  try {
-    const result = await classifyImage(machine.ip, port, imageBlob, {
+  const result = await callBridge(() =>
+    classifyImage(machine.ip, machine.port, imageBlob, {
       z_min: detail?.z_min_m,
       z_max: detail?.z_max_m,
       threshold: detail?.threshold,
       depth,
     })
-    return NextResponse.json(result, { status: 200 })
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    return NextResponse.json({ error: message }, { status: 502 })
-  }
+  )
+  if (result instanceof NextResponse) return result
+  return NextResponse.json(result, { status: 200 })
 }
