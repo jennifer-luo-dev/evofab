@@ -285,7 +285,8 @@ Tracked in one place (§1) rather than repeated per-phase.
 
 ## 6. Progress log
 
-- [ ] Phase A
+- [x] Phase A — commit `211d0fa`
+- [x] Phase B
 - [ ] Phase B
 - [ ] Phase C
 - [ ] Phase D

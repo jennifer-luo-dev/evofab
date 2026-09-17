@@ -4,6 +4,7 @@
 
 import type { PrintSettings } from '@/app/types/job'
 import type { PrinterStatus, PrinterStatusType } from '@/app/types/printer'
+import { bridgeBase, throwIfNotOk } from './bridgeClient'
 
 /**
  * Maps Moonraker print_stats.state strings to the app's PrinterStatusType.
@@ -79,10 +80,6 @@ export function offlinePrinterStatus(printerId: string): PrinterStatus {
   }
 }
 
-function base(ip: string, port: number) {
-  return `http://${ip}:${port}`
-}
-
 /**
  * Uploads a G-code file to Moonraker's file manager and returns the server-side path.
  * @returns The file path as confirmed by Moonraker, used as the argument to startPrint.
@@ -92,14 +89,11 @@ export async function uploadGcode(ip: string, port: number, file: File): Promise
   form.append('file', file, file.name)
   form.append('path', '')
 
-  const res = await fetch(`${base(ip, port)}/server/files/upload`, {
+  const res = await fetch(`${bridgeBase(ip, port)}/server/files/upload`, {
     method: 'POST',
     body: form,
   })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`Moonraker file upload failed (${res.status}): ${text}`)
-  }
+  await throwIfNotOk(res, 'Moonraker file upload')
   const json = await res.json()
   return json.item?.path ?? file.name
 }
@@ -121,15 +115,12 @@ export async function applyPrintSettings(ip: string, port: number, settings: Pri
     `M106 S${fanValue}`,
   ].join('\n')
 
-  const res = await fetch(`${base(ip, port)}/printer/gcode/script`, {
+  const res = await fetch(`${bridgeBase(ip, port)}/printer/gcode/script`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ script }),
   })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`Moonraker gcode script failed (${res.status}): ${text}`)
-  }
+  await throwIfNotOk(res, 'Moonraker gcode script')
 }
 
 /** Returns the Moonraker WebSocket URL for direct sub-second telemetry. */
@@ -153,7 +144,7 @@ export interface GcodeMetadata {
 export async function getGcodeMetadata(ip: string, port: number, filename: string): Promise<GcodeMetadata> {
   try {
     const res = await fetch(
-      `${base(ip, port)}/server/files/metadata?filename=${encodeURIComponent(filename)}`,
+      `${bridgeBase(ip, port)}/server/files/metadata?filename=${encodeURIComponent(filename)}`,
       { signal: AbortSignal.timeout(5000), cache: 'no-store' }
     )
     if (!res.ok) return { estimated_time: null, filament_total: null, layer_count: null }
@@ -176,7 +167,7 @@ export async function getGcodeMetadata(ip: string, port: number, filename: strin
  */
 export async function getWebcamStreamUrl(ip: string, port: number): Promise<string | null> {
   try {
-    const res = await fetch(`http://${ip}:${port}/server/webcams/list`, {
+    const res = await fetch(`${bridgeBase(ip, port)}/server/webcams/list`, {
       signal: AbortSignal.timeout(3000),
     })
     if (!res.ok) return null
@@ -197,15 +188,12 @@ export async function getWebcamStreamUrl(ip: string, port: number): Promise<stri
  * @param filename - The server-side path returned by uploadGcode.
  */
 export async function startPrint(ip: string, port: number, filename: string): Promise<void> {
-  const res = await fetch(`${base(ip, port)}/printer/print/start`, {
+  const res = await fetch(`${bridgeBase(ip, port)}/printer/print/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ filename }),
   })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`Moonraker print start failed (${res.status}): ${text}`)
-  }
+  await throwIfNotOk(res, 'Moonraker print start')
 }
 
 /**
@@ -214,12 +202,9 @@ export async function startPrint(ip: string, port: number, filename: string): Pr
  * error if nothing is currently printing.
  */
 export async function pausePrint(ip: string, port: number): Promise<void> {
-  const res = await fetch(`${base(ip, port)}/printer/print/pause`, {
+  const res = await fetch(`${bridgeBase(ip, port)}/printer/print/pause`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
   })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`Moonraker print pause failed (${res.status}): ${text}`)
-  }
+  await throwIfNotOk(res, 'Moonraker print pause')
 }

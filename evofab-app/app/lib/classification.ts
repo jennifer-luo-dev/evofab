@@ -3,9 +3,7 @@
 // app/api/python/main.py). Mirrors robot.ts/arduino.ts's style: plain async
 // functions, raw fetch, descriptive thrown errors.
 
-function base(ip: string, port: number) {
-  return `http://${ip}:${port}`
-}
+import { bridgeBase, throwIfNotOk } from './bridgeClient'
 
 /**
  * Mirrors POST /classify's response, which matches action_types.output_schema for
@@ -69,12 +67,9 @@ export async function classifyImage(
     form.append('depth_scale', String(opts.depth.scale))
   }
 
-  const res = await fetch(`${base(ip, port)}/classify`, { method: 'POST', body: form })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`Classification failed (${res.status}): ${text}`)
-  }
+  const res = await fetch(`${bridgeBase(ip, port)}/classify`, { method: 'POST', body: form })
+  await throwIfNotOk(res, 'Classification')
 
   const result: ClassifyResult = await res.json()
-  return { ...result, image_url: result.image_url ? `${base(ip, port)}${result.image_url}` : null }
+  return { ...result, image_url: result.image_url ? `${bridgeBase(ip, port)}${result.image_url}` : null }
 }

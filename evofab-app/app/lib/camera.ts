@@ -11,9 +11,7 @@
 // how to store/serve the exact bytes from this one capture (see
 // app/api/camera-capture/route.ts, which embeds them as a data URL).
 
-function base(ip: string, port: number) {
-  return `http://${ip}:${port}`
-}
+import { bridgeBase, throwIfNotOk } from './bridgeClient'
 
 /** A synced color+depth capture — mirrors camera_orbbec_service.py's GET
  * /capture/depth_and_color response shape. `depthB64` is the raw uint16
@@ -35,11 +33,8 @@ export interface DepthAndColorCapture {
  * to picking the largest bright contour, which this rig's reflective
  * test-enclosure walls can fool. */
 export async function captureDepthAndColor(ip: string, port: number): Promise<DepthAndColorCapture> {
-  const res = await fetch(`${base(ip, port)}/capture/depth_and_color`)
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`Camera depth+color capture failed (${res.status}): ${text}`)
-  }
+  const res = await fetch(`${bridgeBase(ip, port)}/capture/depth_and_color`)
+  await throwIfNotOk(res, 'Camera depth+color capture')
   const body = await res.json()
   return {
     jpeg: Buffer.from(body.color_jpeg_b64, 'base64'),

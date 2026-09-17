@@ -9,6 +9,8 @@
 // move settles (or a shape/limit check fails), so callers don't need to poll
 // or time out the move themselves.
 
+import { bridgeBase, throwIfNotOk } from './bridgeClient'
+
 export const JOINT_NAMES = ['base', 'shoulder', 'elbow', 'wrist_1', 'wrist_2', 'wrist_3'] as const
 export type JointName = (typeof JOINT_NAMES)[number]
 
@@ -52,10 +54,6 @@ export interface MoveResult {
   error?: string
 }
 
-function base(ip: string, port: number) {
-  return `http://${ip}:${port}`
-}
-
 export interface StopResult {
   ok: boolean
   message?: string
@@ -68,24 +66,18 @@ export interface StopResult {
  * A non-2xx response means the bridge couldn't reach the robot.
  */
 export async function stopRobot(ip: string, port: number): Promise<StopResult> {
-  const res = await fetch(`${base(ip, port)}/robot/stop`, { method: 'POST' })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`Robot emergency stop failed (${res.status}): ${text}`)
-  }
+  const res = await fetch(`${bridgeBase(ip, port)}/robot/stop`, { method: 'POST' })
+  await throwIfNotOk(res, 'Robot emergency stop')
   return res.json()
 }
 
 /** Sends a Cartesian or joint-space move target and resolves once the bridge confirms the outcome (success, failure, protective stop, or a pre-dispatch limit violation — see MoveResult.status). A non-2xx response means the request itself was malformed, not that the move failed. */
 export async function moveRobot(ip: string, port: number, body: MoveTargetBody): Promise<MoveResult> {
-  const res = await fetch(`${base(ip, port)}/robot/move`, {
+  const res = await fetch(`${bridgeBase(ip, port)}/robot/move`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`Robot move failed (${res.status}): ${text}`)
-  }
+  await throwIfNotOk(res, 'Robot move')
   return res.json()
 }

@@ -5,9 +5,7 @@
 // succeeds — it does not block until the pulse physically finishes — so
 // callers must time out the duration themselves (see PipelineBuilder.runPipeline).
 
-function base(ip: string, port: number) {
-  return `http://${ip}:${port}`
-}
+import { bridgeBase, throwIfNotOk } from './bridgeClient'
 
 export interface PulseResult {
   ok: boolean
@@ -27,14 +25,11 @@ export async function firePulse(
   channel: number,
   duration_ms: number
 ): Promise<PulseResult> {
-  const res = await fetch(`${base(ip, port)}/actuation/pulse`, {
+  const res = await fetch(`${bridgeBase(ip, port)}/actuation/pulse`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ channel, duration_ms, capture: false }),
   })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`Arduino pulse failed (${res.status}): ${text}`)
-  }
+  await throwIfNotOk(res, 'Arduino pulse')
   return res.json()
 }
