@@ -77,6 +77,12 @@ Other scripts: `npm run build`, `npm run start`, `npm run lint`.
 
 ## Architecture
 
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full reference: directory
+structure, the hardware-bridge and Pipelines abstractions, step-by-step
+guides for adding a new machine or pipeline step type, and a changelog of
+the modularity/cleanup pass that produced it. The summary below covers the
+same ground more briefly.
+
 ### Frontend (`app/`)
 
 - `setup/`, `monitor/`, `results/` — the original job pipeline pages (submit

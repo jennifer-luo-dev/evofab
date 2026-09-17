@@ -371,7 +371,7 @@ Tracked in one place (§1) rather than repeated per-phase.
 - [x] Phase E (revised down — see notes in Phase E above)
 - [ ] Phase F — deferred; see note at the end of the Phase F section above
 - [x] Phase G
-- [ ] Phase H — in progress
+- [x] Phase H — `ARCHITECTURE.md`, linked from README.md
 
 ## 7. Open items for the repo owner (not resolved by this pass)
 
