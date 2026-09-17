@@ -1,23 +1,24 @@
 # camera_orbbec_service.py
 # Standalone bridge for the Orbbec Gemini 335L, talking to it directly over
 # USB via Orbbec's own SDK (pyorbbecsdk2) instead of OpenCV/AVFoundation.
-# Unlike camera_manager.py's approach, this never touches macOS's shared
-# camera subsystem (AVCaptureSession) at all, so it can't trigger Continuity
-# Camera or open any other camera device — see get_orbbec_serial.py for how
-# ORBBEC_SERIAL below was found.
+# Unlike this project's earlier OpenCV/AVFoundation-based camera bridge
+# (retired), this never touches macOS's shared camera subsystem
+# (AVCaptureSession) at all, so it can't trigger Continuity Camera or open
+# any other camera device. ORBBEC_SERIAL below was found with a one-off
+# discovery script (not kept in the repo — pyorbbecsdk's device-listing
+# API, run once to read the connected camera's serial number).
 #
 # Must be run as root: opening this device through pyorbbecsdk fails with
 # `uvc_open failed ... Return Code: -3` otherwise, because macOS's UVC
 # camera daemon (VDCAssistant) already holds an exclusive claim on this
 # camera's video interface for AVFoundation's use — running as root is
-# what lets pyorbbecsdk preempt that claim. Confirmed manually via
-# get_orbbec_serial.py before writing this file.
+# what lets pyorbbecsdk preempt that claim.
 #
 # Connects to the camera by serial number (not "first device found") and
-# keeps the pipeline open for the life of this process — mirrors how
-# camera_manager.py's CameraManager stayed connected, but with no
-# reconnect/retry loop, since there's now exactly one fixed device this
-# process ever talks to.
+# keeps the pipeline open for the life of this process — the earlier
+# camera bridge also stayed connected for its whole process lifetime, but
+# with no reconnect/retry loop, since there's now exactly one fixed device
+# this process ever talks to.
 #
 # Run (as root, using this project's orbbec_env venv):
 #   sudo app/api/python/orbbec_env/bin/python app/api/python/camera_orbbec_service.py
@@ -182,9 +183,11 @@ def capture() -> Response:
         raise HTTPException(status_code=500, detail="Failed to encode capture")
 
     distance_mm = _median_nonzero_depth_mm(depth_frame) if depth_frame is not None else None
-    # TEMPORARY diagnostic header — hardware frame timestamp (ms), to check
-    # whether repeated /capture calls are returning genuinely advancing
-    # frames or a stale/frozen one. Remove once confirmed.
+    # Diagnostic headers, not read by any current caller — useful when
+    # inspecting a /capture response by hand (curl/devtools) to confirm
+    # repeated calls are returning genuinely advancing frames, not a
+    # stale/frozen one, and to sanity-check depth without a full
+    # /capture/depth_and_color round trip.
     return Response(
         content=jpeg.tobytes(),
         media_type="image/jpeg",

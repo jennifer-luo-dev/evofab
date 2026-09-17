@@ -9,7 +9,7 @@ import type { PrinterStatus, PrinterStatusType } from '@/app/types/printer'
  * Maps Moonraker print_stats.state strings to the app's PrinterStatusType.
  * 'complete' and 'cancelled' both map to 'idle' — the printer is available again.
  */
-export const MOONRAKER_STATE_MAP: Record<string, PrinterStatusType> = {
+const MOONRAKER_STATE_MAP: Record<string, PrinterStatusType> = {
   standby: 'idle',
   printing: 'printing',
   paused: 'paused',

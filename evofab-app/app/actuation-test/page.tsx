@@ -154,7 +154,7 @@ export default function ActuationTestPage() {
    * When capture is true (default: captureEnabled), also kicks off polling
    * for the actuation-synced camera capture — see pollForCapture.
    */
-  async function firePulse(
+  async function triggerPulse(
     channel: Channel,
     opts: { durationOverride?: number; capture?: boolean } = {}
   ) {
@@ -224,7 +224,7 @@ export default function ActuationTestPage() {
     for (const ch of CHANNELS) {
       if (sweepAbortRef.current) break;
       setSweepChannel(ch);
-      await firePulse(ch, { durationOverride: SWEEP_DURATION, capture: false });
+      await triggerPulse(ch, { durationOverride: SWEEP_DURATION, capture: false });
       // Brief pause so it's easy to hear each click as a distinct event.
       await new Promise((r) => setTimeout(r, SWEEP_GAP_MS));
     }
@@ -455,7 +455,7 @@ export default function ActuationTestPage() {
             message={channelMessage[ch]}
             highlighted={sweeping && sweepChannel === ch}
             onDurationChange={(v) => setDurations((d) => ({ ...d, [ch]: v }))}
-            onFire={() => firePulse(ch)}
+            onFire={() => triggerPulse(ch)}
             disabled={sweeping}
           />
         ))}

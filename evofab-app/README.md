@@ -94,8 +94,10 @@ Other scripts: `npm run build`, `npm run start`, `npm run lint`.
 - `robot-test/`, `actuation-test/`, `classification-test/` — manual hardware
   diagnostic pages, used to exercise the robot arm, solenoids, and camera
   independently of a full job run. `actuation-test/` also hosts the live
-  camera preview and actuation-synced capture (see below) — there is no
-  separate camera-test page
+  camera preview and actuation-synced capture (see below).
+- `camera-test/` — a standalone camera diagnostic page (linked from the nav
+  as "Camera Feed," marked temporary) used to check for stale/frozen frames
+  independently of `actuation-test/`'s synced-capture flow.
 - `components/` — organized by feature area (`setup/`, `monitor/`,
   `results/`, `history/`, `pipelines/`, `machine-settings/`, `theme/`,
   `layout/`, `ui/`)

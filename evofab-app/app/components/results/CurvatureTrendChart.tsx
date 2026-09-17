@@ -5,8 +5,6 @@
 'use client'
 
 import {
-  LineChart,
-  Line,
   XAxis,
   YAxis,
   CartesianGrid,

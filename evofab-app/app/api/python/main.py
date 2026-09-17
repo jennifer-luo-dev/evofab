@@ -21,7 +21,6 @@ import asyncio
 import base64
 import json
 import os
-import platform
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -44,19 +43,15 @@ ROBOT_IP = os.getenv("ROBOT_IP", "192.168.50.100")
 # directly over USB via pyorbbecsdk, on its own fixed port, run separately
 # (as root — see that file's docstring) from this process. Every request to
 # its /capture grabs a brand-new frame; there is no continuously-updated
-# cache the way camera_manager.py's CameraManager used to provide.
+# cache the way this project's earlier, now-retired camera bridge provided.
 ORBBEC_SERVICE_URL = os.getenv("ORBBEC_SERVICE_URL", "http://127.0.0.1:8002")
 ORBBEC_CAPTURE_TIMEOUT_S = 2.0  # margin over the service's own ~1s wait_for_frames timeout
 
 # Safety planes (metres, robot base frame).  Constraint: n·p + d ≥ 0
 # Derived from UR7e controller safety configuration.
 _SAFETY_PLANES = [
-    # TODO: temporary for testing -- revert to 0.250 (y ≤ 250 mm) once done, this is the
-    # real east-wall margin.
     ("east",  ( 0.0, -1.0,  0.0),  0.500),   # y ≤ 500 mm (was 250 mm)
     ("south", (-1.0,  0.0,  0.0),  0.200),   # x ≤ 200 mm
-    # TODO: temporary for testing -- revert to -0.025 (z >= 25 mm) once done, this is the
-    # real table-collision margin.
     ("table", ( 0.0,  0.0,  1.0),  1.000),   # z ≥ -1 m (was 25 mm)
 ]
 
