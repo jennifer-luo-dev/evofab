@@ -19,6 +19,7 @@ import { InlineCountPrompt } from './InlineCountPrompt'
 import { LoopBlock } from './LoopBlock'
 import { usePipelineConfig } from './PipelineConfigContext'
 import { computeContainerUnits, findEntryContainer, summarizeStepInputs } from './pipelineUtils'
+import { STOPPABLE_TECHS, NOT_STOPPABLE_LABEL } from './stopHandling'
 import { MAX_LOOP_DEPTH } from './types'
 import { PipelineStatusBadge } from '@/app/components/history/PipelineStatusBadge'
 import type { PipelineRunStatus } from '@/app/components/history/types'
@@ -98,20 +99,13 @@ export function ContainerView({
   const showAddDraftHere = draftMode === 'add' && draftTargetGroupId === containerGroupId
   const showDraftHere = showAddDraftHere || showEditDraftHere
 
-  /** Techs whose in-flight step can be halted from the row, and the endpoint that does it.
-   * robot_arm → emergency stop (protective stop on the controller); printer → pause the print. */
-  const STOPPABLE_TECHS: Record<string, string> = {
-    robot_arm: '/api/robot-stop',
-    printer: '/api/print/pause',
-  }
-
   /** Stops a running step: aborts the run so the executor unwinds now and nothing after it starts
    * (see PipelineBuilder.requestStopRun), and — for a tech whose hardware can be halted mid-action
    * (see STOPPABLE_TECHS) — also POSTs the halt endpoint so the machine itself stops, not just our
    * wait on it. The step ends up `failed` with a "Stopped" note, same as any interrupted step. */
   async function stopStep(step: Step) {
     onStopRun()
-    const endpoint = STOPPABLE_TECHS[step.tech]
+    const endpoint = STOPPABLE_TECHS[step.tech]?.endpoint
     const machineId = machineIdByName[step.machine]
     if (!endpoint || !machineId) return
     setStoppingStepId(step.id)
@@ -161,16 +155,7 @@ export function ContainerView({
             {stepStatus[step.id] && <PipelineStatusBadge status={stepStatus[step.id]} className="mr-1" />}
             {currentStepIds.has(step.id) ? (
               <RowIconButton
-                title={
-                  STOPPABLE_TECHS[step.tech]
-                    ? step.tech === 'printer'
-                      ? 'Pause this print and stop the run'
-                      : 'Emergency-stop the arm and stop the run'
-                    : // capture / actuation pulse: the hardware isn't safely interruptible
-                      // mid-action, but stopping still aborts the run so nothing after this
-                      // step executes (and any client-side wait on this one ends now).
-                      'Stop the run (this step’s hardware can’t be interrupted)'
-                }
+                title={STOPPABLE_TECHS[step.tech]?.label ?? NOT_STOPPABLE_LABEL}
                 onClick={() => stoppingStepId !== step.id && stopStep(step)}
               >
                 <StopIcon className={stoppingStepId === step.id ? 'opacity-40' : undefined} />

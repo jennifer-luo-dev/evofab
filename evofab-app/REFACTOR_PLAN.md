@@ -188,55 +188,103 @@ coupled to how its specific route already responds to the frontend, so
 "fixing" it internally without touching the wire shape is high-effort for
 low value, especially with the higher-value extractions above ruled out.
 
-### Phase E — The core ask: a real "machine module" abstraction for Pipelines
+### Phase E — A real "machine module" abstraction for Pipelines
 
-This is what objective 2 is actually about, and the highest-value, most
-involved change. Today, adding one new machine action means touching ~10-13
-places (`stepExecutors.ts`'s `STEP_EXECUTORS` map and its own per-action
-if-chain, `PipelineBuilder.tsx`'s `RUNNING_KIND_BY_TECH` map + per-tech
-`useState`, `StepMonitorCard.tsx`'s per-tech monitor + `running.kind` switch,
-`ContainerView.tsx`'s `STOPPABLE_TECHS` map, `icons.tsx`'s
-`MACHINE_TYPE_ICONS` map, `StepDraftForm.tsx`'s per-tech boolean+block, and a
-second, independent copy of the monitor dispatch in `HistoryStepMonitor.tsx`
-for History).
+**Revised down from the original full `PipelineTechModule` design below**,
+after reading `PipelineBuilder.tsx`'s actual state wiring in full. The
+original plan called for one registry object per tech bundling executor +
+icon + stoppable flag + a live monitor component + a history monitor
+component + form extras, replacing four scattered maps/switches in one pass.
+Reading the code turned up a real, load-bearing behavior the naive version
+would have broken: `runningPrinter`/`runningRobot`/`runningCamera`/
+`runningClassification` aren't four redundant copies of the same thing —
+**more than one can be non-null at once**, and the JSX renders all of them
+simultaneously (`{runningPrinter && ...} {runningRobot && ...} ...`). That's
+what lets a synced batch spanning two techs (e.g. a robot move synced with a
+camera capture) show two "Now Running" panels side by side. A first-draft
+"collapse to one `runningStep` state" design (the obvious simplification)
+would have silently dropped that for any future synced multi-tech batch —
+exactly the kind of subtle regression this pass is supposed to avoid, so it
+was caught by tracing before being written, not after.
 
-Plan: introduce one `PipelineTechModule` interface —
+**What shipped instead — a generalization, not a collapse:**
 
-```ts
-interface PipelineTechModule {
-  tech: TechKey
-  icon: ComponentType
-  stoppable: boolean
-  executor: StepExecutor
-  MonitorPanel: ComponentType<{ running: RunningState }>       // "now running" (builder)
-  HistoryMonitorPanel: ComponentType<{ liveStep: LiveStep }>   // "now running" (history, read-only)
-  formExtras?: ComponentType<StepDraftFormExtrasProps>          // e.g. printer settings panel, robot move modal
-}
-```
+- `StepExecutorContext.setRunningPrinter/setRunningRobot/setRunningCamera/
+  setRunningClassification` (four named setters) → one
+  `setRunningStep: (tech: TechKey, state: SetStateAction<RunningStepState | null>) => void`.
+  Every executor now calls `ctx.setRunningStep(step.tech, ...)` instead of a
+  tech-specific setter — a new tech's executor needs **zero**
+  `StepExecutorContext` changes to show its own live panel.
+- `PipelineBuilder`'s four `useState<RunningXState | null>` → one
+  `runningSteps: Partial<Record<TechKey, RunningStepState>>`, with a
+  `setRunningStep` helper that preserves each tech's exact functional-update
+  semantics (keyed by tech, so `setRunningStep('printer', (prev) => ...)`
+  only ever touches the `'printer'` entry).
+- The `RUNNING_KIND_BY_TECH` translation map is gone entirely — the registry
+  is keyed by `Step.tech` directly now, so there's no separate "kind" concept
+  to keep in sync with it.
+- The batch-clear logic in `runPipeline` (keep entries for techs in this
+  batch, drop everything else) and in `testRunSteps` (keep only the current
+  step's own tech) are now a loop over `Object.keys(runningSteps)` instead of
+  four hardcoded `if`s each — this is the part verified most carefully, since
+  it's exactly where the simultaneous-panel behavior lives. Confirmed
+  unchanged both by re-deriving the loop from the original four-`if` logic
+  step by step, and by a live browser test (`npm run dev:web` + Playwright,
+  since `chromium-cli` wasn't available in this environment): built a
+  Camera step, Test-Ran it, and confirmed the "Now Running" / "capturing…"
+  panel renders exactly as before via the new code path (screenshotted). A
+  second test synced a Camera + Classification Model step and ran the real
+  Run Pipeline path to exercise the `Promise.all`-batched dispatch — both
+  steps did start concurrently (confirmed via the thrown errors' call
+  stacks), though that specific pairing isn't a realistic one to sync (the
+  classification step needs the camera step's *output*, so syncing them
+  simultaneously starves it of a source photo — a pre-existing modeling
+  question independent of this refactor, not something it caused). A test
+  pipeline row created during this was deleted afterward via History's own
+  delete control — verified only that row was removed, all real run history
+  intact.
+- `ContainerView.tsx`'s locally-defined `STOPPABLE_TECHS` (endpoint-only map,
+  redefined every render) plus a separate `step.tech === 'printer'` special
+  case for the Stop button's tooltip text → one shared
+  `app/components/pipelines/stopHandling.ts` exporting `STOPPABLE_TECHS`
+  (now `{ endpoint, label }` per tech) and `NOT_STOPPABLE_LABEL`. This also
+  fixes a latent bug the old code had: a third stoppable tech would have
+  silently inherited robot_arm's "Emergency-stop the arm" tooltip text
+  instead of its own.
 
-— and one registry, `PIPELINE_TECH_MODULES: Record<TechKey, PipelineTechModule>`,
-built by migrating each tech's existing executor/monitor/history-monitor/
-icon/stoppable-flag/form-extra **verbatim** into its module (moving code, not
-rewriting logic), one tech at a time (`printer`, then `robot_arm`, then
-`arduino_board`, then `camera`, then `classification_model`), each migration
-its own commit. After each tech's migration:
-- `tsc --noEmit` must pass.
-- Manually trace that tech's pipeline step end-to-end in the running dev
-  server (build a one-step pipeline in the builder, run it, confirm the
-  monitor panel renders identically, confirm History shows the same replay).
-- Only after all five techs are migrated do the old scattered maps
-  (`RUNNING_KIND_BY_TECH`, `STOPPABLE_TECHS`, `MACHINE_TYPE_ICONS`, the
-  `StepMonitorCard`/`HistoryStepMonitor` per-tech switches) get deleted, so
-  there's no window where both old and new systems partially disagree.
+**Deliberately not done in this pass** (each is a separate, real design
+decision rather than a mechanical extraction, and none blocks the above):
+- **`MACHINE_TYPE_ICONS`** (`icons.tsx`) stays where it is — it's already one
+  central map, not scattered, and folding it into a bigger registry would
+  mean importing icon components into a file that otherwise only has plain
+  data, for no real reduction in touch points.
+- **`StepDraftForm.tsx`'s per-tech `isPrinter`/`isRobotMove` extra-UI
+  blocks** stay as-is — only 2 of 5 techs need bespoke form UI today: a
+  registry with `formExtras?: Component` for exactly two non-null entries
+  isn't a win over two `if`s, especially since it would add a new
+  extension point to design and verify without owning any of the current
+  duplication.
+- **`StepMonitorCard.tsx` vs. `HistoryStepMonitor.tsx`** — the ~250-line
+  near-duplicate live-vs-historical monitor rendering the audit flagged.
+  These consume genuinely different shapes (`RunningStepState`, built from
+  in-memory executor state, vs. `LiveStep`, reconstructed from polled DB
+  rows in `app/api/pipelines/[id]/route.ts`) — unifying them means designing
+  a shared intermediate shape both sides can produce, which is a real
+  feature of follow-on work, not a refactor of what's there. Flagged as the
+  natural next step in ARCHITECTURE.md rather than attempted here.
+- **The underlying `Step`/`StepDraft` data model** (`types.ts`) — untouched
+  beyond what the above already used; it's schema-driven for input fields
+  already, and nothing here needed a data-model change.
 
-This directly fixes the "shotgun surgery" problem the audit identified:
-adding a new machine tech afterward means writing one `PipelineTechModule`
-object and adding one entry to the registry — nothing else.
-
-**Not** touching in this phase: the underlying `Step`/`StepDraft` data model
-(`types.ts`) beyond what's needed to type the registry — it's schema-driven
-already for input fields, and the audit didn't find it broken, just
-under-leveraged.
+The result: adding a new machine tech's live monitor panel today means (1) a
+`Running<Tech>State` variant on the `RunningStepState` union, (2) a
+`<XMonitor>` branch inside `StepMonitorCard`'s own dispatch, and (3) an
+`ctx.setRunningStep(step.tech, ...)` call in its executor — no
+`StepExecutorContext` change, no `PipelineBuilder` state change, no new
+render line. That's the real reduction in "scattered files" this phase
+delivers; the remaining touch points (`STEP_EXECUTORS` entry, an icon, a
+stoppable-endpoint entry if applicable, `StepDraftForm` extras if needed, and
+`HistoryStepMonitor`'s independent copy) are unchanged from before.
 
 ### Phase F — Split the largest files along the seams Phase E creates
 
@@ -308,6 +356,7 @@ Tracked in one place (§1) rather than repeated per-phase.
 - [x] Phase B
 - [x] Phase C
 - [x] Phase D (scaled down — see notes in Phase D above)
+- [x] Phase E (revised down — see notes in Phase E above)
 - [ ] Phase B
 - [ ] Phase C
 - [ ] Phase D

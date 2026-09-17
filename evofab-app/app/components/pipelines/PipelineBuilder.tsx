@@ -5,18 +5,12 @@
 
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type SetStateAction } from 'react';
 import { cn } from '@/app/lib/utils';
 import { ContainerView } from './ContainerView';
 import { ErrorConsole, type PipelineErrorEntry } from './ErrorConsole';
 import { InlineCountPrompt } from './InlineCountPrompt';
-import {
-  StepMonitorCard,
-  type RunningCameraState,
-  type RunningClassificationState,
-  type RunningPrinterState,
-  type RunningRobotState,
-} from './StepMonitorCard';
+import { StepMonitorCard, type RunningStepState } from './StepMonitorCard';
 import { usePipelineConfig } from './PipelineConfigContext';
 import {
   flattenTree,
@@ -37,16 +31,6 @@ export interface PipelineDefinition {
   steps: Step[];
 }
 
-/** Maps a step's tech to the "Now Running" panel state it drives, so a batch can clear only the panels *not* about to be (re)used this batch rather than all four — see runPipeline's batch loop. */
-const RUNNING_KIND_BY_TECH: Partial<
-  Record<TechKey, 'printer' | 'robot' | 'camera' | 'classification'>
-> = {
-  printer: 'printer',
-  robot_arm: 'robot',
-  camera: 'camera',
-  classification_model: 'classification',
-};
-
 interface PipelineBuilderProps {
   selectedTechs: Set<TechKey>;
   onBackToTechSelect: () => void;
@@ -64,11 +48,12 @@ export function PipelineBuilder({
   const [name, setName] = useState('');
   const [stepStatus, setStepStatus] = useState<Record<string, PipelineRunStatus>>({});
   const [running, setRunning] = useState(false);
-  const [runningPrinter, setRunningPrinter] = useState<RunningPrinterState | null>(null);
-  const [runningRobot, setRunningRobot] = useState<RunningRobotState | null>(null);
-  const [runningCamera, setRunningCamera] = useState<RunningCameraState | null>(null);
-  const [runningClassification, setRunningClassification] =
-    useState<RunningClassificationState | null>(null);
+  /** "Now Running" panel state, one entry per tech currently executing — a synced batch spanning
+   * more than one tech (e.g. a robot move synced with a camera capture) shows a panel for each,
+   * simultaneously; a tech with no entry shows no panel. Keyed by `Step.tech` rather than one
+   * `useState` per technology, so a new tech's executor needs no change here — see
+   * StepExecutorContext.setRunningStep. */
+  const [runningSteps, setRunningSteps] = useState<Partial<Record<TechKey, RunningStepState>>>({});
   const [currentStepIds, setCurrentStepIds] = useState<Set<string>>(new Set());
   const [pipelineRunId, setPipelineRunId] = useState<string | null>(null);
   const [stepErrors, setStepErrors] = useState<PipelineErrorEntry[]>([]);
@@ -96,6 +81,23 @@ export function PipelineBuilder({
   } = builder;
 
   const checkedCount = checkedIds.size;
+
+  /** Sets (or, with `null`, clears) tech's "Now Running" entry — passed to executors as
+   * `StepExecutorContext.setRunningStep`. Accepts a plain value or a `(prev) => next` updater,
+   * same as React's own setState, since several executors merge onto their own in-flight state. */
+  function setRunningStep(tech: TechKey, update: SetStateAction<RunningStepState | null>) {
+    setRunningSteps((prev) => {
+      const current = prev[tech] ?? null;
+      const next = typeof update === 'function' ? update(current) : update;
+      if (next === null) {
+        if (!(tech in prev)) return prev;
+        const rest = { ...prev };
+        delete rest[tech];
+        return rest;
+      }
+      return { ...prev, [tech]: next };
+    });
+  }
 
   // Hydrates once from a past run (see the Pipelines page's `?edit=` handling) — a ref rather
   // than a dependency-array guard, since `initialDefinition` is a fresh object identity on every
@@ -231,10 +233,7 @@ export function PipelineBuilder({
   async function runPipeline() {
     setRunning(true);
     setStepStatus({});
-    setRunningPrinter(null);
-    setRunningRobot(null);
-    setRunningCamera(null);
-    setRunningClassification(null);
+    setRunningSteps({});
     setCurrentStepIds(new Set());
     setPipelineRunId(null);
     setStepErrors([]);
@@ -258,10 +257,7 @@ export function PipelineBuilder({
       machineIdByName,
       actionsByTech,
       printers,
-      setRunningPrinter,
-      setRunningRobot,
-      setRunningCamera,
-      setRunningClassification,
+      setRunningStep,
       stepOutputsById,
       signal: abortController.signal,
     };
@@ -338,15 +334,14 @@ export function PipelineBuilder({
       // Only clear "Now Running" panels for techs *not* about to run this batch — a tech that IS
       // in this batch sets its own panel state itself (see stepExecutors.ts), and clearing it
       // here first would risk a race with that same-tick update.
-      const batchKinds = new Set(
-        batch
-          .map((s) => RUNNING_KIND_BY_TECH[s.tech])
-          .filter((k): k is NonNullable<typeof k> => !!k)
-      );
-      if (!batchKinds.has('printer')) setRunningPrinter(null);
-      if (!batchKinds.has('robot')) setRunningRobot(null);
-      if (!batchKinds.has('camera')) setRunningCamera(null);
-      if (!batchKinds.has('classification')) setRunningClassification(null);
+      const batchTechs = new Set(batch.map((s) => s.tech));
+      setRunningSteps((prev) => {
+        const next: Partial<Record<TechKey, RunningStepState>> = {};
+        for (const tech of Object.keys(prev) as TechKey[]) {
+          if (batchTechs.has(tech)) next[tech] = prev[tech];
+        }
+        return next;
+      });
 
       setCurrentStepIds(new Set(batch.map((s) => s.id)));
       setStepStatus((prev) => {
@@ -374,10 +369,7 @@ export function PipelineBuilder({
     }).catch((err) => console.error('Failed to finalize pipeline status', err));
 
     setCurrentStepIds(new Set());
-    setRunningPrinter(null);
-    setRunningRobot(null);
-    setRunningCamera(null);
-    setRunningClassification(null);
+    setRunningSteps({});
     setRunning(false);
     runAbortRef.current = null;
     stopRequestedRef.current = false;
@@ -407,10 +399,7 @@ export function PipelineBuilder({
 
     setRunning(true);
     setStepStatus({});
-    setRunningPrinter(null);
-    setRunningRobot(null);
-    setRunningCamera(null);
-    setRunningClassification(null);
+    setRunningSteps({});
     setCurrentStepIds(new Set());
     setPipelineRunId(null);
     setStepErrors([]);
@@ -423,21 +412,17 @@ export function PipelineBuilder({
       machineIdByName,
       actionsByTech,
       printers,
-      setRunningPrinter,
-      setRunningRobot,
-      setRunningCamera,
-      setRunningClassification,
+      setRunningStep,
       stepOutputsById,
       signal: abortController.signal,
     };
 
     for (const step of orderedSteps) {
       if (stopRequestedRef.current) break;
-      const batchKind = RUNNING_KIND_BY_TECH[step.tech];
-      if (batchKind !== 'printer') setRunningPrinter(null);
-      if (batchKind !== 'robot') setRunningRobot(null);
-      if (batchKind !== 'camera') setRunningCamera(null);
-      if (batchKind !== 'classification') setRunningClassification(null);
+      // Only this step's own tech's panel survives — a test run dispatches one step at a time
+      // (no synced batches), so unlike runPipeline's per-batch clear, every other tech's panel
+      // is always stale here and should go.
+      setRunningSteps((prev) => (step.tech in prev ? { [step.tech]: prev[step.tech]! } : {}));
 
       setCurrentStepIds(new Set([step.id]));
       setStepStatus((prev) => ({ ...prev, [step.id]: 'running' }));
@@ -479,10 +464,7 @@ export function PipelineBuilder({
     }
 
     setCurrentStepIds(new Set());
-    setRunningPrinter(null);
-    setRunningRobot(null);
-    setRunningCamera(null);
-    setRunningClassification(null);
+    setRunningSteps({});
     setRunning(false);
     runAbortRef.current = null;
     stopRequestedRef.current = false;
@@ -556,11 +538,7 @@ export function PipelineBuilder({
       <div
         className={cn(
           'grid gap-6',
-          (runningPrinter ||
-            runningRobot ||
-            runningCamera ||
-            runningClassification ||
-            stepErrors.length > 0) &&
+          (Object.keys(runningSteps).length > 0 || stepErrors.length > 0) &&
             'lg:grid-cols-[1fr_320px]'
         )}
       >
@@ -641,10 +619,11 @@ export function PipelineBuilder({
           />
         </div>
 
-        {runningPrinter && <StepMonitorCard running={runningPrinter} />}
-        {runningRobot && <StepMonitorCard running={runningRobot} />}
-        {runningCamera && <StepMonitorCard running={runningCamera} />}
-        {runningClassification && <StepMonitorCard running={runningClassification} />}
+        {Object.values(runningSteps)
+          .filter((running): running is RunningStepState => !!running)
+          .map((running) => (
+            <StepMonitorCard key={running.kind} running={running} />
+          ))}
         <ErrorConsole errors={stepErrors} />
       </div>
     </div>

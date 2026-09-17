@@ -13,13 +13,14 @@
 // StepNotImplementedError, `status: 'skipped'`) — executors don't touch step
 // status themselves.
 
-import type { Dispatch, SetStateAction } from 'react';
+import type { SetStateAction } from 'react';
 import type { ActionConfig, Step, TechKey } from './types';
 import type {
-  RunningCameraState,
-  RunningClassificationState,
+  RunningStepState,
   RunningPrinterState,
   RunningRobotState,
+  RunningCameraState,
+  RunningClassificationState,
 } from './StepMonitorCard';
 import type { PrinterWithStatus } from '@/app/types/printer';
 import { DEFAULT_SETTINGS } from '@/app/contexts/PrinterContext';
@@ -37,14 +38,15 @@ export interface StepExecutorContext {
   actionsByTech: Partial<Record<TechKey, ActionConfig[]>>;
   /** Active printers with live status, for the `printer` executor's machine lookup. */
   printers: PrinterWithStatus[];
-  /** Printer-only: reflects the in-progress print into the "Now Running" side panel (StepMonitorCard). */
-  setRunningPrinter: Dispatch<SetStateAction<RunningPrinterState | null>>;
-  /** Robot-arm-only: reflects the in-progress move into the "Now Running" side panel (StepMonitorCard). */
-  setRunningRobot: Dispatch<SetStateAction<RunningRobotState | null>>;
-  /** Camera-only: reflects the in-progress capture into the "Now Running" side panel (StepMonitorCard). */
-  setRunningCamera: Dispatch<SetStateAction<RunningCameraState | null>>;
-  /** Classification-model-only: reflects the in-progress classification into the "Now Running" side panel (StepMonitorCard). */
-  setRunningClassification: Dispatch<SetStateAction<RunningClassificationState | null>>;
+  /**
+   * Sets (or, with `null`, clears) the "Now Running" side panel for `tech` (see StepMonitorCard).
+   * Keyed by tech rather than one setter per technology, so a new tech's executor can show its
+   * own live panel without any StepExecutorContext or PipelineBuilder change — see
+   * PipelineBuilder's `runningSteps` state, which this ultimately writes into. Accepts a plain
+   * value or a `(prev) => next` updater, same as React's own setState, since several executors
+   * merge onto their own in-flight state (e.g. filling in a result once a request resolves).
+   */
+  setRunningStep: (tech: TechKey, state: SetStateAction<RunningStepState | null>) => void;
   /**
    * Outputs already produced earlier in this same run, keyed by `Step.id` — lets a step whose
    * input is `type: 'step_output'` (e.g. classification_model's `photo_source`) resolve the
@@ -84,6 +86,19 @@ function sleep(ms: number, signal?: AbortSignal) {
     }
     signal?.addEventListener('abort', onAbort, { once: true });
   });
+}
+
+/**
+ * Narrows `ctx.setRunningStep` to one tech's own state type so a step's own logic (including
+ * helper functions like waitForPrintCompletion below) can use ordinary functional updates
+ * (`(prev) => ({ ...prev, ... })`) without re-deriving the cast at every call site. Safe because
+ * only that tech's own executor ever writes under `tech`'s key in PipelineBuilder's `runningSteps`.
+ */
+function runningSetter<T extends RunningStepState>(
+  ctx: StepExecutorContext,
+  tech: TechKey
+): (update: SetStateAction<T | null>) => void {
+  return (update) => ctx.setRunningStep(tech, update as SetStateAction<RunningStepState | null>);
 }
 
 // ---------------------------------------------------------------------------
@@ -147,7 +162,7 @@ const METADATA_MAX_RETRIES = 5;
 async function waitForPrintCompletion(
   machineId: string,
   startedAt: number,
-  setRunningPrinter: StepExecutorContext['setRunningPrinter'],
+  setRunningPrinter: (update: SetStateAction<RunningPrinterState | null>) => void,
   signal?: AbortSignal
 ) {
   let sawPrinting = false;
@@ -204,7 +219,7 @@ async function applySlicerEstimate(
   printer: PrinterWithStatus,
   filename: string,
   startedAt: number,
-  setRunningPrinter: StepExecutorContext['setRunningPrinter']
+  setRunningPrinter: (update: SetStateAction<RunningPrinterState | null>) => void
 ) {
   for (let i = 0; i < METADATA_MAX_RETRIES; i++) {
     const meta = await getGcodeMetadata(printer.ip, printer.port, filename);
@@ -229,9 +244,10 @@ async function runPrinterStep(step: Step, ctx: StepExecutorContext): Promise<Ste
   const file = fileKey ? step.files?.[fileKey] : undefined;
   if (!file) throw new Error('No print file uploaded for this step');
 
+  const setRunningPrinter = runningSetter<RunningPrinterState>(ctx, step.tech);
   const streamUrl = await getWebcamStreamUrl(printer.ip, printer.port).catch(() => null);
   const startedAt = Date.now();
-  ctx.setRunningPrinter({
+  setRunningPrinter({
     kind: 'printer',
     printer,
     fileName: file.name,
@@ -253,9 +269,9 @@ async function runPrinterStep(step: Step, ctx: StepExecutorContext): Promise<Ste
 
   // Fire-and-forget: fills in the slicer's own estimate once Moonraker's metadata
   // scan catches up, without blocking the wait for actual completion below.
-  void applySlicerEstimate(printer, body.fileKey ?? file.name, startedAt, ctx.setRunningPrinter);
+  void applySlicerEstimate(printer, body.fileKey ?? file.name, startedAt, setRunningPrinter);
 
-  await waitForPrintCompletion(printer.id, startedAt, ctx.setRunningPrinter, ctx.signal);
+  await waitForPrintCompletion(printer.id, startedAt, setRunningPrinter, ctx.signal);
 
   const total_time = Math.round((Date.now() - startedAt) / 1000);
   return { total_time };
@@ -313,7 +329,8 @@ async function moveRobotArm(step: Step, ctx: StepExecutorContext): Promise<StepO
     body = { target_type: 'cartesian', position: { x, y, z }, speed_pct, acceleration_pct };
   }
 
-  ctx.setRunningRobot({
+  const setRunningRobot = runningSetter<RunningRobotState>(ctx, step.tech);
+  setRunningRobot({
     kind: 'robot',
     machineName: step.machine,
     target: body,
@@ -330,7 +347,7 @@ async function moveRobotArm(step: Step, ctx: StepExecutorContext): Promise<StepO
   const result = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(result.error ?? `Robot move failed (${res.status})`);
 
-  ctx.setRunningRobot((prev) => (prev ? { ...prev, result } : prev));
+  setRunningRobot((prev) => (prev ? { ...prev, result } : prev));
 
   if (result.status !== 'success') throw new Error(result.error ?? `Move ${result.status}`);
 
@@ -395,7 +412,8 @@ async function runCameraStep(step: Step, ctx: StepExecutorContext): Promise<Step
 
   const delay = parseFloat(step.inputs.delay);
 
-  ctx.setRunningCamera({
+  const setRunningCamera = runningSetter<RunningCameraState>(ctx, step.tech);
+  setRunningCamera({
     kind: 'camera',
     machineName: step.machine,
     startedAt: Date.now(),
@@ -413,7 +431,7 @@ async function runCameraStep(step: Step, ctx: StepExecutorContext): Promise<Step
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error ?? `Camera capture failed (${res.status})`);
 
-  ctx.setRunningCamera((prev) => (prev ? { ...prev, imageUrl: body.image_url } : prev));
+  setRunningCamera((prev) => (prev ? { ...prev, imageUrl: body.image_url } : prev));
 
   return {
     image_keys: [body.image_url],
@@ -475,7 +493,8 @@ async function classifyPhoto(step: Step, ctx: StepExecutorContext): Promise<Step
     typeof depthHeight === 'number' &&
     typeof depthScale === 'number';
 
-  ctx.setRunningClassification({
+  const setRunningClassification = runningSetter<RunningClassificationState>(ctx, step.tech);
+  setRunningClassification({
     kind: 'classification',
     machineName: step.machine,
     sourceImageUrl: imageUrl,
@@ -503,7 +522,7 @@ async function classifyPhoto(step: Step, ctx: StepExecutorContext): Promise<Step
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error ?? `Classification request failed (${res.status})`);
 
-  ctx.setRunningClassification((prev) => (prev ? { ...prev, result: body } : prev));
+  setRunningClassification((prev) => (prev ? { ...prev, result: body } : prev));
 
   return {
     // Matches action_types.output_schema for classification_model's "classify" action.
