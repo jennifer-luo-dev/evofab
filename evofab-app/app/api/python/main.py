@@ -20,6 +20,7 @@
 import asyncio
 import base64
 import json
+import logging
 import os
 import threading
 import time
@@ -36,6 +37,8 @@ from pydantic import BaseModel
 
 from analyzer import ActuatorAnalyzer
 from geometry import ACTUATOR_LENGTH_M, CurvatureResult, compute_spine_curvature
+
+logger = logging.getLogger(__name__)
 
 ROBOT_IP = os.getenv("ROBOT_IP", "192.168.50.100")
 
@@ -174,6 +177,7 @@ def _rtde_reader() -> None:
             _latest_state = {"connected": False, "error": "RTDE disconnected"}
 
         except Exception as exc:
+            logger.warning("RTDE connection to %s lost: %s", ROBOT_IP, exc)
             _latest_state = {"connected": False, "error": str(exc)}
             time.sleep(5)
 
@@ -1094,7 +1098,8 @@ def _serial_reader() -> None:
     while True:
         try:
             _serial_conn = _open_serial_conn()
-        except Exception:
+        except Exception as exc:
+            logger.warning("Could not open Arduino serial port: %s", exc)
             time.sleep(5)
             continue
 
@@ -1129,7 +1134,8 @@ def _serial_reader() -> None:
                             args=(channel, True, event_ts, req["armed_at"]),
                             daemon=True,
                         ).start()
-        except Exception:
+        except Exception as exc:
+            logger.warning("Arduino serial connection dropped: %s", exc)
             _serial_conn = None
             time.sleep(2)
 
@@ -1353,7 +1359,7 @@ async def classify_frame(
     try:
         annotated, result, holder_mm = _annotate_curvature(frame, analyzer, depth_raw=depth_raw, depth_scale=depth_scale)
     except Exception as exc:  # noqa: BLE001 — deliberately broad; see above
-        print(f"/classify: characterization failed, returning NO_TARGET — {exc!r}")
+        logger.warning("/classify: characterization failed, returning NO_TARGET — %r", exc)
         annotated, result, holder_mm = frame, CurvatureResult(status="NO_TARGET"), None
 
     ok, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])

@@ -143,31 +143,50 @@ since there's no test suite to catch a regression here automatically.
 
 ### Phase D — Backend Python internal de-duplication (`main.py`)
 
-Only the parts that are pure internal refactor with **zero change to any
-response shape, status code, or timing**:
-- Factor the near-identical move-confirmation polling loop (duplicated
-  between `_execute_cartesian_move` and `_execute_joint_move`) into one
-  helper.
-- Factor the repeated "open a socket to port 30002, send URScript, close"
-  pattern (three call sites) into one helper.
-- Factor the repeated `ur-rtde` lazy-import guard into one helper.
-- Add a single `logging.getLogger(__name__)` and replace the one bare
-  `print()` plus the silent `except Exception: pass` spots with actual log
-  calls at appropriate levels — this changes *what appears in server logs*
-  (strictly additive/diagnostic) but not any HTTP response, so it doesn't
-  violate the behavior-preservation constraint.
-- Deduplicate the CORS middleware config (`main.py` /
-  `camera_orbbec_service.py`) into one shared constant both import, if they
-  end up sharing a Python module — otherwise leave as two copies rather than
-  invent a shared module across two independently-run processes just for a
-  10-line list.
+**Revised down after reading the three "duplicated" call sites in full** —
+what looked like straightforward extractions from the audit summary turned
+out to have real, load-bearing differences once read closely:
 
-Explicitly **not** doing in this phase: unifying the three error-shape
-conventions (dict-with-status / bool-tuple / bare-exception) into one, since
-each is coupled to how its specific route already responds to the frontend —
-changing the internal shape without changing the wire shape is possible but
-high-effort-for-low-value here, and the highest-value backend duplication
-(the polling loop, the socket helper) is captured above without it.
+- The move-confirmation polling loop in `_execute_cartesian_move` (TCP-speed
+  based) vs. `_execute_joint_move` (joint-speed based) look structurally
+  identical, but this is real robot-motion-completion detection with no
+  automated test coverage and no way for me to verify against the physical
+  UR7e in this pass. The risk of a transcription mistake silently changing
+  how "move finished" is detected — on a real robot arm — outweighs the
+  ~25-line savings. **Not done.**
+- The "open a socket to port 30002, send URScript, close" pattern
+  (`_execute_cartesian_move`, `_execute_joint_move`, `_execute_robot_stop`)
+  is **not actually the same pattern**: `_execute_robot_stop` uses a 3s
+  socket timeout with its own `except OSError` returning a specific
+  `{ok: False, error: "Could not reach robot: ..."}", while the two move
+  functions use a 5s timeout with no dedicated socket-error handling (errors
+  fall through to their outer `except Exception`). The tighter e-stop
+  timeout looks deliberate (an e-stop should fail fast), not an oversight.
+  Unifying these risks changing real e-stop responsiveness. **Not done.**
+- The repeated `try: import rtde_receive / except ImportError` guard is two
+  lines at three call sites; Python's per-function lazy-import idiom doesn't
+  factor cleanly into a shared helper without returning module objects back
+  to the caller, which adds indirection for no real gain. **Not done.**
+
+What **was** done, since it's strictly additive (changes only what appears
+in server logs, never an HTTP response, so it can't violate the
+behavior-preservation constraint):
+- Added `logging.getLogger(__name__)` and real `logger.warning(...)` calls
+  at the four spots that previously failed completely silently — the RTDE
+  reader's connection-loss handler, the Arduino serial reader's open-failure
+  and drop handlers, and `/classify`'s fallback-to-NO_TARGET handler (which
+  replaces its one bare `print()`). Every other `except` in the file already
+  surfaces its error through a return value/response and was left alone.
+- CORS middleware config duplication (`main.py` / `camera_orbbec_service.py`)
+  intentionally **not** deduplicated — these are two independently-run
+  processes, and importing a shared module between them to save a 10-line
+  list isn't worth the coupling.
+
+Also explicitly **not** doing: unifying the three internal error-shape
+conventions (dict-with-status / bool-tuple / bare-exception) — each is
+coupled to how its specific route already responds to the frontend, so
+"fixing" it internally without touching the wire shape is high-effort for
+low value, especially with the higher-value extractions above ruled out.
 
 ### Phase E — The core ask: a real "machine module" abstraction for Pipelines
 
@@ -288,6 +307,7 @@ Tracked in one place (§1) rather than repeated per-phase.
 - [x] Phase A — commit `211d0fa`
 - [x] Phase B
 - [x] Phase C
+- [x] Phase D (scaled down — see notes in Phase D above)
 - [ ] Phase B
 - [ ] Phase C
 - [ ] Phase D
