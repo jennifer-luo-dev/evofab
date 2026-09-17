@@ -202,13 +202,6 @@ export function StepConnectorGlyph(props: IconProps) {
 }
 
 /**
- * A machine type's `type_key` (see `machine_types.type_key` in
- * evofab-app/supabase/schema.sql). Free-form lowercase snake_case — not a
- * closed set — so icon lookups must tolerate unrecognized keys.
- */
-export type MachineTypeKey = string
-
-/**
  * Icon lookup keyed by known `type_key` values, with `DEFAULT` as the
  * fallback for unrecognized keys. Look up as
  * `MACHINE_TYPE_ICONS[key] ?? MACHINE_TYPE_ICONS.DEFAULT` (a plain indexed

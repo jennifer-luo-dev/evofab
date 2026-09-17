@@ -312,6 +312,18 @@ separate design:
   unlinked diagnostic pages, not on the critical path — done last, only if
   time remains after E is solid.
 
+**Deferred.** Phase E's actual scope (see its revised section above) turned
+out larger and more delicate than planned — the `usePipelineRunner`
+extraction here would mean re-touching the exact `runPipeline`/`testRunSteps`
+state machinery just carefully verified (including the simultaneous-panel
+behavior), for a payoff that's mostly file-length rather than a correctness
+or extensibility improvement. Given no test suite and no way to exercise a
+real hardware run in this pass, doing that extraction with the same level of
+care as Phase E would cost more than this plan's remaining budget justifies
+against `pipelineUtils.ts`'s split and the two diagnostic pages, which are
+lower-risk (pure functions / unlinked pages) but also lower-value. Left for
+a follow-up pass — the seams are identified above and don't go stale.
+
 ### Phase G — Type consolidation
 
 `TechKey` (`components/pipelines/types.ts`) and `MachineTypeKey`
@@ -357,13 +369,9 @@ Tracked in one place (§1) rather than repeated per-phase.
 - [x] Phase C
 - [x] Phase D (scaled down — see notes in Phase D above)
 - [x] Phase E (revised down — see notes in Phase E above)
-- [ ] Phase B
-- [ ] Phase C
-- [ ] Phase D
-- [ ] Phase E
-- [ ] Phase F
-- [ ] Phase G
-- [ ] Phase H
+- [ ] Phase F — deferred; see note at the end of the Phase F section above
+- [x] Phase G
+- [ ] Phase H — in progress
 
 ## 7. Open items for the repo owner (not resolved by this pass)
 

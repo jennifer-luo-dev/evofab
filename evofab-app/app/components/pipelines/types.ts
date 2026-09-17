@@ -7,15 +7,18 @@
 // evofab-app/supabase/schema.sql) via POST /api/pipelines — see
 // PipelineBuilder.runPipeline().
 
+import type { PrintSettings } from '@/app/types/job'
+import type { TechKey } from '@/app/types/machine'
+
 /**
  * A machine type's `type_key` (see `machine_types.type_key` in
  * evofab-app/supabase/schema.sql) — free-form lowercase snake_case, not a
  * closed set. Any machine type without a dedicated pipeline action (e.g. a
  * load cell) simply never appears in `/api/action-types`'s response.
+ * Re-exported from app/types/machine.ts, the shared canonical definition —
+ * see that file's header comment.
  */
-import type { PrintSettings } from '@/app/types/job'
-
-export type TechKey = string
+export type { TechKey }
 
 /** A technology entry shown in the technology-selection grid. `machine_types` has no description column, so `desc` is only shown when present. */
 export interface TechOption {
