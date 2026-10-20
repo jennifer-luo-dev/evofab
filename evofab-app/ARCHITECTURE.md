@@ -202,7 +202,7 @@ in the DB until manually cleaned up (a known, accepted limitation, not a bug
 ### 4.1 Schema is DB-driven, dispatch is a registry
 
 `machine_types` lists the technologies (`printer`, `robot_arm`,
-`arduino_board`, `camera`, `classification_model` today — see
+`arduino_board`, `camera`, `classification_model`, `llm_model` today — see
 `app/types/machine.ts`'s `TechKey`, a free-form string, not a closed set);
 `action_types` defines each technology's actions with `input_schema`/
 `output_schema` JSON describing the step-builder form. Adding a new

@@ -21,6 +21,7 @@ import type {
   RunningRobotState,
   RunningCameraState,
   RunningClassificationState,
+  RunningLlmState,
 } from './StepMonitorCard';
 import type { PrinterWithStatus } from '@/app/types/printer';
 import { DEFAULT_SETTINGS } from '@/app/contexts/PrinterContext';
@@ -548,6 +549,64 @@ async function runClassificationModelStep(
 }
 
 // ---------------------------------------------------------------------------
+// llm_model — implemented. Sends whatever an earlier step produced (any tech —
+// the `source` input has no `expects`) plus the step's prompt to Claude via
+// /api/llm-analyze, which calls the Claude API directly (no hardware bridge).
+// ---------------------------------------------------------------------------
+
+/** Raw depth arrays a camera step carries for classifyPhoto — large, and meaningless to an LLM. */
+const LLM_EXCLUDED_OUTPUT_KEYS = ['depth_b64', 'depth_width', 'depth_height', 'depth_scale'];
+
+/** LLM — Analyze. Resolves `source` (a `step_output` input holding the referenced step's `Step.id`) to that step's outputs and asks Claude about them. */
+async function runLlmStep(step: Step, ctx: StepExecutorContext): Promise<StepOutputs> {
+  const machineId = ctx.machineIdByName[step.machine];
+  if (!machineId) throw new Error(`LLM "${step.machine}" not found`);
+
+  const prompt = step.inputs.prompt?.trim();
+  if (!prompt) throw new Error('No prompt — enter one for this step');
+
+  const sourceStepId = step.inputs.source;
+  const sourceOutputs = sourceStepId ? ctx.stepOutputsById[sourceStepId] : undefined;
+  if (!sourceOutputs) throw new Error('No source outputs — select an earlier step for Source Step');
+
+  const outputs = Object.fromEntries(
+    Object.entries(sourceOutputs).filter(([key]) => !LLM_EXCLUDED_OUTPUT_KEYS.includes(key))
+  );
+  const imageKeys = outputs.image_keys;
+  const firstImage = Array.isArray(imageKeys) ? imageKeys[0] : outputs.image_url;
+
+  const setRunningLlm = runningSetter<RunningLlmState>(ctx, step.tech);
+  setRunningLlm({
+    kind: 'llm',
+    machineName: step.machine,
+    prompt,
+    sourceImageUrl: typeof firstImage === 'string' ? firstImage : null,
+    startedAt: Date.now(),
+    result: null,
+  });
+
+  const res = await fetch('/api/llm-analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ machineId, prompt, sourceOutputs: outputs }),
+    signal: ctx.signal,
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? `LLM request failed (${res.status})`);
+
+  setRunningLlm((prev) => (prev ? { ...prev, result: { text: body.text, model: body.model } } : prev));
+
+  const firstLine = String(body.text ?? '').split('\n').find((l) => l.trim()) ?? '';
+  return {
+    // Matches action_types.output_schema for llm_model's "llm_analyze" action.
+    response_text: body.text,
+    model: body.model,
+    usage: body.usage,
+    summary: firstLine.length > 80 ? `${firstLine.slice(0, 79)}…` : firstLine || 'No response text',
+  };
+}
+
+// ---------------------------------------------------------------------------
 
 /** Executor lookup by `Step.tech`. A tech with no entry here falls back to `status: 'skipped'` in runPipeline, same as today. */
 export const STEP_EXECUTORS: Partial<Record<TechKey, StepExecutor>> = {
@@ -556,4 +615,5 @@ export const STEP_EXECUTORS: Partial<Record<TechKey, StepExecutor>> = {
   robot_arm: runRobotArmStep,
   camera: runCameraStep,
   classification_model: runClassificationModelStep,
+  llm_model: runLlmStep,
 };

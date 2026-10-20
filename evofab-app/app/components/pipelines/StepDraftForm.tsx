@@ -90,7 +90,7 @@ interface StepDraftFormProps {
   onCommit: () => void;
 }
 
-/** Renders one action input, dispatching to a text/number/select/file/step-reference control. */
+/** Renders one action input, dispatching to a text/textarea/number/select/file/step-reference control. */
 function DraftInputField({
   input,
   value,
@@ -167,6 +167,22 @@ function DraftInputField({
             );
           })}
         </select>
+      </div>
+    );
+  }
+
+  if (input.type === 'textarea') {
+    return (
+      <div className="basis-full">
+        <label className="block text-[11px] font-semibold uppercase tracking-wide text-muted mb-1">
+          {input.label}
+        </label>
+        <textarea
+          value={value ?? input.default ?? ''}
+          onChange={(e) => onChange(e.target.value)}
+          rows={4}
+          className="w-full px-2.25 py-1.75 rounded-md border border-border bg-surface text-text text-xs resize-y"
+        />
       </div>
     );
   }

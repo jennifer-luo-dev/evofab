@@ -5,7 +5,8 @@
 // pose/status from RobotContext's `/ws/robot` feed), a `camera` Capture step
 // (the resulting photo, once the bridge responds), or a
 // `classification_model` Classify step (source photo and the curvature-vision
-// pipeline's result, once the classification bridge responds).
+// pipeline's result, once the classification bridge responds), or an
+// `llm_model` Analyze step (prompt, source photo if any, and Claude's response).
 
 'use client'
 
@@ -73,11 +74,23 @@ export interface RunningClassificationState {
   result: ClassificationResult | null
 }
 
+export interface RunningLlmState {
+  kind: 'llm'
+  machineName: string
+  prompt: string
+  /** First photo among the source step's outputs, if it has any. */
+  sourceImageUrl: string | null
+  startedAt: number
+  /** `null` while the Claude request is in flight. */
+  result: { text: string; model: string } | null
+}
+
 export type RunningStepState =
   | RunningPrinterState
   | RunningRobotState
   | RunningCameraState
   | RunningClassificationState
+  | RunningLlmState
 
 interface StepMonitorCardProps {
   running: RunningStepState
@@ -96,6 +109,7 @@ export function StepMonitorCard({ running }: StepMonitorCardProps) {
   if (running.kind === 'robot') return <RobotMonitor running={running} />
   if (running.kind === 'camera') return <CameraMonitor running={running} />
   if (running.kind === 'classification') return <ClassificationMonitor running={running} />
+  if (running.kind === 'llm') return <LlmMonitor running={running} />
 
   const { printer, fileName, streamUrl, slicerEstimatedSeconds, extrapolatedSeconds } = running
   const totalExpectedSeconds = slicerEstimatedSeconds ?? extrapolatedSeconds
@@ -272,6 +286,54 @@ function ClassificationMonitor({ running }: { running: RunningClassificationStat
           <MetricBox label="Radius" value={result.radius_mm?.toFixed(0) ?? '—'} unit="mm" />
         </div>
       )}
+    </div>
+  )
+}
+
+/** Live "now executing" card for an llm_model Analyze step: the prompt and source photo, and once Claude responds, its text. */
+function LlmMonitor({ running }: { running: RunningLlmState }) {
+  const { machineName, prompt, sourceImageUrl, result } = running
+
+  return (
+    <div className="flex flex-col gap-4 lg:sticky lg:top-6">
+      <div>
+        <h2 className="text-xs font-semibold uppercase tracking-widest text-muted mb-1">
+          Now Running
+        </h2>
+        <p className="text-[13.5px] text-text font-mono truncate">{machineName} — Analyze</p>
+      </div>
+
+      {sourceImageUrl && (
+        <div
+          className="relative w-full bg-black rounded-lg overflow-hidden"
+          style={{ aspectRatio: '16/9' }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={sourceImageUrl}
+            alt="Source photo"
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+        </div>
+      )}
+
+      <div className="rounded-lg border border-border bg-surface p-4 text-sm">
+        <span className="block text-[11px] font-semibold uppercase tracking-wide text-muted mb-1">
+          Prompt
+        </span>
+        <p className="text-text whitespace-pre-wrap">{prompt}</p>
+      </div>
+
+      <div className="rounded-lg border border-border bg-surface p-4 text-sm">
+        <span className="block text-[11px] font-semibold uppercase tracking-wide text-muted mb-1">
+          {result ? `Response — ${result.model}` : 'Response'}
+        </span>
+        {result ? (
+          <p className="text-text whitespace-pre-wrap max-h-96 overflow-y-auto">{result.text}</p>
+        ) : (
+          <p className="text-muted font-mono">thinking…</p>
+        )}
+      </div>
     </div>
   )
 }

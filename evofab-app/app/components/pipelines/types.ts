@@ -33,7 +33,7 @@ export interface TechOption {
 export interface StepInputConfig {
   key: string
   label: string
-  type: 'text' | 'number' | 'select' | 'file' | 'step_output'
+  type: 'text' | 'textarea' | 'number' | 'select' | 'file' | 'step_output'
   default?: string | number
   options?: string[]
   /** `type: 'select'` only — a lookup table to source options from, when `options` isn't a static list (e.g. `"print_profiles"`). */

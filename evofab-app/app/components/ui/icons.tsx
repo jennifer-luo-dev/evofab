@@ -217,6 +217,7 @@ export const MACHINE_TYPE_ICONS: Record<string, (props: IconProps) => JSX.Elemen
   camera: CameraIcon,
   model: ModelIcon,
   classification_model: ModelIcon,
+  llm_model: ModelIcon,
   gauge: GaugeIcon,
   load_cell: GaugeIcon,
   DEFAULT: GaugeIcon,
